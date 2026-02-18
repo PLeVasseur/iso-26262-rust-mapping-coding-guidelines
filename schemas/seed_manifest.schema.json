@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Seed Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "seed_sets"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "seed_sets": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["queries"],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "queries": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["query_id", "query_text", "query_kind", "part", "limit"],
+              "properties": {
+                "query_id": {"type": "string", "minLength": 1},
+                "query_text": {"type": "string", "minLength": 1},
+                "query_kind": {"type": "string", "enum": ["exact", "concept"]},
+                "part": {"type": "integer", "minimum": 1},
+                "chunk_type": {"type": "string"},
+                "node_type": {"type": "string"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

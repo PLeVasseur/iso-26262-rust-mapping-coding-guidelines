@@ -1,0 +1,14 @@
+version: 1
+enforcers:
+  - id: rustc
+    type: tool
+    notes: Compiler diagnostics and lint policy.
+  - id: clippy
+    type: tool
+    notes: Rust lint suite for guideline automation.
+  - id: rustfmt
+    type: tool
+    notes: Formatting/style consistency enforcement.
+  - id: manual-audit
+    type: audit
+    notes: Human checklist review for non-automatable rules.

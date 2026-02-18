@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Change Growth Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "change_mode", "growth_mode", "profiles"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "change_mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_coverage_drop",
+        "max_traceability_drop",
+        "max_evidence_link_drop"
+      ],
+      "properties": {
+        "max_coverage_drop": {"type": "number", "minimum": 0},
+        "max_traceability_drop": {"type": "number", "minimum": 0},
+        "max_evidence_link_drop": {"type": "number", "minimum": 0}
+      }
+    },
+    "growth_mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "require_old_scope_non_regression",
+        "min_new_scope_coverage_delta",
+        "min_new_guidelines_delta"
+      ],
+      "properties": {
+        "require_old_scope_non_regression": {"type": "boolean"},
+        "min_new_scope_coverage_delta": {"type": "number", "minimum": 0},
+        "min_new_guidelines_delta": {"type": "number", "minimum": 0}
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quick", "full"],
+      "properties": {
+        "quick": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enforce_full_seed_manifest"],
+          "properties": {
+            "enforce_full_seed_manifest": {"type": "boolean"}
+          }
+        },
+        "full": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enforce_full_seed_manifest"],
+          "properties": {
+            "enforce_full_seed_manifest": {"type": "boolean"}
+          }
+        }
+      }
+    }
+  }
+}

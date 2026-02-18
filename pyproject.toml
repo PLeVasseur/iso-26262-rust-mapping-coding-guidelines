@@ -1,0 +1,28 @@
+[project]
+name = "iso-26262-rust-mapping-coding-guidelines"
+version = "0.1.0"
+description = "Operational orchestration for ISO 26262 seed-to-guideline growth"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0.2,<7",
+  "jsonschema>=4.23.0,<5",
+]
+
+[tool.uv]
+dev-dependencies = [
+  "ruff>=0.11.6,<0.12",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

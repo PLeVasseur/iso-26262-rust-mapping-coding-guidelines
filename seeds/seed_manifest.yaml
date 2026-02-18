@@ -1,0 +1,144 @@
+version: 1
+seed_sets:
+  default:
+    description: Deterministic ISO 26262 anchors for seed generation.
+    queries:
+      - query_id: iso-part6-table-1
+        query_text: Table 1
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-table-6
+        query_text: Table 6
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-table-7
+        query_text: Table 7
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-table-9
+        query_text: Table 9
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-table-10
+        query_text: Table 10
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-table-12
+        query_text: Table 12
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-table-13
+        query_text: Table 13
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-table-14
+        query_text: Table 14
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-table-15
+        query_text: Table 15
+        query_kind: exact
+        part: 6
+        chunk_type: table
+        limit: 3
+      - query_id: iso-part6-clause-5-4-2
+        query_text: 5.4.2
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-clause-5-4-3
+        query_text: 5.4.3
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-clause-8-4-5
+        query_text: 8.4.5
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-clause-9-4-2
+        query_text: 9.4.2
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-clause-9-4-4
+        query_text: 9.4.4
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-clause-10-4-2
+        query_text: 10.4.2
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-clause-10-4-5
+        query_text: 10.4.5
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-clause-11-4
+        query_text: "11.4"
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-annex-b
+        query_text: Annex B
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-annex-c
+        query_text: Annex C
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-annex-d
+        query_text: Annex D
+        query_kind: exact
+        part: 6
+        limit: 3
+      - query_id: iso-part6-concept-defensive-programming
+        query_text: defensive programming
+        query_kind: concept
+        part: 6
+        limit: 5
+      - query_id: iso-part6-concept-error-handling
+        query_text: error handling
+        query_kind: concept
+        part: 6
+        limit: 5
+      - query_id: iso-part6-concept-language-subset
+        query_text: language subset
+        query_kind: concept
+        part: 6
+        limit: 5
+      - query_id: iso-part6-concept-complexity
+        query_text: complexity
+        query_kind: concept
+        part: 6
+        limit: 5
+      - query_id: iso-part6-concept-concurrency
+        query_text: concurrency
+        query_kind: concept
+        part: 6
+        limit: 5
+      - query_id: iso-part6-concept-type-conversion
+        query_text: type conversion
+        query_kind: concept
+        part: 6
+        limit: 5

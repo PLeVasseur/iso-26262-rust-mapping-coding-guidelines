@@ -1,0 +1,13 @@
+version: 1
+default_corpus_pack: iso-core-part6
+corpus_packs:
+  - corpus_pack_id: iso-core-part6
+    enabled: true
+    extractor_target_parts:
+      - 6
+    seed_manifest_path: seeds/seed_manifest.yaml
+    default_profile: quick
+    allowed_modes:
+      - change
+      - growth
+    notes: ISO 26262 Part 6 table/clause anchors and concept seeds.

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Guideline Backlog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "guidelines"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "guidelines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "category",
+          "rule_statement",
+          "rationale",
+          "iso_seeds",
+          "scope",
+          "state",
+          "enforcement_mode",
+          "enforcement_details",
+          "evidence_artifacts",
+          "deviation_requirements"
+        ],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "category": {"type": "string", "minLength": 1},
+          "rule_statement": {"type": "string", "minLength": 1},
+          "rationale": {"type": "string", "minLength": 1},
+          "iso_seeds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "scope": {"type": "string", "minLength": 1},
+          "state": {
+            "type": "string",
+            "enum": ["DRAFT", "TRIAL", "ENFORCED", "DEPRECATED"]
+          },
+          "enforcement_mode": {
+            "type": "string",
+            "enum": ["AUTO", "AUDIT", "HYBRID"]
+          },
+          "enforcement_details": {"type": "string", "minLength": 1},
+          "evidence_artifacts": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1}
+          },
+          "deviation_requirements": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

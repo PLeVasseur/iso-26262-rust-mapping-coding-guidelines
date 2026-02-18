@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Extractor Findings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "findings"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "finding_id",
+          "date",
+          "opened_at",
+          "owner",
+          "due_by",
+          "run_id_before",
+          "run_id_after",
+          "tool_version",
+          "tool_commit_sha",
+          "stage",
+          "severity",
+          "status",
+          "expected",
+          "observed",
+          "repro_cmd"
+        ],
+        "properties": {
+          "finding_id": {"type": "string", "minLength": 1},
+          "date": {"type": "string", "minLength": 1},
+          "opened_at": {"type": "string", "minLength": 1},
+          "owner": {"type": "string", "minLength": 1},
+          "due_by": {"type": "string", "minLength": 1},
+          "run_id_before": {"type": "string", "minLength": 1},
+          "run_id_after": {"type": "string", "minLength": 1},
+          "tool_version": {"type": "string", "minLength": 1},
+          "tool_commit_sha": {"type": "string", "minLength": 1},
+          "stage": {"type": "string", "minLength": 1},
+          "severity": {"type": "string", "enum": ["S0", "S1", "S2", "S3"]},
+          "status": {
+            "type": "string",
+            "enum": ["new", "triaged", "upstream-open", "fixed-upstream", "verified"]
+          },
+          "expected": {"type": "string", "minLength": 1},
+          "observed": {"type": "string", "minLength": 1},
+          "repro_cmd": {"type": "string", "minLength": 1},
+          "upstream_issue_url": {"type": "string"}
+        }
+      }
+    }
+  }
+}

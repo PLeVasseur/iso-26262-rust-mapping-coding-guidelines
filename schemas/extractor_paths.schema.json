@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Extractor Paths",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "repo_root", "cache_root", "manifest_dir"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "repo_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cache_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "manifest_dir": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

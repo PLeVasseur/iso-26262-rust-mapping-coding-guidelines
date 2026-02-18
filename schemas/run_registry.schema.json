@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Run Registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "accepted_runs"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "accepted_runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "corpus_pack_id",
+          "mode",
+          "accepted_run_id",
+          "scope_fingerprint",
+          "accepted_at",
+          "accepted_by"
+        ],
+        "properties": {
+          "corpus_pack_id": {"type": "string", "minLength": 1},
+          "mode": {"type": "string", "enum": ["change", "growth"]},
+          "accepted_run_id": {"type": "string", "minLength": 1},
+          "scope_fingerprint": {"type": "string", "minLength": 1},
+          "accepted_at": {"type": "string", "minLength": 1},
+          "accepted_by": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

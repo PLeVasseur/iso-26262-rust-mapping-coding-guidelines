@@ -1,0 +1,4 @@
+version: 1
+repo_root: ~/personal/iso-26262-coding-standard-extraction
+cache_root: ~/personal/iso-26262-coding-standard-extraction/.cache/iso26262
+manifest_dir: ~/personal/iso-26262-coding-standard-extraction/.cache/iso26262/manifests

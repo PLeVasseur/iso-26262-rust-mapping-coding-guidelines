@@ -1,0 +1,14 @@
+version: 1
+change_mode:
+  max_coverage_drop: 0.0
+  max_traceability_drop: 0.0
+  max_evidence_link_drop: 0.0
+growth_mode:
+  require_old_scope_non_regression: true
+  min_new_scope_coverage_delta: 0
+  min_new_guidelines_delta: 0
+profiles:
+  quick:
+    enforce_full_seed_manifest: false
+  full:
+    enforce_full_seed_manifest: true

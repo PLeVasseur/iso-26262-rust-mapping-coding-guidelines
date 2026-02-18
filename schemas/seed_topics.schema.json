@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Seed Topics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "run_id", "seed_topics"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "seed_topics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "seed_id",
+          "iso_ref",
+          "chunk_id",
+          "citation",
+          "topic_phrase",
+          "context_summary",
+          "category_candidate",
+          "enforceability_hint"
+        ],
+        "properties": {
+          "seed_id": {"type": "string", "minLength": 1},
+          "iso_ref": {"type": "string", "minLength": 1},
+          "chunk_id": {"type": "string", "minLength": 1},
+          "citation": {"type": "string", "minLength": 1},
+          "topic_phrase": {"type": "string", "minLength": 1},
+          "context_summary": {"type": "string", "minLength": 1},
+          "category_candidate": {"type": "string", "minLength": 1},
+          "enforceability_hint": {
+            "type": "string",
+            "enum": ["AUTO", "AUDIT", "HYBRID"]
+          },
+          "part": {"type": "integer", "minimum": 1},
+          "reference": {"type": "string"},
+          "citation_anchor_id": {"type": "string"},
+          "row_key": {"type": "string"}
+        }
+      }
+    }
+  }
+}

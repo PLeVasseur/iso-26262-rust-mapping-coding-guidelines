@@ -1,0 +1,10 @@
+node_modules/
+
+# Python caches and virtualenvs
+__pycache__/
+*.pyc
+.venv/
+
+# Generated local operational artifacts
+.cache/
+.cache/**
