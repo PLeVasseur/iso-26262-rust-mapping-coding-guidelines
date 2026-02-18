@@ -26,10 +26,19 @@ If this fails, resolve path issues in `config/extractor_paths.yaml` or override 
 uv run python scripts/bootstrap_session.py --profile quick
 ```
 
+This run executes seed querying, seed normalization, guideline artifact generation,
+schema validation, traceability checks, and licensing guard checks.
+
 For strict non-bootstrap mode (requires baseline in `data/run_registry.yaml`):
 
 ```bash
 uv run python scripts/bootstrap_session.py --profile quick --no-bootstrap
+```
+
+For temporary bootstrap recovery only (avoid for normal operation):
+
+```bash
+uv run python scripts/bootstrap_session.py --profile quick --allow-missing-traceability
 ```
 
 ## 4) Inspect artifacts
