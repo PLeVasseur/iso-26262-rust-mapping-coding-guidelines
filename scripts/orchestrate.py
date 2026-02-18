@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -202,6 +203,29 @@ def write_diff_artifacts(
 
     diff_md_path.parent.mkdir(parents=True, exist_ok=True)
     diff_md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def snapshot_candidate_files(
+    root: Path,
+    run_dir: Path,
+    candidate_files: list[str],
+) -> tuple[list[str], list[str]]:
+    written: list[str] = []
+    missing: list[str] = []
+
+    snapshot_root = run_dir / "snapshots"
+    for rel_path in candidate_files:
+        source = root / rel_path
+        if not source.exists():
+            missing.append(rel_path)
+            continue
+
+        destination = snapshot_root / rel_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        written.append(rel_path)
+
+    return written, missing
 
 
 def main() -> int:
@@ -419,28 +443,6 @@ def main() -> int:
     elif not args.allow_bootstrap:
         policy_errors.append("no baseline run available; pass --base-run or use --allow-bootstrap")
 
-    manifest_payload = {
-        "version": 1,
-        "run_id": run_id,
-        "started_at": start_time,
-        "completed_at": utc_now(),
-        "mode": args.mode,
-        "profile": args.profile,
-        "corpus_pack": args.corpus_pack,
-        "base_run": baseline_entry["accepted_run_id"] if baseline_entry else None,
-        "scope_fingerprint": scope_fingerprint,
-        "step_results": step_results,
-        "runtime_errors": runtime_errors,
-        "policy_errors": policy_errors,
-    }
-
-    metrics_payload = {
-        **current_metrics,
-        "base_run": baseline_entry["accepted_run_id"] if baseline_entry else None,
-        "deltas": deltas,
-        "comparison_violations": comparison_violations,
-    }
-
     promotion_candidate = {
         "version": 1,
         "run_id": run_id,
@@ -454,6 +456,39 @@ def main() -> int:
         "requires_signoff": True,
     }
 
+    snapshot_written, snapshot_missing = snapshot_candidate_files(
+        root,
+        run_dir,
+        promotion_candidate["candidate_files"],
+    )
+    if snapshot_missing:
+        policy_errors.extend(
+            f"required promotion artifact missing for snapshot: {path}" for path in snapshot_missing
+        )
+
+    manifest_payload = {
+        "version": 1,
+        "run_id": run_id,
+        "started_at": start_time,
+        "completed_at": utc_now(),
+        "mode": args.mode,
+        "profile": args.profile,
+        "corpus_pack": args.corpus_pack,
+        "base_run": baseline_entry["accepted_run_id"] if baseline_entry else None,
+        "scope_fingerprint": scope_fingerprint,
+        "step_results": step_results,
+        "snapshot_files": snapshot_written,
+        "runtime_errors": runtime_errors,
+        "policy_errors": policy_errors,
+    }
+
+    metrics_payload = {
+        **current_metrics,
+        "base_run": baseline_entry["accepted_run_id"] if baseline_entry else None,
+        "deltas": deltas,
+        "comparison_violations": comparison_violations,
+    }
+
     summary_lines = [
         f"# Orchestration Summary: {run_id}",
         "",
@@ -465,6 +500,7 @@ def main() -> int:
         f"- category_count: {current_metrics['category_count']}",
         f"- guideline_count: {current_metrics['guideline_count']}",
         f"- coverage_row_count: {current_metrics['coverage_row_count']}",
+        f"- snapshot_file_count: {len(snapshot_written)}",
         f"- runtime_errors: {len(runtime_errors)}",
         f"- policy_errors: {len(policy_errors)}",
     ]

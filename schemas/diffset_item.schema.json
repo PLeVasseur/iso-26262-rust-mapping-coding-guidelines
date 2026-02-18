@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Diffset Item",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "item_id",
+    "entity_type",
+    "change_type",
+    "path_hint",
+    "before_value",
+    "after_value",
+    "severity_hint",
+    "context"
+  ],
+  "properties": {
+    "item_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "entity_type": {
+      "type": "string",
+      "enum": ["guideline", "category", "coverage", "scope", "gate"]
+    },
+    "change_type": {
+      "type": "string",
+      "enum": ["added", "removed", "modified", "unchanged-context"]
+    },
+    "path_hint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "before_value": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+    "after_value": {
+      "type": ["object", "array", "string", "number", "boolean", "null"]
+    },
+    "severity_hint": {
+      "type": "string",
+      "enum": ["info", "warn", "high"]
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

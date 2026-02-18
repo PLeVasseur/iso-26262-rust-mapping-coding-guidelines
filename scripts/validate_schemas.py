@@ -75,6 +75,35 @@ def main() -> int:
         else:
             validated += 1
 
+    review_schema_path = root / "schemas" / "diffset_review.schema.json"
+    required_schema_files = [
+        "schemas/diffset_manifest.schema.json",
+        "schemas/diffset_item.schema.json",
+        "schemas/diffset_review.schema.json",
+    ]
+    for rel_path in required_schema_files:
+        schema_path = root / rel_path
+        if not schema_path.exists():
+            failures.append({"file": rel_path, "errors": ["schema file missing"]})
+
+    review_dir = root / "feedback" / "diffset_reviews"
+    if review_schema_path.exists():
+        review_files = sorted(list(review_dir.glob("*.yaml")) + list(review_dir.glob("*.yml")))
+        if review_files:
+            for review_file in review_files:
+                errors = validate_pair(review_schema_path, review_file)
+                if errors:
+                    failures.append(
+                        {
+                            "file": str(review_file.relative_to(root)),
+                            "errors": errors,
+                        }
+                    )
+                else:
+                    validated += 1
+        else:
+            skipped += 1
+
     report = {
         "validated": validated,
         "skipped": skipped,
