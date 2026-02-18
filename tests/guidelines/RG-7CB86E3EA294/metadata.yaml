@@ -1,0 +1,9 @@
+version: 1
+rule_id: RG-7CB86E3EA294
+category: Language subset / forbidden constructs
+mode: AUTO
+state: DRAFT
+iso_seeds:
+- SEED-7CB86E3EA294
+pass_criteria: No violation reported for compliant fixture.
+fail_criteria: Violation reported for violating fixture.

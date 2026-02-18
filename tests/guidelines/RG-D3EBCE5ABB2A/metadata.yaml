@@ -1,0 +1,9 @@
+version: 1
+rule_id: RG-D3EBCE5ABB2A
+category: Tooling, compliance evidence, and deviations
+mode: AUDIT
+state: DRAFT
+iso_seeds:
+- SEED-D3EBCE5ABB2A
+pass_criteria: No violation reported for compliant fixture.
+fail_criteria: Violation reported for violating fixture.

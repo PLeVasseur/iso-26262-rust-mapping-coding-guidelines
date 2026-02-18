@@ -1,0 +1,9 @@
+version: 1
+rule_id: RG-C5BAB6CA4D74
+category: Defensive programming & contracts
+mode: AUDIT
+state: DRAFT
+iso_seeds:
+- SEED-C5BAB6CA4D74
+pass_criteria: No violation reported for compliant fixture.
+fail_criteria: Violation reported for violating fixture.

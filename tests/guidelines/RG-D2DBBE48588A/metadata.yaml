@@ -1,0 +1,9 @@
+version: 1
+rule_id: RG-D2DBBE48588A
+category: Defensive programming & contracts
+mode: AUDIT
+state: DRAFT
+iso_seeds:
+- SEED-D2DBBE48588A
+pass_criteria: No violation reported for compliant fixture.
+fail_criteria: Violation reported for violating fixture.

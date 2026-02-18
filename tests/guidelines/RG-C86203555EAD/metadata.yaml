@@ -1,0 +1,9 @@
+version: 1
+rule_id: RG-C86203555EAD
+category: Complexity & structure
+mode: AUDIT
+state: DRAFT
+iso_seeds:
+- SEED-C86203555EAD
+pass_criteria: No violation reported for compliant fixture.
+fail_criteria: Violation reported for violating fixture.

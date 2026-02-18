@@ -1,0 +1,9 @@
+version: 1
+rule_id: RG-34FDD6EFE8ED
+category: Defensive programming & contracts
+mode: AUDIT
+state: DRAFT
+iso_seeds:
+- SEED-34FDD6EFE8ED
+pass_criteria: No violation reported for compliant fixture.
+fail_criteria: Violation reported for violating fixture.
