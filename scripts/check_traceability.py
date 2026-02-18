@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--todo-guidelines", type=Path, default=Path("data/todo_guidelines.yaml"))
     parser.add_argument("--target-scope", type=Path, default=Path("data/target_scope.yaml"))
     parser.add_argument("--allow-missing", action="store_true")
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="Allow empty guidelines/coverage/scope during early bootstrap",
+    )
     parser.add_argument("--json-output", type=Path)
     return parser.parse_args()
 
@@ -77,6 +82,7 @@ def main() -> int:
         if guideline_id not in coverage_guideline_ids:
             errors.append(f"guideline missing coverage row: {guideline_id}")
 
+    in_scope: set[str] = set()
     if scope_path.exists():
         scope = read_yaml(scope_path) or {}
         in_scope = {
@@ -89,9 +95,26 @@ def main() -> int:
         for target_id in missing_targets:
             errors.append(f"in-scope target missing from coverage matrix: {target_id}")
 
+    if not args.allow_empty:
+        if len(rows) == 0:
+            errors.append("coverage matrix has no data rows")
+        if len(guideline_ids) == 0:
+            errors.append("todo guidelines list is empty")
+        if len(in_scope) == 0:
+            errors.append("target scope list is empty")
+
+    unknown_guidelines = sorted(
+        guideline_id
+        for guideline_id in coverage_guideline_ids
+        if guideline_id and guideline_id not in guideline_ids
+    )
+    for guideline_id in unknown_guidelines:
+        errors.append(f"coverage row references unknown guideline_id: {guideline_id}")
+
     report = {
         "coverage_row_count": len(rows),
         "guideline_count": len(guideline_ids),
+        "target_scope_count": len(in_scope),
         "error_count": len(errors),
         "warning_count": len(warnings),
         "errors": errors,

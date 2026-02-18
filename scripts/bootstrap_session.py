@@ -20,6 +20,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile", choices=["quick", "full"], default="quick")
     parser.add_argument("--corpus-pack", help="Override default corpus pack")
     parser.add_argument(
+        "--allow-missing-traceability",
+        action="store_true",
+        help="Pass through traceability bootstrap allowances to orchestrate",
+    )
+    parser.add_argument(
         "--no-bootstrap",
         action="store_true",
         help="Require an existing baseline run from data/run_registry.yaml",
@@ -64,8 +69,10 @@ def main() -> int:
         args.profile,
         "--corpus-pack",
         corpus_pack,
-        "--allow-missing-traceability",
     ]
+
+    if args.allow_missing_traceability:
+        orchestrate_command.append("--allow-missing-traceability")
 
     if baseline_entry:
         orchestrate_command.extend(["--base-run", baseline_entry["accepted_run_id"]])
