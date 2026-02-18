@@ -1,2 +1,488 @@
 version: 1
-guidelines: []
+guidelines:
+- id: RG-10299F77BE61
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with Annex E.
+  rationale: Derived from ISO 26262 seed SEED-10299F77BE61 (Part 6 Annex E) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-10299F77BE61
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-10299F77BE61/metadata.yaml
+  - audit_checklists/RG-10299F77BE61.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-1E3A1235235C
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 14 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-1E3A1235235C (Part 6 Table 14) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-1E3A1235235C
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-1E3A1235235C/metadata.yaml
+  - audit_checklists/RG-1E3A1235235C.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-1E8B8CE3DBF1
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 1 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-1E8B8CE3DBF1 (Part 6 Table 1) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-1E8B8CE3DBF1
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-1E8B8CE3DBF1/metadata.yaml
+  - audit_checklists/RG-1E8B8CE3DBF1.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-230964AF44D4
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with 5.4.3.
+  rationale: Derived from ISO 26262 seed SEED-230964AF44D4 (Part 6 5.4.3) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-230964AF44D4
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-230964AF44D4/metadata.yaml
+  - audit_checklists/RG-230964AF44D4.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-262BBEC1A2A9
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with 5.3.
+  rationale: Derived from ISO 26262 seed SEED-262BBEC1A2A9 (Part 6 5.3) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-262BBEC1A2A9
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-262BBEC1A2A9/metadata.yaml
+  - audit_checklists/RG-262BBEC1A2A9.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-34FDD6EFE8ED
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with 7.4.12.
+  rationale: Derived from ISO 26262 seed SEED-34FDD6EFE8ED (Part 6 7.4.12) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-34FDD6EFE8ED
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-34FDD6EFE8ED/metadata.yaml
+  - audit_checklists/RG-34FDD6EFE8ED.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-587CE115D9C8
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 11 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-587CE115D9C8 (Part 6 Table 11) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-587CE115D9C8
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-587CE115D9C8/metadata.yaml
+  - audit_checklists/RG-587CE115D9C8.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-5B4923F76EEA
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 12 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-5B4923F76EEA (Part 6 Table 12) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-5B4923F76EEA
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-5B4923F76EEA/metadata.yaml
+  - audit_checklists/RG-5B4923F76EEA.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-697000BF3263
+  category: Tooling, compliance evidence, and deviations
+  rule_statement: Provide verifiable compliance evidence for activities mapped to
+    Table 7.
+  rationale: Derived from ISO 26262 seed SEED-697000BF3263 (Part 6 Table 7) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-697000BF3263
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-697000BF3263/metadata.yaml
+  - audit_checklists/RG-697000BF3263.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-7359C842E4E4
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 10 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-7359C842E4E4 (Part 6 Table 10) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-7359C842E4E4
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-7359C842E4E4/metadata.yaml
+  - audit_checklists/RG-7359C842E4E4.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-744267BD9DEC
+  category: Complexity & structure
+  rule_statement: Keep implementation complexity bounded, reviewable, and traceable
+    to Table 3.
+  rationale: Derived from ISO 26262 seed SEED-744267BD9DEC (Part 6 Table 3) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-744267BD9DEC
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-744267BD9DEC/metadata.yaml
+  - audit_checklists/RG-744267BD9DEC.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-75D65B270D75
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 1 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-75D65B270D75 (Part 6 Table 1) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-75D65B270D75
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-75D65B270D75/metadata.yaml
+  - audit_checklists/RG-75D65B270D75.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-7CB86E3EA294
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 13 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-7CB86E3EA294 (Part 6 Table 13) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-7CB86E3EA294
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-7CB86E3EA294/metadata.yaml
+  - audit_checklists/RG-7CB86E3EA294.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-82B1F0353FD0
+  category: Complexity & structure
+  rule_statement: Keep implementation complexity bounded, reviewable, and traceable
+    to Annex D.
+  rationale: Derived from ISO 26262 seed SEED-82B1F0353FD0 (Part 6 Annex D) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-82B1F0353FD0
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-82B1F0353FD0/metadata.yaml
+  - audit_checklists/RG-82B1F0353FD0.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-90F9CF8770E1
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 10 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-90F9CF8770E1 (Part 6 Table 10) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-90F9CF8770E1
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-90F9CF8770E1/metadata.yaml
+  - audit_checklists/RG-90F9CF8770E1.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-956D02940FC5
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with 9.4.2.
+  rationale: Derived from ISO 26262 seed SEED-956D02940FC5 (Part 6 9.4.2) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-956D02940FC5
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-956D02940FC5/metadata.yaml
+  - audit_checklists/RG-956D02940FC5.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-9B66370DEE3A
+  category: Tooling, compliance evidence, and deviations
+  rule_statement: Provide verifiable compliance evidence for activities mapped to
+    Table 9.
+  rationale: Derived from ISO 26262 seed SEED-9B66370DEE3A (Part 6 Table 9) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-9B66370DEE3A
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-9B66370DEE3A/metadata.yaml
+  - audit_checklists/RG-9B66370DEE3A.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-9BA71FE474B2
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with 5.4.2.
+  rationale: Derived from ISO 26262 seed SEED-9BA71FE474B2 (Part 6 5.4.2) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-9BA71FE474B2
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-9BA71FE474B2/metadata.yaml
+  - audit_checklists/RG-9BA71FE474B2.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-9E4C0961E7E2
+  category: Tooling, compliance evidence, and deviations
+  rule_statement: Provide verifiable compliance evidence for activities mapped to
+    Table 9.
+  rationale: Derived from ISO 26262 seed SEED-9E4C0961E7E2 (Part 6 Table 9) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-9E4C0961E7E2
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-9E4C0961E7E2/metadata.yaml
+  - audit_checklists/RG-9E4C0961E7E2.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-A0B720294566
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with Table 1.
+  rationale: Derived from ISO 26262 seed SEED-A0B720294566 (Part 6 Table 1) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-A0B720294566
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-A0B720294566/metadata.yaml
+  - audit_checklists/RG-A0B720294566.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-A313BE9C58CB
+  category: Tooling, compliance evidence, and deviations
+  rule_statement: Provide verifiable compliance evidence for activities mapped to
+    Table 6.
+  rationale: Derived from ISO 26262 seed SEED-A313BE9C58CB (Part 6 Table 6) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-A313BE9C58CB
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-A313BE9C58CB/metadata.yaml
+  - audit_checklists/RG-A313BE9C58CB.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-C5BAB6CA4D74
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with Table 3.
+  rationale: Derived from ISO 26262 seed SEED-C5BAB6CA4D74 (Part 6 Table 3) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-C5BAB6CA4D74
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-C5BAB6CA4D74/metadata.yaml
+  - audit_checklists/RG-C5BAB6CA4D74.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-C86203555EAD
+  category: Complexity & structure
+  rule_statement: Keep implementation complexity bounded, reviewable, and traceable
+    to Annex B.
+  rationale: Derived from ISO 26262 seed SEED-C86203555EAD (Part 6 Annex B) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-C86203555EAD
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-C86203555EAD/metadata.yaml
+  - audit_checklists/RG-C86203555EAD.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-D2DBBE48588A
+  category: Defensive programming & contracts
+  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
+    with 10.4.2.
+  rationale: Derived from ISO 26262 seed SEED-D2DBBE48588A (Part 6 10.4.2) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-D2DBBE48588A
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-D2DBBE48588A/metadata.yaml
+  - audit_checklists/RG-D2DBBE48588A.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-D3EBCE5ABB2A
+  category: Tooling, compliance evidence, and deviations
+  rule_statement: Provide verifiable compliance evidence for activities mapped to
+    Table 7.
+  rationale: Derived from ISO 26262 seed SEED-D3EBCE5ABB2A (Part 6 Table 7) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-D3EBCE5ABB2A
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUDIT
+  enforcement_details: Track compliance through structured manual audit checklist
+    evidence.
+  evidence_artifacts:
+  - tests/guidelines/RG-D3EBCE5ABB2A/metadata.yaml
+  - audit_checklists/RG-D3EBCE5ABB2A.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-DCC941884F0D
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 2 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-DCC941884F0D (Part 6 Table 2) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-DCC941884F0D
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-DCC941884F0D/metadata.yaml
+  - audit_checklists/RG-DCC941884F0D.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
+- id: RG-DE2CEFDCD9D7
+  category: Language subset / forbidden constructs
+  rule_statement: Use only the approved Rust language subset for Table 5 and avoid
+    forbidden or high-risk constructs in safety-critical code.
+  rationale: Derived from ISO 26262 seed SEED-DE2CEFDCD9D7 (Part 6 Table 5) to maintain
+    traceable coding-guideline coverage.
+  iso_seeds:
+  - SEED-DE2CEFDCD9D7
+  scope: Rust production code and associated safety evidence artifacts.
+  state: DRAFT
+  enforcement_mode: AUTO
+  enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
+    applicable) and deterministic fixture expectations.
+  evidence_artifacts:
+  - tests/guidelines/RG-DE2CEFDCD9D7/metadata.yaml
+  - audit_checklists/RG-DE2CEFDCD9D7.md
+  deviation_requirements: Document deviation rationale, impact, mitigation, and approval
+    evidence per docs/deviation_process.md.
