@@ -8,6 +8,8 @@
 - Full profile usage: nightly/release validation
 - Promotion policy: no auto-promotion from `.cache/` to tracked `data/`
 - Required promotion inputs: explicit reviewer sign-off + `data/run_registry.yaml` update
+- Diffset review default: generate local diffset HTML for run-to-run review before promotion
+- Diffset gate default: unresolved `block` review items fail promotion checks
 - Traceability gate default: strict (empty guideline/coverage/scope outputs fail by default)
 - Bootstrap relaxation: `--allow-missing-traceability` only for temporary recovery
 - Query retrieval defaults:

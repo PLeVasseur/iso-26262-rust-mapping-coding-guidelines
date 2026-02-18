@@ -48,6 +48,12 @@ uv run python scripts/bootstrap_session.py --profile quick --allow-missing-trace
 - `.cache/ops/runs/<run_id>/summary.md`
 - `.cache/ops/runs/<run_id>/promotion_candidate.json`
 
+Optional: start interactive diffset review in browser:
+
+```bash
+uv run python scripts/review_diffset.py --after-run <run_id>
+```
+
 ## 5) Optional full run
 
 ```bash

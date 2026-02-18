@@ -50,6 +50,32 @@ This repo hosts the operational workflow for growing Rust coding guideline cover
 
 See `docs/promotion-workflow.md` for detailed acceptance guidance.
 
+## Diffset Review Loop
+
+Use diffsets for focused, itemized review between runs.
+
+1. Build and launch browser review from an orchestration run:
+
+   ```bash
+   uv run python scripts/review_diffset.py --after-run <run_id>
+   ```
+
+   This command serves the review page locally and opens your browser automatically.
+
+2. In the review page, assign per-item verdicts (`accept`, `needs_change`, `block`) and comments.
+
+3. Export tracked feedback from the page to:
+
+   - `feedback/diffset_reviews/<diffset_id>.yaml`
+
+4. Check unresolved blockers before promotion:
+
+   ```bash
+   uv run python scripts/check_diffset_review_gate.py --diffset-id <diffset_id>
+   ```
+
+See `docs/diffset-review.md` for full command/reference details.
+
 ## Common Commands
 
 ```bash
@@ -57,5 +83,6 @@ uv sync --frozen
 uv run ruff format --check .
 uv run ruff check .
 uv run python scripts/bootstrap_session.py
+uv run python scripts/review_diffset.py --after-run <run_id>
 uv run python scripts/scaffold_guideline_fixtures.py
 ```

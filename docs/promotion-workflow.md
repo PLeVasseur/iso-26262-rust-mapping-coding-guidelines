@@ -17,6 +17,14 @@ Record the `run_id` from command output and keep these artifacts for review:
 - `.cache/ops/runs/<run_id>/run_manifest.json`
 - `.cache/ops/runs/<run_id>/promotion_candidate.json`
 
+Build a diffset and open local HTML review:
+
+```bash
+uv run python scripts/review_diffset.py --after-run <run_id>
+```
+
+Export reviewer feedback from the UI to `feedback/diffset_reviews/<diffset_id>.yaml`.
+
 ## 2) Validate policy gates
 
 ```bash
@@ -36,7 +44,14 @@ Promotion requires explicit reviewer sign-off for:
 - updated guideline/backlog artifacts,
 - traceability completeness,
 - licensing-guard pass,
+- no unresolved diffset `block` review items,
 - no unresolved S0/S1 extractor findings for affected areas.
+
+Enforce blocker gate from CLI:
+
+```bash
+uv run python scripts/check_diffset_review_gate.py --diffset-id <diffset_id>
+```
 
 ## 4) Update run registry
 
