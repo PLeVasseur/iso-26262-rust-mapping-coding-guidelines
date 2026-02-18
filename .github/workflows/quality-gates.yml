@@ -43,6 +43,12 @@ jobs:
       - name: Licensing guard
         run: uv run python scripts/check_licensing_guard.py
 
+      - name: Diffset review blocker gate
+        run: uv run python scripts/check_diffset_review_gate.py --allow-missing
+
+      - name: Unit tests
+        run: uv run python -m unittest discover -s tests/unit -p "test_*.py"
+
   orchestrate-smoke:
     runs-on: ubuntu-latest
     env:
