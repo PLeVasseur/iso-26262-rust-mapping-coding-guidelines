@@ -61,6 +61,14 @@ def load_guideline_count(root: Path) -> int:
     return len(payload.get("guidelines", []))
 
 
+def load_category_count(root: Path) -> int:
+    path = root / "data" / "guideline_categories.yaml"
+    if not path.exists():
+        return 0
+    payload = read_yaml(path) or {}
+    return len(payload.get("categories", []))
+
+
 def load_seed_count(root: Path) -> int:
     path = root / "data" / "seed_topics.yaml"
     if not path.exists():
@@ -272,6 +280,19 @@ def main() -> int:
         if code != 0:
             runtime_errors.append("build_seed_topics failed")
 
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            ["scripts/generate_guideline_artifacts.py"],
+            report_path=run_dir / "generate_guideline_artifacts.step.json",
+        )
+        step_results["generate_guideline_artifacts"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code != 0:
+            runtime_errors.append("generate_guideline_artifacts failed")
+
     schema_report_path = run_dir / "validate_schemas.report.json"
     if not runtime_errors:
         code, output = run_python_step(
@@ -329,6 +350,7 @@ def main() -> int:
 
     current_metrics = {
         "seed_topic_count": load_seed_count(root),
+        "category_count": load_category_count(root),
         "coverage_row_count": load_coverage_row_count(root),
         "guideline_count": load_guideline_count(root),
         "traceability_score": 0.0,
@@ -427,6 +449,7 @@ def main() -> int:
             "data/guideline_categories.yaml",
             "data/todo_guidelines.yaml",
             "data/coverage_matrix.csv",
+            "data/target_scope.yaml",
         ],
         "requires_signoff": True,
     }
@@ -439,6 +462,7 @@ def main() -> int:
         f"- corpus_pack: {args.corpus_pack}",
         f"- base_run: {baseline_entry['accepted_run_id'] if baseline_entry else 'none'}",
         f"- seed_topic_count: {current_metrics['seed_topic_count']}",
+        f"- category_count: {current_metrics['category_count']}",
         f"- guideline_count: {current_metrics['guideline_count']}",
         f"- coverage_row_count: {current_metrics['coverage_row_count']}",
         f"- runtime_errors: {len(runtime_errors)}",
