@@ -3,15 +3,28 @@ guidelines:
 - id: RG-10299F77BE61
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with Annex E.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-10299F77BE61
-    (Part 6 Annex E). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-10299F77BE61 (Part 6 Annex E) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Within the crate, implementations shall check input/state assumptions
+    and route recoverable faults through explicit `Result`-based error paths; safety-relevant
+    code must avoid unchecked `unwrap`/`expect` unless a reviewed invariant check
+    provides objective evidence that failure is unreachable.
+  amplification: Verify each fallible boundary (public APIs, external data parsing,
+    and state transitions) has a testable failure branch and reviewable mapping to
+    typed errors. Evidence should include tests that assert expected `Err` variants
+    and checks showing no silent drop, defaulting, or ignored error paths.
+  exceptions: 'Exceptions require the documented deviation process: record the specific
+    invariant, safety impact assessment, and mitigation; provide review evidence and
+    a check (test, analysis, or monitor) that detects invariant drift. Without this
+    evidence package and approval, `unwrap`/`expect` usage in safety-relevant paths
+    is non-compliant.'
+  rationale: 'This preserves Annex E defensive-programming intent while making conformance
+    verifiable: reviewers can check explicit error contracts, and test evidence can
+    demonstrate controlled behavior for both valid and invalid inputs. Rust anchors
+    (`Option`, `Result`, and `Error`) provide concrete, reviewable mechanisms for
+    traceable fault handling evidence. Evidence anchor: :cite:`ISO26262-Part6-Annex-E`
+    for defensive checks and explicit error handling obligations. Evidence anchor:
+    :std:`core::option::Option` for optional-state handling that must be checked before
+    use. Evidence anchor: :std:`std::result::Result` for explicit recoverable error
+    propagation and verification by `Err` assertions.'
   iso_seeds:
   - SEED-10299F77BE61
   scope: crate
@@ -34,21 +47,21 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-10299F77BE61/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-10299F77BE61/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only negative
-        evidence.
+      explanation: The function performs unchecked parsing with `unwrap`, so invalid
+        input causes an uncontrolled panic instead of explicit error handling.
+      compile_expectation: compile_pass
+      expected_outcome: runtime_panic
+      verification_notes: Execute with invalid input; runtime must panic at `unwrap`,
+        providing negative evidence for non-compliance.
     compliant:
       code_path: tests/guidelines/RG-10299F77BE61/examples/compliant.rs
       doc_path: tests/guidelines/RG-10299F77BE61/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only compliant
-        evidence.
+      explanation: The function validates preconditions and returns typed errors;
+        tests provide positive and negative-path evidence with explicit assertions.
+      compile_expectation: compile_pass
+      expected_outcome: assertion_pass
+      verification_notes: Run as a test or executable check; assertions must pass,
+        and invalid inputs must produce the expected `Err` variants.
   obligation_units:
   - ISO26262-6-2018:annex_e:clause:annex_e
   fls_refs:
