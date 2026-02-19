@@ -22,6 +22,12 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93.1"
+          components: clippy,rustfmt,rust-docs
+
       - name: Install uv
         run: pip install uv
 
@@ -36,6 +42,15 @@ jobs:
 
       - name: Validate schemas
         run: uv run python scripts/validate_schemas.py --strict-generated
+
+      - name: Refresh check Clippy lint catalog
+        run: uv run python scripts/update_clippy_lints_catalog.py --check
+
+      - name: Guideline completeness gate
+        run: uv run python scripts/check_guideline_completeness.py
+
+      - name: Guideline example compile/lint gate
+        run: uv run python scripts/check_guideline_examples.py
 
       - name: Traceability gate
         run: uv run python scripts/check_traceability.py
@@ -64,6 +79,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.93.1"
+          components: clippy,rustfmt,rust-docs
 
       - name: Install uv
         run: pip install uv
