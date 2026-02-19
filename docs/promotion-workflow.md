@@ -34,6 +34,9 @@ uv run python scripts/validate_schemas.py
 uv run python scripts/update_clippy_lints_catalog.py --check
 uv run python scripts/check_guideline_completeness.py
 uv run python scripts/check_guideline_examples.py
+uv run python scripts/check_rule_decomposition.py
+uv run python scripts/check_fls_proxy_coverage.py
+uv run python scripts/check_guideline_quality.py
 uv run python scripts/check_traceability.py
 uv run python scripts/check_licensing_guard.py
 ```

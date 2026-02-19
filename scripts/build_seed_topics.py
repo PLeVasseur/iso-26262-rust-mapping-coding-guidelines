@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from _common import EXIT_RUNTIME_FAIL, EXIT_SUCCESS, read_json, repo_root, write_yaml
+from _fls_proxy import normalize_obligation_unit
 
 
 def parse_args() -> argparse.Namespace:
@@ -129,6 +130,16 @@ def main() -> int:
                 "reference": reference,
                 "citation_anchor_id": anchor,
                 "row_key": row_key,
+                "obligation_unit_id": normalize_obligation_unit(
+                    {
+                        "seed_id": stable_seed_id(key),
+                        "citation_anchor_id": anchor,
+                        "row_key": row_key,
+                        "chunk_id": str(result.get("chunk_id") or "unknown"),
+                        "iso_ref": f"Part {part} {reference}".strip(),
+                        "reference": reference,
+                    }
+                ),
             }
 
     payload = {

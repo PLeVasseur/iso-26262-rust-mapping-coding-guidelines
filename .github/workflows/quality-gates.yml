@@ -47,10 +47,19 @@ jobs:
         run: uv run python scripts/update_clippy_lints_catalog.py --check
 
       - name: Guideline completeness gate
-        run: uv run python scripts/check_guideline_completeness.py
+        run: uv run python scripts/check_guideline_completeness.py --require-fls-refs
 
       - name: Guideline example compile/lint gate
         run: uv run python scripts/check_guideline_examples.py
+
+      - name: Rule decomposition gate
+        run: uv run python scripts/check_rule_decomposition.py
+
+      - name: FLS proxy coverage gate
+        run: uv run python scripts/check_fls_proxy_coverage.py
+
+      - name: Guideline quality gate
+        run: uv run python scripts/check_guideline_quality.py
 
       - name: Traceability gate
         run: uv run python scripts/check_traceability.py

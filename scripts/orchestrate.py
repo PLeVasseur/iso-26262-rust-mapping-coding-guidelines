@@ -307,6 +307,45 @@ def main() -> int:
     if not runtime_errors:
         code, output = run_python_step(
             root,
+            ["scripts/build_fls_inventory.py"],
+            report_path=run_dir / "build_fls_inventory.step.json",
+        )
+        step_results["build_fls_inventory"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code != 0:
+            runtime_errors.append("build_fls_inventory failed")
+
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            ["scripts/build_fls_target_candidates.py"],
+            report_path=run_dir / "build_fls_target_candidates.step.json",
+        )
+        step_results["build_fls_target_candidates"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code != 0:
+            runtime_errors.append("build_fls_target_candidates failed")
+
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            ["scripts/decompose_guidelines.py"],
+            report_path=run_dir / "decompose_guidelines.step.json",
+        )
+        step_results["decompose_guidelines"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code != 0:
+            runtime_errors.append("decompose_guidelines failed")
+
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
             ["scripts/generate_guideline_artifacts.py"],
             report_path=run_dir / "generate_guideline_artifacts.step.json",
         )
@@ -316,6 +355,19 @@ def main() -> int:
         }
         if code != 0:
             runtime_errors.append("generate_guideline_artifacts failed")
+
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            ["scripts/scaffold_guideline_fixtures.py"],
+            report_path=run_dir / "scaffold_guideline_fixtures.step.json",
+        )
+        step_results["scaffold_guideline_fixtures"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code != 0:
+            runtime_errors.append("scaffold_guideline_fixtures failed")
 
     schema_report_path = run_dir / "validate_schemas.report.json"
     if not runtime_errors:
@@ -412,6 +464,66 @@ def main() -> int:
         elif code == EXIT_POLICY_FAIL:
             policy_errors.append("check_licensing_guard policy failure")
 
+    decomposition_report_path = run_dir / "check_rule_decomposition.report.json"
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            [
+                "scripts/check_rule_decomposition.py",
+                "--json-output",
+                str(decomposition_report_path),
+            ],
+            report_path=run_dir / "check_rule_decomposition.step.json",
+        )
+        step_results["check_rule_decomposition"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code == EXIT_RUNTIME_FAIL:
+            runtime_errors.append("check_rule_decomposition runtime failure")
+        elif code == EXIT_POLICY_FAIL:
+            policy_errors.append("check_rule_decomposition policy failure")
+
+    fls_proxy_report_path = run_dir / "check_fls_proxy_coverage.report.json"
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            [
+                "scripts/check_fls_proxy_coverage.py",
+                "--json-output",
+                str(fls_proxy_report_path),
+            ],
+            report_path=run_dir / "check_fls_proxy_coverage.step.json",
+        )
+        step_results["check_fls_proxy_coverage"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code == EXIT_RUNTIME_FAIL:
+            runtime_errors.append("check_fls_proxy_coverage runtime failure")
+        elif code == EXIT_POLICY_FAIL:
+            policy_errors.append("check_fls_proxy_coverage policy failure")
+
+    guideline_quality_report_path = run_dir / "check_guideline_quality.report.json"
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            [
+                "scripts/check_guideline_quality.py",
+                "--json-output",
+                str(guideline_quality_report_path),
+            ],
+            report_path=run_dir / "check_guideline_quality.step.json",
+        )
+        step_results["check_guideline_quality"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code == EXIT_RUNTIME_FAIL:
+            runtime_errors.append("check_guideline_quality runtime failure")
+        elif code == EXIT_POLICY_FAIL:
+            policy_errors.append("check_guideline_quality policy failure")
+
     current_metrics = {
         "seed_topic_count": load_seed_count(root),
         "category_count": load_category_count(root),
@@ -419,6 +531,8 @@ def main() -> int:
         "guideline_count": load_guideline_count(root),
         "traceability_score": 0.0,
         "evidence_link_score": 0.0,
+        "fls_chapter_coverage": 0.0,
+        "guideline_quality_avg": 0.0,
     }
 
     if traceability_report_path.exists():
@@ -428,6 +542,17 @@ def main() -> int:
             "evidence_path" in message for message in traceability_report.get("errors", [])
         )
         current_metrics["evidence_link_score"] = 0.0 if has_evidence_errors else 1.0
+
+    if fls_proxy_report_path.exists():
+        fls_proxy_report = read_json(fls_proxy_report_path)
+        chapter_coverage = fls_proxy_report.get("chapter_coverage") or {}
+        current_metrics["fls_chapter_coverage"] = float(chapter_coverage.get("ratio") or 0.0)
+
+    if guideline_quality_report_path.exists():
+        guideline_quality_report = read_json(guideline_quality_report_path)
+        current_metrics["guideline_quality_avg"] = float(
+            guideline_quality_report.get("average_score") or 0.0
+        )
 
     scope_payload = read_yaml(root / "data" / "target_scope.yaml") or {}
     scope_fingerprint = stable_scope_fingerprint(scope_payload.get("in_scope_target_ids", []))
@@ -488,6 +613,9 @@ def main() -> int:
         "run_id": run_id,
         "candidate_files": [
             "data/seed_topics.yaml",
+            "data/fls_inventory.yaml",
+            "data/fls_target_candidates.yaml",
+            "data/decomposition_report.yaml",
             "data/guideline_categories.yaml",
             "data/todo_guidelines.yaml",
             "data/coverage_matrix.csv",
@@ -540,6 +668,8 @@ def main() -> int:
         f"- category_count: {current_metrics['category_count']}",
         f"- guideline_count: {current_metrics['guideline_count']}",
         f"- coverage_row_count: {current_metrics['coverage_row_count']}",
+        f"- fls_chapter_coverage: {current_metrics['fls_chapter_coverage']}",
+        f"- guideline_quality_avg: {current_metrics['guideline_quality_avg']}",
         f"- snapshot_file_count: {len(snapshot_written)}",
         f"- runtime_errors: {len(runtime_errors)}",
         f"- policy_errors: {len(policy_errors)}",

@@ -15,7 +15,14 @@ from _common import (
     write_json,
 )
 
-REQUIRED_COLUMNS = ["target_id", "seed_id", "guideline_id", "evidence_path"]
+REQUIRED_COLUMNS = [
+    "target_id",
+    "obligation_unit_id",
+    "seed_id",
+    "guideline_id",
+    "fls_ref",
+    "evidence_path",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,6 +121,9 @@ def main() -> int:
 
     report = {
         "coverage_row_count": len(rows),
+        "obligation_unit_count": len(
+            {row.get("obligation_unit_id", "").strip() for row in rows if row}
+        ),
         "guideline_count": len(guideline_ids),
         "target_scope_count": len(in_scope),
         "error_count": len(errors),

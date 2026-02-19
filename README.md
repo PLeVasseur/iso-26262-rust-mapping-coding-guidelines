@@ -7,15 +7,19 @@ This repo hosts the operational workflow for growing Rust coding guideline cover
 1. Resolve extractor paths and verify extractor health.
 2. Run deterministic seed queries into `.cache/`.
 3. Normalize query outputs into tracked canonical data (`data/seed_topics.yaml`).
-4. Generate guideline artifacts from normalized seeds:
+4. Build FLS proxy artifacts:
+   - `data/fls_inventory.yaml`
+   - `data/fls_target_candidates.yaml`
+   - `data/decomposition_report.yaml`
+5. Generate guideline artifacts from normalized seeds:
    - `data/guideline_categories.yaml`
    - `data/todo_guidelines.yaml`
    - `data/coverage_matrix.csv`
    - `data/target_scope.yaml`
-5. Scaffold/refresh rule fixture examples under `tests/guidelines/<RULE_ID>/examples/`.
-6. Run guideline schema/completeness/example gates plus traceability and licensing checks.
-7. Compute before/after deltas for `change` and `growth` modes.
-8. Promote approved outputs into `data/` and update run registry.
+6. Scaffold/refresh rule fixture examples under `tests/guidelines/<RULE_ID>/examples/`.
+7. Run schema/completeness/example gates plus traceability, decomposition, FLS proxy, quality, and licensing checks.
+8. Compute before/after deltas for `change` and `growth` modes.
+9. Promote approved outputs into `data/` and update run registry.
 
 ## Tooling
 
@@ -44,11 +48,14 @@ This repo hosts the operational workflow for growing Rust coding guideline cover
    uv run ruff check .
    uv run python scripts/validate_schemas.py
    uv run python scripts/update_clippy_lints_catalog.py --check
-   uv run python scripts/check_guideline_completeness.py
-   uv run python scripts/check_guideline_examples.py
-   uv run python scripts/check_traceability.py
-   uv run python scripts/check_licensing_guard.py
-   ```
+uv run python scripts/check_guideline_completeness.py
+uv run python scripts/check_guideline_examples.py
+uv run python scripts/check_rule_decomposition.py
+uv run python scripts/check_fls_proxy_coverage.py
+uv run python scripts/check_guideline_quality.py
+uv run python scripts/check_traceability.py
+uv run python scripts/check_licensing_guard.py
+```
 
 4. After reviewer sign-off, register/refresh accepted run entries in `data/run_registry.yaml`.
 
@@ -93,6 +100,9 @@ uv run python scripts/bootstrap_session.py
 uv run python scripts/update_clippy_lints_catalog.py --check
 uv run python scripts/check_guideline_completeness.py
 uv run python scripts/check_guideline_examples.py
+uv run python scripts/check_rule_decomposition.py
+uv run python scripts/check_fls_proxy_coverage.py
+uv run python scripts/check_guideline_quality.py
 uv run python scripts/review_diffset.py --after-run <run_id>
 uv run python scripts/scaffold_guideline_fixtures.py
 ```

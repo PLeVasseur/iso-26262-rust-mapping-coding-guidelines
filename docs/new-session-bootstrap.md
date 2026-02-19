@@ -26,8 +26,9 @@ If this fails, resolve path issues in `config/extractor_paths.yaml` or override 
 uv run python scripts/bootstrap_session.py --profile quick
 ```
 
-This run executes seed querying, seed normalization, guideline artifact generation,
-schema validation, guideline completeness/example checks, traceability checks,
+This run executes seed querying, seed normalization, FLS proxy inventory/candidate generation,
+decomposition planning, guideline artifact generation, schema validation, guideline
+completeness/example checks, decomposition/FLS proxy/quality checks, traceability checks,
 and licensing guard checks.
 
 For strict non-bootstrap mode (requires baseline in `data/run_registry.yaml`):

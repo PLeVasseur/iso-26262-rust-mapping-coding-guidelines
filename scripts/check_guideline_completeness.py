@@ -30,11 +30,13 @@ VALID_NON_COMPLIANT_EXPECTATION = {"compile_fail", "compile_pass", "documented-o
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Check guideline records for v2 completeness")
+    parser = argparse.ArgumentParser(description="Check guideline records for v3 completeness")
     parser.add_argument("--todo-guidelines", type=Path, default=Path("data/todo_guidelines.yaml"))
     parser.add_argument(
         "--clippy-catalog", type=Path, default=Path("data/clippy_lints_catalog.yaml")
     )
+    parser.add_argument("--fls-inventory", type=Path, default=Path("data/fls_inventory.yaml"))
+    parser.add_argument("--require-fls-refs", action="store_true")
     parser.add_argument("--json-output", type=Path)
     return parser.parse_args()
 
@@ -59,6 +61,7 @@ def main() -> int:
     root = repo_root()
     guidelines_path = root / args.todo_guidelines
     catalog_path = root / args.clippy_catalog
+    fls_inventory_path = root / args.fls_inventory
 
     payload = load_guidelines_payload(guidelines_path)
     guidelines = payload.get("guidelines") or []
@@ -68,6 +71,15 @@ def main() -> int:
         for item in catalog_payload.get("lints", [])
         if isinstance(item, dict)
     }
+
+    valid_fls_refs: set[str] = set()
+    if fls_inventory_path.exists():
+        fls_payload = read_yaml(fls_inventory_path) or {}
+        valid_fls_refs = {
+            str(item.get("fls_ref") or "").strip()
+            for item in fls_payload.get("paragraphs", [])
+            if str(item.get("fls_ref") or "").strip()
+        }
 
     errors: list[str] = []
     warnings: list[str] = []
@@ -95,6 +107,31 @@ def main() -> int:
         scope = str(guideline.get("scope") or "")
         if scope not in VALID_SCOPE:
             errors.append(f"{prefix} invalid scope `{scope}`")
+
+        fls_refs = [str(ref).strip() for ref in guideline.get("fls_refs", []) if str(ref).strip()]
+        guideline_state = str(guideline.get("state") or "")
+        if not fls_refs:
+            message = f"{prefix} missing fls_refs"
+            if args.require_fls_refs and guideline_state != "DEPRECATED":
+                errors.append(message)
+            else:
+                warnings.append(message)
+        elif valid_fls_refs:
+            for ref in fls_refs:
+                if ref not in valid_fls_refs:
+                    errors.append(f"{prefix} fls_ref not in inventory: {ref}")
+        elif fls_inventory_path.exists():
+            warnings.append(f"{prefix} FLS inventory has no paragraphs to validate refs")
+        else:
+            warnings.append(
+                f"{prefix} FLS inventory missing; cannot validate fls_refs against catalog"
+            )
+
+        obligation_units = [
+            str(unit).strip() for unit in guideline.get("obligation_units", []) if str(unit).strip()
+        ]
+        if not obligation_units:
+            warnings.append(f"{prefix} obligation_units not set")
 
         decidable = str(guideline.get("decidable") or "")
         if decidable not in VALID_DECIDABLE:
