@@ -211,34 +211,61 @@ def build_examples(
     decidable_status: str | None,
 ) -> dict[str, dict[str, str]]:
     base = f"tests/guidelines/{guideline_id_value}/examples"
-    compliant_expectation = "no_run" if decidable == "decidable" else "documented-only"
+    compliant_expectation = "compile_pass" if decidable == "decidable" else "documented-only"
+    compliant_outcome = "assertion_pass" if decidable == "decidable" else "documented_only"
 
     if decidable_status == "compiler":
         non_compliant_expectation = "compile_fail"
+        non_compliant_outcome = "compile_fail"
+    elif decidable_status == "clippy":
+        non_compliant_expectation = "compile_pass"
+        non_compliant_outcome = "lint_trigger"
+    elif decidable_status == "possible-with-clippy":
+        non_compliant_expectation = "compile_pass"
+        non_compliant_outcome = "runtime_panic"
+    elif decidable_status == "impossible-with-clippy":
+        non_compliant_expectation = "compile_pass"
+        non_compliant_outcome = "runtime_panic"
     elif decidable_status is None:
         non_compliant_expectation = "documented-only"
+        non_compliant_outcome = "documented_only"
     else:
         non_compliant_expectation = "compile_pass"
+        non_compliant_outcome = "runtime_panic"
+
+    non_compliant = {
+        "code_path": f"{base}/non_compliant.rs",
+        "doc_path": f"{base}/non_compliant.md",
+        "explanation": (
+            "This example intentionally violates the guideline intent and should be used as "
+            "negative evidence during rule validation."
+        ),
+        "compile_expectation": non_compliant_expectation,
+        "expected_outcome": non_compliant_outcome,
+    }
+    if non_compliant_outcome == "documented_only":
+        non_compliant["verification_notes"] = (
+            "Automated execution not required for documented-only negative evidence."
+        )
+
+    compliant = {
+        "code_path": f"{base}/compliant.rs",
+        "doc_path": f"{base}/compliant.md",
+        "explanation": (
+            "This example demonstrates a compliant coding pattern aligned with the guideline "
+            "intent and should be used as positive evidence during rule validation."
+        ),
+        "compile_expectation": compliant_expectation,
+        "expected_outcome": compliant_outcome,
+    }
+    if compliant_outcome == "documented_only":
+        compliant["verification_notes"] = (
+            "Automated execution not required for documented-only compliant evidence."
+        )
 
     return {
-        "non_compliant": {
-            "code_path": f"{base}/non_compliant.rs",
-            "doc_path": f"{base}/non_compliant.md",
-            "explanation": (
-                "This example intentionally violates the guideline intent and should be used as "
-                "negative evidence during rule validation."
-            ),
-            "compile_expectation": non_compliant_expectation,
-        },
-        "compliant": {
-            "code_path": f"{base}/compliant.rs",
-            "doc_path": f"{base}/compliant.md",
-            "explanation": (
-                "This example demonstrates a compliant coding pattern aligned with the guideline "
-                "intent and should be used as positive evidence during rule validation."
-            ),
-            "compile_expectation": compliant_expectation,
-        },
+        "non_compliant": non_compliant,
+        "compliant": compliant,
     }
 
 
@@ -482,12 +509,41 @@ def merge_guidelines(
             "decidability_rationale",
             "enforcement_mode",
             "enforcement_details",
-            "examples",
             "deviation_requirements",
         ]:
             if key not in candidate or candidate.get(key) in (None, "", [], {}):
                 if key in generated:
                     candidate[key] = generated[key]
+
+        generated_examples = generated.get("examples") or {}
+        existing_examples = candidate.get("examples") or {}
+        merged_examples: dict[str, Any] = dict(existing_examples)
+        for side in ["compliant", "non_compliant"]:
+            generated_side = generated_examples.get(side) or {}
+            existing_side = dict(existing_examples.get(side) or {})
+            if not isinstance(generated_side, dict):
+                if existing_side:
+                    merged_examples[side] = existing_side
+                continue
+
+            for key in [
+                "code_path",
+                "doc_path",
+                "explanation",
+                "compile_expectation",
+                "expected_outcome",
+                "expected_signals",
+                "verification_notes",
+                "expectation_exception_reason",
+            ]:
+                if key in existing_side and existing_side.get(key) not in (None, "", [], {}):
+                    continue
+                if key in generated_side:
+                    existing_side[key] = generated_side[key]
+            merged_examples[side] = existing_side
+
+        if merged_examples:
+            candidate["examples"] = merged_examples
 
         merged.append(candidate)
 

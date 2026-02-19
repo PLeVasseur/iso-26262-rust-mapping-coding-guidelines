@@ -61,11 +61,31 @@ Each example object must include:
 - `doc_path`
 - `explanation`
 - `compile_expectation`
+- `expected_outcome`
+
+Optional but recommended per example object:
+
+- `expected_signals` (output substrings/markers for stronger checks)
+- `verification_notes` (required when using `documented_only` outcome)
 
 Allowed compile expectations:
 
 - Compliant: `compile_pass|no_run|documented-only`
 - Non-compliant: `compile_fail|compile_pass|documented-only`
+
+Allowed expected outcomes:
+
+- `assertion_pass`
+- `compile_fail`
+- `runtime_panic`
+- `lint_trigger`
+- `documented_only`
+
+Recommended outcome mapping:
+
+- Compliant examples should prefer `assertion_pass` and include one or more assertions.
+- Non-compliant examples should prefer strong negative evidence (`compile_fail`, `runtime_panic`, or `lint_trigger`).
+- `documented_only` should be used sparingly and include `verification_notes`.
 
 Compiler-status default rule:
 
@@ -77,6 +97,8 @@ Compiler-status default rule:
 - Markdown files (`*.md`) are the source-of-truth examples and must include:
   - prose explanation
   - at least one Rust fenced code block
+- For `expected_outcome=assertion_pass`, the Rust code should include explicit assertions.
+- For `expected_outcome=runtime_panic`, prefer `should_panic` fences or equivalent deterministic panic checks.
 - Rust source files (`*.rs`) are convenience extracted files for tool/harness checks.
 
 ## Validation commands

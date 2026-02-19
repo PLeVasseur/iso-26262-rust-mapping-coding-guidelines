@@ -140,6 +140,27 @@
                     "type": "string",
                     "enum": ["compile_fail", "compile_pass", "documented-only"]
                   },
+                  "expected_outcome": {
+                    "type": "string",
+                    "enum": [
+                      "assertion_pass",
+                      "compile_fail",
+                      "runtime_panic",
+                      "lint_trigger",
+                      "documented_only"
+                    ]
+                  },
+                  "expected_signals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "verification_notes": {
+                    "type": "string",
+                    "minLength": 1
+                  },
                   "expectation_exception_reason": {
                     "type": "string",
                     "minLength": 1
@@ -162,6 +183,27 @@
                   "compile_expectation": {
                     "type": "string",
                     "enum": ["compile_pass", "no_run", "documented-only"]
+                  },
+                  "expected_outcome": {
+                    "type": "string",
+                    "enum": [
+                      "assertion_pass",
+                      "compile_fail",
+                      "runtime_panic",
+                      "lint_trigger",
+                      "documented_only"
+                    ]
+                  },
+                  "expected_signals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "verification_notes": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 }
               }

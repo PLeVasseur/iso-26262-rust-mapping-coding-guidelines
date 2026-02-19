@@ -37,12 +37,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-10299F77BE61/examples/compliant.rs
       doc_path: tests/guidelines/RG-10299F77BE61/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:annex_e:clause:annex_e
   fls_refs:
@@ -86,12 +92,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-1E3A1235235C/examples/compliant.rs
       doc_path: tests/guidelines/RG-1E3A1235235C/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-1E3A1235235C%20candidate%20lint
   obligation_units:
@@ -138,12 +146,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-1E8B8CE3DBF1/examples/compliant.rs
       doc_path: tests/guidelines/RG-1E8B8CE3DBF1/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-1E8B8CE3DBF1%20candidate%20lint
   obligation_units:
@@ -190,12 +200,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-230964AF44D4/examples/compliant.rs
       doc_path: tests/guidelines/RG-230964AF44D4/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:5_4_3:clause:5_4_3
   fls_refs:
@@ -238,12 +254,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-262BBEC1A2A9/examples/compliant.rs
       doc_path: tests/guidelines/RG-262BBEC1A2A9/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:5_3:clause:5_3
   fls_refs:
@@ -287,12 +309,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.rs
       doc_path: tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:7_4_12:clause:7_4_12
   fls_refs:
@@ -336,12 +364,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-587CE115D9C8/examples/compliant.rs
       doc_path: tests/guidelines/RG-587CE115D9C8/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-587CE115D9C8%20candidate%20lint
   obligation_units:
@@ -388,12 +418,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-5B4923F76EEA/examples/compliant.rs
       doc_path: tests/guidelines/RG-5B4923F76EEA/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-5B4923F76EEA%20candidate%20lint
   obligation_units:
@@ -440,12 +472,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-697000BF3263/examples/compliant.rs
       doc_path: tests/guidelines/RG-697000BF3263/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:table:table_7:002:1
   fls_refs:
@@ -490,12 +528,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-7359C842E4E4/examples/compliant.rs
       doc_path: tests/guidelines/RG-7359C842E4E4/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7359C842E4E4%20candidate%20lint
   obligation_units:
@@ -542,12 +582,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-744267BD9DEC/examples/compliant.rs
       doc_path: tests/guidelines/RG-744267BD9DEC/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:table:table_3:001:3
   fls_refs:
@@ -592,12 +638,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-75D65B270D75/examples/compliant.rs
       doc_path: tests/guidelines/RG-75D65B270D75/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-75D65B270D75%20candidate%20lint
   obligation_units:
@@ -644,12 +692,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-7CB86E3EA294/examples/compliant.rs
       doc_path: tests/guidelines/RG-7CB86E3EA294/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7CB86E3EA294%20candidate%20lint
   obligation_units:
@@ -696,12 +746,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-82B1F0353FD0/examples/compliant.rs
       doc_path: tests/guidelines/RG-82B1F0353FD0/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:annex_d:clause:annex_d
   fls_refs:
@@ -745,12 +801,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-90F9CF8770E1/examples/compliant.rs
       doc_path: tests/guidelines/RG-90F9CF8770E1/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-90F9CF8770E1%20candidate%20lint
   obligation_units:
@@ -797,12 +855,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-956D02940FC5/examples/compliant.rs
       doc_path: tests/guidelines/RG-956D02940FC5/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:9_4_2:clause:9_4_2
   fls_refs:
@@ -846,12 +910,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-9B66370DEE3A/examples/compliant.rs
       doc_path: tests/guidelines/RG-9B66370DEE3A/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:table:table_9:001:1
   fls_refs:
@@ -896,12 +966,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-9BA71FE474B2/examples/compliant.rs
       doc_path: tests/guidelines/RG-9BA71FE474B2/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:5_4_2:clause:5_4_2
   fls_refs:
@@ -945,12 +1021,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-9E4C0961E7E2/examples/compliant.rs
       doc_path: tests/guidelines/RG-9E4C0961E7E2/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:table:table_9:002:1
   fls_refs:
@@ -995,12 +1077,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-A0B720294566/examples/compliant.rs
       doc_path: tests/guidelines/RG-A0B720294566/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:table:table_1:001:2
   fls_refs:
@@ -1044,12 +1132,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-A313BE9C58CB/examples/compliant.rs
       doc_path: tests/guidelines/RG-A313BE9C58CB/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:table:table_6:001:10
   fls_refs:
@@ -1094,12 +1188,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-C5BAB6CA4D74/examples/compliant.rs
       doc_path: tests/guidelines/RG-C5BAB6CA4D74/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:table:table_3:001:9
   fls_refs:
@@ -1143,12 +1243,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-C86203555EAD/examples/compliant.rs
       doc_path: tests/guidelines/RG-C86203555EAD/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:annex_b:clause:annex_b
   fls_refs:
@@ -1192,12 +1298,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-D2DBBE48588A/examples/compliant.rs
       doc_path: tests/guidelines/RG-D2DBBE48588A/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:10_4_2:clause:10_4_2
   fls_refs:
@@ -1241,12 +1353,18 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only negative
+        evidence.
     compliant:
       code_path: tests/guidelines/RG-D3EBCE5ABB2A/examples/compliant.rs
       doc_path: tests/guidelines/RG-D3EBCE5ABB2A/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+      expected_outcome: documented_only
+      verification_notes: Automated execution not required for documented-only compliant
+        evidence.
   obligation_units:
   - ISO26262-6-2018:table:table_7:001:1
   fls_refs:
@@ -1291,12 +1409,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-DCC941884F0D/examples/compliant.rs
       doc_path: tests/guidelines/RG-DCC941884F0D/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-DCC941884F0D%20candidate%20lint
   obligation_units:
@@ -1343,12 +1463,14 @@ guidelines:
       explanation: This example intentionally violates the guideline intent and should
         be used as negative evidence during rule validation.
       compile_expectation: compile_pass
+      expected_outcome: runtime_panic
     compliant:
       code_path: tests/guidelines/RG-DE2CEFDCD9D7/examples/compliant.rs
       doc_path: tests/guidelines/RG-DE2CEFDCD9D7/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: no_run
+      expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-DE2CEFDCD9D7%20candidate%20lint
   obligation_units:

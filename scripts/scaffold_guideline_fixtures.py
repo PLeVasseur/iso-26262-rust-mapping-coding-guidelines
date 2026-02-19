@@ -43,7 +43,25 @@ def write_text_file(path: Path, content: str, overwrite: bool) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def code_fence_tag(expectation: str) -> str:
+def fallback_expected_outcome(kind: str, expectation: str) -> str:
+    normalized = expectation.strip()
+    if normalized == "compile_fail":
+        return "compile_fail"
+    if normalized == "documented-only":
+        return "documented_only"
+    if kind == "non_compliant":
+        return "runtime_panic"
+    return "assertion_pass"
+
+
+def code_fence_tag(expectation: str, expected_outcome: str) -> str:
+    outcome = expected_outcome.strip().lower()
+    if outcome == "compile_fail":
+        return "compile_fail"
+    if outcome == "runtime_panic":
+        return "should_panic"
+    if outcome == "documented_only":
+        return "no_run"
     if expectation == "compile_fail":
         return "compile_fail"
     if expectation == "no_run":
@@ -62,10 +80,13 @@ def build_example_markdown(
     rule_id: str,
     kind: str,
     expectation: str,
+    expected_outcome: str,
     explanation: str,
+    verification_notes: str,
 ) -> str:
-    fence_tag = code_fence_tag(expectation)
-    if kind == "non_compliant" and expectation == "compile_fail":
+    fence_tag = code_fence_tag(expectation, expected_outcome)
+    outcome = expected_outcome.strip().lower()
+    if outcome == "compile_fail":
         code = (
             "fn main() {\n"
             "    // Intentional compile failure for non-compliant compiler-checkable example\n"
@@ -73,22 +94,36 @@ def build_example_markdown(
             "    let _ = value;\n"
             "}\n"
         )
+    elif outcome == "runtime_panic":
+        code = (
+            "fn main() {\n"
+            "    let values = [1_u32, 2_u32, 3_u32];\n"
+            "    let idx = values.len();\n"
+            "    let _ = values[idx];\n"
+            "}\n"
+        )
     elif kind == "non_compliant":
         code = (
             "fn main() {\n"
             "    // Non-compliant placeholder; replace with rule-specific violation.\n"
-            "    let mut numbers = vec![3, 2, 1];\n"
-            "    numbers.sort();\n"
-            '    println!("{:?}", numbers);\n'
+            "    let input = [1_u32, 2_u32, 3_u32];\n"
+            "    let mut total = 0_u32;\n"
+            "    for item in input {\n"
+            "        total += item;\n"
+            "    }\n"
+            "    // Missing safety check on purpose for negative evidence.\n"
+            "    if total == 6 {\n"
+            "        // Intentionally weak behavior for lint-style non-compliance examples.\n"
+            '        println!("{}", total);\n'
+            "    }\n"
             "}\n"
         )
     else:
         code = (
             "fn main() {\n"
-            "    // Compliant pattern placeholder; update with rule-specific compliant example\n"
             "    let values = [1_u32, 2_u32, 3_u32];\n"
             "    let total: u32 = values.into_iter().sum();\n"
-            '    println!("{}", total);\n'
+            "    assert_eq!(total, 6);\n"
             "}\n"
         )
 
@@ -97,11 +132,19 @@ def build_example_markdown(
         "",
         explanation,
         "",
-        f"```{fence_tag}",
-        code.rstrip(),
-        "```",
-        "",
+        f"Expected outcome: `{outcome or 'documented_only'}`.",
     ]
+    if verification_notes.strip():
+        lines.extend(["", f"Verification notes: {verification_notes.strip()}"])
+    lines.extend(
+        [
+            "",
+            f"```{fence_tag}",
+            code.rstrip(),
+            "```",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -137,6 +180,10 @@ def scaffold_examples(rule_dir: Path, examples: dict, overwrite: bool) -> None:
         code_rel = str(example.get("code_path") or "")
         explanation = str(example.get("explanation") or "Example explanation pending.")
         expectation = str(example.get("compile_expectation") or "documented-only")
+        expected_outcome = str(example.get("expected_outcome") or "").strip()
+        if not expected_outcome:
+            expected_outcome = fallback_expected_outcome(kind, expectation)
+        verification_notes = str(example.get("verification_notes") or "")
 
         if not doc_rel or not code_rel:
             continue
@@ -145,7 +192,14 @@ def scaffold_examples(rule_dir: Path, examples: dict, overwrite: bool) -> None:
         code_path = rule_dir.parents[2] / code_rel
         rule_id = rule_dir.name
 
-        markdown = build_example_markdown(rule_id, kind, expectation, explanation)
+        markdown = build_example_markdown(
+            rule_id,
+            kind,
+            expectation,
+            expected_outcome,
+            explanation,
+            verification_notes,
+        )
         write_text_file(doc_path, markdown, overwrite)
         write_text_file(code_path, extract_code_body(markdown), overwrite)
 

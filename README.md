@@ -18,6 +18,7 @@ This repo hosts the operational workflow for growing Rust coding guideline cover
    - `data/target_scope.yaml`
 6. Scaffold/refresh rule fixture examples under `tests/guidelines/<RULE_ID>/examples/`.
 7. Run schema/completeness/example gates plus traceability, decomposition, FLS proxy, quality, and licensing checks.
+   - Example gate now validates outcome semantics (`assertion_pass`, `compile_fail`, `runtime_panic`, `lint_trigger`, `documented_only`).
 8. Refresh benchmark-quality known-good pack and alignment baseline:
    - `benchmarks/known-good/manifest.yaml`
    - `benchmarks/known-good/upstream-rst/`
@@ -160,6 +161,7 @@ When LLM decisioning is disabled or invalid, controller selection falls back to 
 
 Guideline v3 field semantics are documented in `docs/guideline-record-spec.md`.
 Clippy status assignment guidance is documented in `docs/clippy-feasibility-guidance.md`.
+Outcome policy for examples is configured in `config/example_quality_policy.yaml`.
 
 ## Common Commands
 

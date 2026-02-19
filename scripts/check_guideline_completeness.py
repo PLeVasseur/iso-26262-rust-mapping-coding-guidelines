@@ -27,6 +27,13 @@ VALID_DECIDABLE_STATUS = {
 }
 VALID_COMPLIANT_EXPECTATION = {"compile_pass", "no_run", "documented-only"}
 VALID_NON_COMPLIANT_EXPECTATION = {"compile_fail", "compile_pass", "documented-only"}
+VALID_EXPECTED_OUTCOME = {
+    "assertion_pass",
+    "compile_fail",
+    "runtime_panic",
+    "lint_trigger",
+    "documented_only",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,6 +43,11 @@ def parse_args() -> argparse.Namespace:
         "--clippy-catalog", type=Path, default=Path("data/clippy_lints_catalog.yaml")
     )
     parser.add_argument("--fls-inventory", type=Path, default=Path("data/fls_inventory.yaml"))
+    parser.add_argument(
+        "--example-policy",
+        type=Path,
+        default=Path("config/example_quality_policy.yaml"),
+    )
     parser.add_argument("--require-fls-refs", action="store_true")
     parser.add_argument("--json-output", type=Path)
     return parser.parse_args()
@@ -56,6 +68,35 @@ def is_placeholder_text(value: str) -> bool:
     return not lowered or "placeholder" in lowered or "pending" in lowered
 
 
+def normalize_expected_outcome(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_")
+    if normalized == "documented-only":
+        return "documented_only"
+    return normalized
+
+
+def infer_expected_outcome(
+    side: str,
+    compile_expectation: str,
+    decidable_status: str,
+    decidable: str,
+) -> str:
+    normalized_expectation = compile_expectation.strip()
+    if normalized_expectation == "compile_fail":
+        return "compile_fail"
+    if normalized_expectation == "documented-only":
+        return "documented_only"
+    if side == "compliant":
+        return "assertion_pass" if decidable == "decidable" else "documented_only"
+    if decidable_status == "clippy":
+        return "lint_trigger"
+    if decidable_status == "possible-with-clippy":
+        return "runtime_panic"
+    if decidable_status == "compiler":
+        return "compile_fail"
+    return "runtime_panic"
+
+
 def main() -> int:
     args = parse_args()
     root = repo_root()
@@ -66,6 +107,29 @@ def main() -> int:
     payload = load_guidelines_payload(guidelines_path)
     guidelines = payload.get("guidelines") or []
     catalog_payload = read_yaml(catalog_path) or {}
+    example_policy = read_yaml(root / args.example_policy) or {}
+    example_gate_mode = str(example_policy.get("gate_mode") or "warn").strip().lower()
+    if example_gate_mode not in {"warn", "error"}:
+        example_gate_mode = "warn"
+
+    require_expected_outcome = bool(example_policy.get("require_expected_outcome", True))
+    documented_only_requires_notes = bool(
+        example_policy.get("documented_only_requires_verification_notes", True)
+    )
+    allowed_outcomes_cfg = example_policy.get("allowed_outcomes") or {}
+    allowed_compliant_outcomes = {
+        normalize_expected_outcome(str(item))
+        for item in (allowed_outcomes_cfg.get("compliant") or ["assertion_pass", "documented_only"])
+        if str(item).strip()
+    }
+    allowed_non_compliant_outcomes = {
+        normalize_expected_outcome(str(item))
+        for item in (
+            allowed_outcomes_cfg.get("non_compliant")
+            or ["compile_fail", "runtime_panic", "lint_trigger", "documented_only"]
+        )
+        if str(item).strip()
+    }
     lint_url_map = {
         str(item.get("id") or ""): str(item.get("url") or "")
         for item in catalog_payload.get("lints", [])
@@ -204,6 +268,14 @@ def main() -> int:
                 errors.append(f"{prefix} `{field_name}` missing or placeholder text")
 
         examples = guideline.get("examples") or {}
+        decidable_status = str(guideline.get("decidable_status") or "").strip()
+
+        def add_example_violation(message: str) -> None:
+            if example_gate_mode == "error":
+                errors.append(message)
+            else:
+                warnings.append(message)
+
         for side, valid_expectations in [
             ("compliant", VALID_COMPLIANT_EXPECTATION),
             ("non_compliant", VALID_NON_COMPLIANT_EXPECTATION),
@@ -223,6 +295,44 @@ def main() -> int:
             if expectation not in valid_expectations:
                 errors.append(
                     f"{prefix} examples.{side}.compile_expectation invalid `{expectation}`"
+                )
+
+            raw_expected_outcome = str(entry.get("expected_outcome") or "").strip()
+            normalized_expected_outcome = normalize_expected_outcome(raw_expected_outcome)
+            if not normalized_expected_outcome:
+                if require_expected_outcome:
+                    add_example_violation(f"{prefix} examples.{side}.expected_outcome missing")
+                normalized_expected_outcome = infer_expected_outcome(
+                    side,
+                    expectation,
+                    decidable_status,
+                    decidable,
+                )
+
+            if normalized_expected_outcome not in VALID_EXPECTED_OUTCOME:
+                errors.append(
+                    f"{prefix} examples.{side}.expected_outcome invalid `{raw_expected_outcome}`"
+                )
+            else:
+                allowed_side_outcomes = (
+                    allowed_compliant_outcomes
+                    if side == "compliant"
+                    else allowed_non_compliant_outcomes
+                )
+                if normalized_expected_outcome not in allowed_side_outcomes:
+                    add_example_violation(
+                        f"{prefix} examples.{side}.expected_outcome `{normalized_expected_outcome}` "
+                        "not allowed by policy"
+                    )
+
+            verification_notes = str(entry.get("verification_notes") or "").strip()
+            if (
+                normalized_expected_outcome == "documented_only"
+                and documented_only_requires_notes
+                and not verification_notes
+            ):
+                add_example_violation(
+                    f"{prefix} examples.{side}.verification_notes required for documented_only"
                 )
 
             if code_path:

@@ -49,6 +49,11 @@ def main() -> int:
             True,
         ),
         ("schemas/diversity_policy.schema.json", "config/diversity_policy.yaml", True),
+        (
+            "schemas/example_quality_policy.schema.json",
+            "config/example_quality_policy.yaml",
+            True,
+        ),
         ("schemas/known_good_policy.schema.json", "config/known_good_policy.yaml", True),
         ("schemas/alignment_policy.schema.json", "config/alignment_policy.yaml", True),
         (
@@ -154,6 +159,7 @@ def main() -> int:
         "schemas/diffset_item.schema.json",
         "schemas/diffset_review.schema.json",
         "schemas/diversity_policy.schema.json",
+        "schemas/example_quality_policy.schema.json",
         "schemas/fls_inventory.schema.json",
         "schemas/fls_target_candidates.schema.json",
         "schemas/alignment_policy.schema.json",
