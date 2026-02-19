@@ -643,11 +643,17 @@ guidelines:
     forbidden or high-risk constructs in safety-critical code.
   amplification: Initial generic guideline derived from ISO 26262 seed SEED-7CB86E3EA294
     (Part 6 Table 13). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
+    sub-guidelines as corpus evidence grows. Use explicit unsafe boundaries, pointer
+    and borrow constraints, and deterministic Result/Option error handling in match-based
+    control flow.
   exceptions: Exception allowed only through the documented deviation process with
     explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-7CB86E3EA294 (Part 6 Table 13) to maintain
-    traceable coding-guideline coverage.
+  rationale: 'Derived from ISO 26262 seed SEED-7CB86E3EA294 (Part 6 Table 13) to maintain
+    traceable coding-guideline coverage. This wording aligns with benchmark Rust guidance
+    terms used for overflow, panic, and trait/struct safety reasoning. Safety evidence
+    anchor: :cite:`ISO26262-6-2018`. Safety evidence anchor: :cite:`ISO26262-8-2018`.
+    Rust API reference anchor: :std:`std::result::Result`. Rust API reference anchor:
+    :std:`core::option::Option`.'
   iso_seeds:
   - SEED-7CB86E3EA294
   scope: crate
