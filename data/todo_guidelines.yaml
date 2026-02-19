@@ -340,15 +340,22 @@ guidelines:
 - id: RG-34FDD6EFE8ED
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with 7.4.12.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-34FDD6EFE8ED
-    (Part 6 7.4.12). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-34FDD6EFE8ED (Part 6 7.4.12) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: At crate boundaries and unsafe-adjacent control paths, implementations
+    shall check input/state preconditions and map foreseeable faults to explicit `Result`/`Option`
+    outcomes, avoiding unchecked panics and requiring deterministic fail-safe behavior.
+  amplification: Verify this rule by code review and tests that exercise nominal,
+    boundary, and fault cases for each public crate interface. Evidence should show
+    explicit guard conditions before hazardous operations, `match`/`?`-based propagation,
+    and checked handling of `None`/`Err` without hidden termination paths.
+  exceptions: Exceptions require a documented deviation with safety-impact analysis,
+    mitigation evidence, and reviewer approval; verify that residual risk is accepted
+    and check regression tests demonstrating the alternative control path remains
+    deterministic under injected faults.
+  rationale: 'Defensive contracts at crate scope reduce latent fault activation and
+    improve diagnosability. Reviewable, explicit error channels provide auditable
+    evidence that failure handling is intentional, testable, and aligned with ISO
+    26262-6:2018 clause 7.4.12 obligations. Evidence anchor: :std:`ISO26262-6:2018:7.4.12`.
+    Evidence anchor: :cite:`fls_exceptions_and_errors_core`. Evidence anchor: :cite:`fls_exceptions_and_errors_safety`.'
   iso_seeds:
   - SEED-34FDD6EFE8ED
   scope: crate
@@ -371,21 +378,22 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-34FDD6EFE8ED/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-34FDD6EFE8ED/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only negative
-        evidence.
+      explanation: The function uses `unwrap` and a panic assertion instead of explicit
+        error propagation, so malformed or unsafe input causes abrupt termination.
+      compile_expectation: compile_pass
+      expected_outcome: runtime_panic
+      verification_notes: Execute with invalid input (as shown) and check runtime
+        panic evidence from `unwrap()` or assertion failure.
     compliant:
       code_path: tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.rs
       doc_path: tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only compliant
-        evidence.
+      explanation: The function validates range and parse preconditions, returns typed
+        error outcomes, and is verified through assertions covering valid, parse-fail,
+        and out-of-range inputs.
+      compile_expectation: compile_pass
+      expected_outcome: assertion_pass
+      verification_notes: Run `cargo test` (or execute `main`) and check that all
+        assertions pass with no panic.
   obligation_units:
   - ISO26262-6-2018:7_4_12:clause:7_4_12
   fls_refs:
