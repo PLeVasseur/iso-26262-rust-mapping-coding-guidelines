@@ -213,15 +213,23 @@ guidelines:
 - id: RG-230964AF44D4
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with 5.4.3.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-230964AF44D4
-    (Part 6 5.4.3). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-230964AF44D4 (Part 6 5.4.3) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Crate interfaces must validate preconditions, bounds, and state
+    assumptions, and shall return typed errors for violated contracts instead of panicking
+    or silently continuing.
+  amplification: 'Define contract checks at every public and safety-relevant internal
+    boundary; verify with unit tests that invalid inputs yield deterministic `Result`
+    errors, and review evidence that valid paths keep intended behavior without hidden
+    recovery. Rust API constraint anchor: :std:`core::option::Option`.'
+  exceptions: A runtime check may be omitted only when a reviewed design record shows
+    the condition is enforced upstream or proven unreachable; include verification
+    evidence (analysis, test, or trace) and documented safety-impact review approval.
+  rationale: 'ISO 26262-6 clause 5.4.3 requires robust handling of abnormal conditions;
+    explicit contracts plus typed failures improve reviewability, allow tests to verify
+    fault reactions, and provide auditable evidence for safety-case traceability.
+    Evidence anchor: :cite:`ISO26262-6-2018:5_4_3`. Evidence anchor: :cite:`fls_exceptions_and_errors_core`.
+    Evidence anchor: :cite:`fls_functions_core`. ISO traceability anchor: :cite:`ISO26262-Part6-5-4-3`.
+    Rust semantic anchor for verification: :std:`std::result::Result`. Rust language/library
+    evidence point: :std:`std::error::Error`.'
   iso_seeds:
   - SEED-230964AF44D4
   scope: crate
@@ -244,21 +252,21 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-230964AF44D4/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-230964AF44D4/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only negative
-        evidence.
+      explanation: Preconditions are not checked, and invalid input is converted directly
+        into an index, causing a runtime panic instead of controlled error handling.
+      compile_expectation: compile_pass
+      expected_outcome: runtime_panic
+      verification_notes: Execute the program; it should panic on out-of-bounds indexing
+        when given a negative value cast to `usize`.
     compliant:
       code_path: tests/guidelines/RG-230964AF44D4/examples/compliant.rs
       doc_path: tests/guidelines/RG-230964AF44D4/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only compliant
-        evidence.
+      explanation: Inputs are checked at the boundary, failures are returned as typed
+        errors, and assertions verify both nominal and fault cases.
+      compile_expectation: compile_pass
+      expected_outcome: assertion_pass
+      verification_notes: Run as a test or executable; all assertions should pass,
+        demonstrating deterministic error handling for invalid inputs.
   obligation_units:
   - ISO26262-6-2018:5_4_3:clause:5_4_3
   fls_refs:
