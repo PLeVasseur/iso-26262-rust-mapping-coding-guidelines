@@ -111,3 +111,32 @@ def regression_flags(before: dict[str, Any], after: dict[str, Any]) -> list[str]
 
 def improves(before: dict[str, Any], after: dict[str, Any]) -> bool:
     return metric_vector(after) < metric_vector(before)
+
+
+def critical_high_deficit_count(observation: dict[str, Any]) -> int:
+    deficits = observation.get("deficits") or []
+    return sum(
+        1
+        for deficit in deficits
+        if str(deficit.get("severity") or "").strip() in {"critical", "high"}
+    )
+
+
+def critical_high_reduction(before: dict[str, Any], after: dict[str, Any]) -> int:
+    return critical_high_deficit_count(before) - critical_high_deficit_count(after)
+
+
+def evaluation_sort_key(before: dict[str, Any], evaluation: dict[str, Any]) -> tuple[Any, ...]:
+    after = evaluation.get("observation") or {}
+    vector = tuple(evaluation.get("metric_vector") or metric_vector(after))
+    reduction = critical_high_reduction(before, after)
+    weighted = float(evaluation.get("weighted_score") or weighted_score(after))
+    footprint = int(evaluation.get("mutation_footprint_estimate") or 0)
+    candidate_id = str(evaluation.get("candidate_id") or "")
+    return (
+        vector,
+        -reduction,
+        -weighted,
+        footprint,
+        candidate_id,
+    )

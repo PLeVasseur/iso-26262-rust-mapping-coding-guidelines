@@ -13,6 +13,7 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+from autonomous_controller import recommend_handoff_status  # noqa: E402
 from controller_actions import (  # noqa: E402
     apply_rewrite_rule_statement_specific,
     apply_spawn_rule_for_obligation_unit,
@@ -99,6 +100,90 @@ class AutonomousControllerLogicTests(unittest.TestCase):
         second = generate_candidates(observation, beam_width=3)
         self.assertEqual(first, second)
         self.assertGreaterEqual(len(first), 1)
+
+    def test_generate_candidates_includes_multi_action_bundle(self) -> None:
+        observation = {
+            "deficits": [
+                {
+                    "deficit_id": "fanout:T-1",
+                    "type": "target_fanout_gap",
+                    "severity": "high",
+                    "guideline_id": "",
+                    "target_id": "T-1",
+                    "obligation_unit_id": "O-1",
+                },
+                {
+                    "deficit_id": "fls:T-1",
+                    "type": "fls_span_gap",
+                    "severity": "high",
+                    "guideline_id": "",
+                    "target_id": "T-1",
+                    "obligation_unit_id": "",
+                },
+            ]
+        }
+        candidates = generate_candidates(observation, beam_width=8, max_actions_per_bundle=3)
+        self.assertTrue(any(len(candidate.get("actions", [])) > 1 for candidate in candidates))
+
+    def test_generate_candidates_respects_suppressed_signatures(self) -> None:
+        observation = {
+            "deficits": [
+                {
+                    "deficit_id": "fanout:T-1",
+                    "type": "target_fanout_gap",
+                    "severity": "high",
+                    "guideline_id": "",
+                    "target_id": "T-1",
+                    "obligation_unit_id": "O-1",
+                }
+            ]
+        }
+        first = generate_candidates(observation, beam_width=3)
+        self.assertGreaterEqual(len(first), 1)
+        signature = str(first[0].get("bundle_signature") or "")
+        suppressed = generate_candidates(
+            observation,
+            beam_width=3,
+            suppressed_signatures={signature},
+        )
+        self.assertTrue(
+            all(candidate.get("bundle_signature") != signature for candidate in suppressed)
+        )
+
+    def test_recommend_handoff_status(self) -> None:
+        lane_status = {
+            "hard_gate_pass": True,
+            "iso_lane_pass": True,
+            "decomposition_lane_pass": True,
+            "fls_lane_pass": True,
+            "quality_lane_pass": True,
+        }
+        ready = recommend_handoff_status(
+            lane_status,
+            consecutive_successes=3,
+            success_window=3,
+            has_run_id=True,
+        )
+        self.assertEqual(ready[0], "ready")
+
+        needs_review = recommend_handoff_status(
+            lane_status,
+            consecutive_successes=2,
+            success_window=3,
+            has_run_id=True,
+        )
+        self.assertEqual(needs_review[0], "needs_review")
+
+        blocked = recommend_handoff_status(
+            {
+                **lane_status,
+                "fls_lane_pass": False,
+            },
+            consecutive_successes=5,
+            success_window=3,
+            has_run_id=True,
+        )
+        self.assertEqual(blocked[0], "blocked")
 
     def test_rewrite_rule_statement_specific_removes_placeholder_terms(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

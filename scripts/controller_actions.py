@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import csv
 import hashlib
+import itertools
 import json
 import re
 import sys
@@ -11,6 +12,23 @@ from pathlib import Path
 from typing import Any
 
 from _common import read_yaml, run_command, write_yaml
+
+SEVERITY_WEIGHTS = {
+    "critical": 4,
+    "high": 3,
+    "medium": 2,
+    "low": 1,
+}
+
+LANE_IMPACT_WEIGHTS = {
+    "iso": 4,
+    "fanout": 3,
+    "fls": 2,
+    "quality": 2,
+    "examples": 1,
+}
+
+DEFAULT_MAX_MUTATED_GUIDELINES = 5
 
 
 def _target_from_seed(seed: dict[str, Any]) -> str:
@@ -115,67 +133,359 @@ def _candidate_id(prefix: str, values: list[str]) -> str:
     return f"{prefix}:{digest}"
 
 
-def generate_candidates(observation: dict[str, Any], beam_width: int) -> list[dict[str, Any]]:
+def _action_signature(action: dict[str, Any]) -> str:
+    return json.dumps(action, sort_keys=True)
+
+
+def _cluster_key(deficit: dict[str, Any]) -> str:
+    target_id = str(deficit.get("target_id") or "").strip()
+    obligation = str(deficit.get("obligation_unit_id") or "").strip()
+    guideline_id = str(deficit.get("guideline_id") or "").strip()
+    if target_id:
+        return f"target:{target_id}"
+    if obligation:
+        return f"obligation:{obligation}"
+    if guideline_id:
+        return f"guideline:{guideline_id}"
+    return "global"
+
+
+def _action_object_key(action: dict[str, Any]) -> str:
+    if str(action.get("guideline_id") or "").strip():
+        return f"guideline:{str(action.get('guideline_id'))}"
+    if str(action.get("obligation_unit_id") or "").strip():
+        return f"obligation:{str(action.get('obligation_unit_id'))}"
+    if str(action.get("target_id") or "").strip():
+        return f"target:{str(action.get('target_id'))}"
+    return "global"
+
+
+def _extract_action_targets(action: dict[str, Any]) -> tuple[str, str]:
+    guideline_id = str(action.get("guideline_id") or "").strip()
+    target_id = str(action.get("target_id") or "").strip()
+    return guideline_id, target_id
+
+
+def _proposal_from_deficit(deficit: dict[str, Any]) -> dict[str, Any] | None:
+    deficit_type = str(deficit.get("type") or "")
+    severity = str(deficit.get("severity") or "low")
+    guideline_id = str(deficit.get("guideline_id") or "").strip()
+    target_id = str(deficit.get("target_id") or "").strip()
+    obligation_unit_id = str(deficit.get("obligation_unit_id") or "").strip()
+
+    action: dict[str, Any] | None = None
+    expected_delta: dict[str, int] = {}
+    risk_penalty = 0.0
+
+    if deficit_type in {"iso_obligation_gap", "target_fanout_gap"}:
+        action = {
+            "type": "spawn_rule_for_obligation_unit",
+            "target_id": target_id,
+            "obligation_unit_id": obligation_unit_id,
+        }
+        expected_delta = {"iso": 1, "fanout": 1}
+        risk_penalty = 0.35
+    elif deficit_type in {"fls_span_gap", "fls_chapter_gap"}:
+        action = {
+            "type": "assign_missing_fls_refs",
+            "guideline_id": guideline_id,
+            "target_id": target_id,
+            "max_refs": 3,
+        }
+        expected_delta = {"fls": 1}
+        risk_penalty = 0.2
+    elif deficit_type in {"quality_gap", "placeholder_gap"} and guideline_id:
+        action = {
+            "type": "rewrite_rule_statement_specific",
+            "guideline_id": guideline_id,
+        }
+        expected_delta = {"quality": 1}
+        risk_penalty = 0.1
+    elif deficit_type == "example_gap" and guideline_id:
+        action = {
+            "type": "upgrade_examples_non_placeholder",
+            "guideline_id": guideline_id,
+        }
+        expected_delta = {"examples": 1, "quality": 1}
+        risk_penalty = 0.15
+
+    if action is None:
+        return None
+
+    return {
+        "proposal_id": _candidate_id(
+            "prop", [str(deficit.get("deficit_id") or ""), _action_signature(action)]
+        ),
+        "deficit_id": str(deficit.get("deficit_id") or ""),
+        "cluster_key": _cluster_key(deficit),
+        "severity": severity,
+        "severity_weight": SEVERITY_WEIGHTS.get(severity, 1),
+        "expected_delta": expected_delta,
+        "risk_penalty": risk_penalty,
+        "action": action,
+    }
+
+
+def _compatible_bundle(actions: list[dict[str, Any]]) -> bool:
+    seen_type_object: set[tuple[str, str]] = set()
+    seen_spawn_obligation: set[str] = set()
+
+    for action in actions:
+        action_type = str(action.get("type") or "").strip()
+        object_key = _action_object_key(action)
+        type_object = (action_type, object_key)
+        if type_object in seen_type_object:
+            return False
+        seen_type_object.add(type_object)
+
+        if action_type == "spawn_rule_for_obligation_unit":
+            obligation = str(action.get("obligation_unit_id") or "").strip()
+            if obligation and obligation in seen_spawn_obligation:
+                return False
+            if obligation:
+                seen_spawn_obligation.add(obligation)
+    return True
+
+
+def _unique_actions(proposals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for proposal in proposals:
+        signature = _action_signature(proposal["action"])
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique.append(proposal)
+    return unique
+
+
+def _expected_impact_score(expected_delta: dict[str, int]) -> int:
+    score = 0
+    for lane, value in expected_delta.items():
+        score += int(value) * LANE_IMPACT_WEIGHTS.get(lane, 0)
+    return score
+
+
+def _merge_expected_deltas(proposals: list[dict[str, Any]]) -> dict[str, int]:
+    merged: dict[str, int] = defaultdict(int)
+    for proposal in proposals:
+        for lane, value in (proposal.get("expected_delta") or {}).items():
+            merged[str(lane)] += int(value)
+    return dict(merged)
+
+
+def _mutation_footprint(actions: list[dict[str, Any]]) -> int:
+    touched_guidelines: set[str] = set()
+    touched_targets: set[str] = set()
+    for action in actions:
+        guideline_id, target_id = _extract_action_targets(action)
+        if guideline_id:
+            touched_guidelines.add(guideline_id)
+        if target_id:
+            touched_targets.add(target_id)
+    return len(touched_guidelines) + len(touched_targets)
+
+
+def _bundle_candidate(
+    proposals: list[dict[str, Any]],
+    historical_signatures: set[str],
+    suppressed_signatures: set[str],
+    max_mutated_guidelines: int,
+) -> dict[str, Any] | None:
+    unique_proposals = _unique_actions(proposals)
+    actions = [proposal["action"] for proposal in unique_proposals]
+    if not actions:
+        return None
+    if not _compatible_bundle(actions):
+        return None
+
+    signatures = sorted(_action_signature(action) for action in actions)
+    bundle_signature = "|".join(signatures)
+    if bundle_signature in suppressed_signatures:
+        return None
+
+    footprint = _mutation_footprint(actions)
+    if footprint > max_mutated_guidelines:
+        return None
+
+    expected_delta = _merge_expected_deltas(unique_proposals)
+    expected_score = _expected_impact_score(expected_delta)
+    severity_score = sum(int(proposal.get("severity_weight") or 0) for proposal in unique_proposals)
+    novelty_score = 0 if bundle_signature in historical_signatures else 1
+    risk_penalty = round(sum(float(p.get("risk_penalty") or 0.0) for p in unique_proposals), 3)
+    pre_score = round(severity_score + expected_score + novelty_score - risk_penalty, 3)
+
+    source_deficit_ids = sorted(
+        {
+            str(proposal.get("deficit_id") or "")
+            for proposal in unique_proposals
+            if str(proposal.get("deficit_id") or "")
+        }
+    )
+    cluster_keys = sorted(
+        {
+            str(proposal.get("cluster_key") or "")
+            for proposal in unique_proposals
+            if str(proposal.get("cluster_key") or "")
+        }
+    )
+
+    rationale = "bundle actions for clustered deficits"
+    if len(actions) == 1:
+        rationale = "single-action candidate"
+
+    return {
+        "candidate_id": _candidate_id("cand", [bundle_signature, str(pre_score)]),
+        "actions": actions,
+        "rationale": rationale,
+        "source_deficit_ids": source_deficit_ids,
+        "cluster_keys": cluster_keys,
+        "bundle_signature": bundle_signature,
+        "expected_lane_deltas": expected_delta,
+        "risk_penalty": risk_penalty,
+        "novelty_score": novelty_score,
+        "pre_score": pre_score,
+        "mutation_footprint_estimate": footprint,
+    }
+
+
+def _bundle_signatures(candidates: list[dict[str, Any]]) -> set[str]:
+    return {
+        str(candidate.get("bundle_signature") or "")
+        for candidate in candidates
+        if str(candidate.get("bundle_signature") or "")
+    }
+
+
+def generate_candidates(
+    observation: dict[str, Any],
+    beam_width: int,
+    max_actions_per_bundle: int = 3,
+    suppressed_signatures: set[str] | None = None,
+    historical_signatures: set[str] | None = None,
+    max_mutated_guidelines: int = DEFAULT_MAX_MUTATED_GUIDELINES,
+) -> list[dict[str, Any]]:
     deficits = observation.get("deficits") or []
+    suppressed_signatures = suppressed_signatures or set()
+    historical_signatures = historical_signatures or set()
+
+    proposals = []
+    for deficit in deficits:
+        proposal = _proposal_from_deficit(deficit)
+        if proposal is not None:
+            proposals.append(proposal)
+
+    if not proposals:
+        return []
+
+    proposals_by_cluster: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for proposal in proposals:
+        proposals_by_cluster[str(proposal.get("cluster_key") or "global")].append(proposal)
+
     candidates: list[dict[str, Any]] = []
     seen_signatures: set[str] = set()
 
-    for deficit in deficits:
-        deficit_type = str(deficit.get("type") or "")
-        guideline_id = str(deficit.get("guideline_id") or "").strip()
-        target_id = str(deficit.get("target_id") or "").strip()
-        obligation_unit_id = str(deficit.get("obligation_unit_id") or "").strip()
+    for cluster_key in sorted(proposals_by_cluster):
+        cluster_proposals = sorted(
+            proposals_by_cluster[cluster_key],
+            key=lambda item: (
+                -int(item.get("severity_weight") or 0),
+                str(item.get("proposal_id") or ""),
+            ),
+        )
 
-        action: dict[str, Any] | None = None
-        rationale = ""
+        # singles
+        for proposal in cluster_proposals:
+            candidate = _bundle_candidate(
+                [proposal],
+                historical_signatures,
+                suppressed_signatures,
+                max_mutated_guidelines,
+            )
+            if candidate is None:
+                continue
+            signature = str(candidate.get("bundle_signature") or "")
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            candidates.append(candidate)
 
-        if deficit_type in {"iso_obligation_gap", "target_fanout_gap"}:
-            action = {
-                "type": "spawn_rule_for_obligation_unit",
-                "target_id": target_id,
-                "obligation_unit_id": obligation_unit_id,
-            }
-            rationale = "expand guideline decomposition coverage"
-        elif deficit_type in {"fls_span_gap", "fls_chapter_gap"}:
-            action = {
-                "type": "assign_missing_fls_refs",
-                "guideline_id": guideline_id,
-                "target_id": target_id,
-                "max_refs": 3,
-            }
-            rationale = "improve FLS proxy span coverage"
-        elif deficit_type in {"quality_gap", "placeholder_gap"} and guideline_id:
-            action = {
-                "type": "rewrite_rule_statement_specific",
-                "guideline_id": guideline_id,
-            }
-            rationale = "replace generic guideline prose with specific rule language"
-        elif deficit_type == "example_gap" and guideline_id:
-            action = {
-                "type": "rewrite_rule_statement_specific",
-                "guideline_id": guideline_id,
-            }
-            rationale = "repair example narrative and rule-specific guidance"
-
-        if action is None:
+        # pairs + triples
+        max_k = min(max_actions_per_bundle, 3)
+        if max_k <= 1:
             continue
 
-        signature = json.dumps(action, sort_keys=True)
-        if signature in seen_signatures:
+        for size in range(2, max_k + 1):
+            for combo in itertools.combinations(cluster_proposals, size):
+                candidate = _bundle_candidate(
+                    list(combo),
+                    historical_signatures,
+                    suppressed_signatures,
+                    max_mutated_guidelines,
+                )
+                if candidate is None:
+                    continue
+                signature = str(candidate.get("bundle_signature") or "")
+                if signature in seen_signatures:
+                    continue
+                seen_signatures.add(signature)
+                candidates.append(candidate)
+
+    if not candidates:
+        return []
+
+    # prune dominated: same source deficits but worse pre-score and larger footprint
+    pruned: list[dict[str, Any]] = []
+    best_by_source: dict[str, tuple[float, int]] = {}
+    for candidate in sorted(
+        candidates,
+        key=lambda item: (
+            -float(item.get("pre_score") or 0.0),
+            int(item.get("mutation_footprint_estimate") or 0),
+            str(item.get("candidate_id") or ""),
+        ),
+    ):
+        source_key = ",".join(
+            sorted(str(item) for item in candidate.get("source_deficit_ids") or [])
+        )
+        current = (
+            float(candidate.get("pre_score") or 0.0),
+            int(candidate.get("mutation_footprint_estimate") or 0),
+        )
+        best = best_by_source.get(source_key)
+        if best is None:
+            best_by_source[source_key] = current
+            pruned.append(candidate)
             continue
-        seen_signatures.add(signature)
+        if current[0] > best[0] or (current[0] == best[0] and current[1] < best[1]):
+            best_by_source[source_key] = current
+            pruned.append(candidate)
 
-        candidate = {
-            "candidate_id": _candidate_id("cand", [signature, rationale]),
-            "actions": [action],
-            "rationale": rationale,
-            "source_deficit_id": str(deficit.get("deficit_id") or ""),
-        }
-        candidates.append(candidate)
-        if len(candidates) >= max(1, beam_width):
-            break
+    # Final rank: pre-score desc, risk asc, footprint asc, stable by id.
+    pruned.sort(
+        key=lambda item: (
+            -float(item.get("pre_score") or 0.0),
+            float(item.get("risk_penalty") or 0.0),
+            int(item.get("mutation_footprint_estimate") or 0),
+            str(item.get("candidate_id") or ""),
+        )
+    )
 
-    return candidates
+    ranked = pruned[: max(1, beam_width)]
+
+    # ensure deterministic candidate ids do not collide
+    if len(_bundle_signatures(ranked)) != len(ranked):
+        unique_ranked: list[dict[str, Any]] = []
+        seen_ranked: set[str] = set()
+        for item in ranked:
+            signature = str(item.get("bundle_signature") or "")
+            if signature in seen_ranked:
+                continue
+            seen_ranked.add(signature)
+            unique_ranked.append(item)
+        return unique_ranked
+
+    return ranked
 
 
 def _replace_rule_id(value: str, old_rule_id: str, new_rule_id: str) -> str:
@@ -475,6 +785,70 @@ def apply_rewrite_rule_statement_specific(root: Path, action: dict[str, Any]) ->
     return {"changed": changed, "guideline_id": guideline_filter}
 
 
+def apply_rewrite_amplification_with_boundaries(
+    root: Path, action: dict[str, Any]
+) -> dict[str, Any]:
+    guideline_filter = str(action.get("guideline_id") or "").strip()
+    if not guideline_filter:
+        return {"changed": False, "reason": "guideline_id required"}
+
+    path, payload, guidelines = _load_todo_guidelines(root)
+    changed = False
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if guideline_id != guideline_filter:
+            continue
+
+        focus = _focus_phrase(guideline)
+        guideline["amplification"] = (
+            f"Define explicit boundaries for {focus}: approved patterns, forbidden patterns, "
+            "required preconditions, required postconditions, and objective verification steps."
+        )
+        guideline["exceptions"] = (
+            "Deviations are allowed only when mitigation evidence is complete and approved by "
+            "an independent reviewer."
+        )
+        changed = True
+        break
+
+    if changed:
+        _write_todo_guidelines(path, payload, guidelines)
+    return {"changed": changed, "guideline_id": guideline_filter}
+
+
+def apply_upgrade_examples_non_placeholder(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    guideline_filter = str(action.get("guideline_id") or "").strip()
+    if not guideline_filter:
+        return {"changed": False, "reason": "guideline_id required"}
+
+    path, payload, guidelines = _load_todo_guidelines(root)
+    changed = False
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if guideline_id != guideline_filter:
+            continue
+
+        focus = _focus_phrase(guideline)
+        examples = guideline.get("examples") or {}
+        for side in ["compliant", "non_compliant"]:
+            entry = examples.get(side) or {}
+            doc_path = str(entry.get("doc_path") or "").strip()
+            explanation = str(entry.get("explanation") or "")
+            entry["explanation"] = _sanitize_text(explanation)
+            examples[side] = entry
+            if doc_path:
+                _rewrite_example_markdown(root / doc_path, guideline_id, side, focus)
+        guideline["examples"] = examples
+        changed = True
+        break
+
+    if changed:
+        _write_todo_guidelines(path, payload, guidelines)
+    return {"changed": changed, "guideline_id": guideline_filter}
+
+
 def apply_action(root: Path, action: dict[str, Any]) -> dict[str, Any]:
     action_type = str(action.get("type") or "").strip()
     if action_type == "assign_missing_fls_refs":
@@ -483,6 +857,10 @@ def apply_action(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         return apply_spawn_rule_for_obligation_unit(root, action)
     if action_type == "rewrite_rule_statement_specific":
         return apply_rewrite_rule_statement_specific(root, action)
+    if action_type == "rewrite_amplification_with_boundaries":
+        return apply_rewrite_amplification_with_boundaries(root, action)
+    if action_type == "upgrade_examples_non_placeholder":
+        return apply_upgrade_examples_non_placeholder(root, action)
     return {"changed": False, "reason": f"unknown action type {action_type}"}
 
 
