@@ -224,6 +224,102 @@ def _resolve_llm_command(policy: dict[str, Any]) -> list[str]:
     return [str(item) for item in (policy.get("llm") or {}).get("command", [])]
 
 
+def _confidence_bucket(value: float) -> str:
+    bounded = max(0.0, min(1.0, float(value)))
+    if bounded < (1.0 / 3.0):
+        return "low"
+    if bounded < (2.0 / 3.0):
+        return "medium"
+    return "high"
+
+
+def _normalize_confidence(value: Any) -> str | None:
+    if isinstance(value, int | float):
+        return _confidence_bucket(float(value))
+
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip().lower()
+    if not text:
+        return None
+    if text in {"low", "medium", "high"}:
+        return text
+
+    aliases = {
+        "very low": "low",
+        "very_high": "high",
+        "very high": "high",
+        "med": "medium",
+        "mid": "medium",
+    }
+    if text in aliases:
+        return aliases[text]
+
+    try:
+        numeric = float(text)
+        return _confidence_bucket(numeric)
+    except ValueError:
+        return None
+
+
+def _normalize_llm_payload(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(raw_payload)
+
+    selected = payload.get("selected_candidate_ids")
+    if isinstance(selected, str):
+        payload["selected_candidate_ids"] = [selected]
+    elif isinstance(selected, list):
+        payload["selected_candidate_ids"] = [str(item) for item in selected if str(item)]
+
+    rejected = payload.get("rejected_candidate_ids")
+    if isinstance(rejected, str):
+        payload["rejected_candidate_ids"] = [rejected]
+    elif isinstance(rejected, list):
+        payload["rejected_candidate_ids"] = [str(item) for item in rejected if str(item)]
+
+    risk_notes = payload.get("risk_notes")
+    if isinstance(risk_notes, str):
+        payload["risk_notes"] = [risk_notes]
+    elif isinstance(risk_notes, list):
+        payload["risk_notes"] = [str(item) for item in risk_notes]
+
+    fallback_recommended = payload.get("fallback_recommended")
+    if isinstance(fallback_recommended, str):
+        normalized = fallback_recommended.strip().lower()
+        payload["fallback_recommended"] = normalized in {"1", "true", "yes", "on"}
+
+    confidence = _normalize_confidence(payload.get("confidence"))
+    if confidence is not None:
+        payload["confidence"] = confidence
+
+    return payload
+
+
+def _apply_fallback(
+    resolution: dict[str, Any],
+    reason: str,
+    rationale: str,
+    llm_error: str,
+    fallback_to_deterministic: bool,
+) -> dict[str, Any]:
+    resolution["selection_source"] = "fallback"
+    resolution["rationale"] = rationale
+    if llm_error:
+        resolution["llm_error"] = llm_error
+
+    if fallback_to_deterministic:
+        resolution["resolution_reason"] = reason
+        return resolution
+
+    resolution["resolution_reason"] = f"fallback_disallowed:{reason}"
+    resolution["ordered_candidate_ids"] = []
+    resolution["selected_candidate_ids"] = []
+    resolution["rejected_candidate_ids"] = []
+    resolution["fallback_recommended"] = True
+    return resolution
+
+
 def _parse_llm_payload(
     raw_stdout: str,
     output_path: Path,
@@ -307,6 +403,7 @@ def resolve_candidate_selection(
         "iteration": str(packet.get("iteration") or ""),
         "decision_packet": str(packet_path),
         "decision_output": str(llm_output_path),
+        "repo_root": str(root),
     }
 
     rendered = [_substitute_placeholders(token, placeholders) for token in command_tokens]
@@ -326,24 +423,31 @@ def resolve_candidate_selection(
     write_json(raw_path, raw_payload)
 
     resolution["llm_invoked"] = True
+    fallback_to_deterministic = bool(llm_cfg.get("fallback_to_deterministic", True))
 
     if completed.returncode != 0:
-        resolution["selection_source"] = "fallback"
-        resolution["resolution_reason"] = "llm_command_failed"
-        resolution["rationale"] = "llm command failed; fallback to deterministic order"
-        resolution["llm_error"] = completed.stderr or completed.stdout
-        return resolution
+        return _apply_fallback(
+            resolution,
+            "llm_command_failed",
+            "llm command failed; fallback to deterministic order",
+            completed.stderr or completed.stdout,
+            fallback_to_deterministic,
+        )
 
     parsed_ok, llm_payload, parse_error = _parse_llm_payload(
         completed.stdout,
         llm_output_path,
     )
     if not parsed_ok:
-        resolution["selection_source"] = "fallback"
-        resolution["resolution_reason"] = "llm_output_unparseable"
-        resolution["rationale"] = "llm output not parseable; fallback to deterministic order"
-        resolution["llm_error"] = parse_error
-        return resolution
+        return _apply_fallback(
+            resolution,
+            "llm_output_unparseable",
+            "llm output not parseable; fallback to deterministic order",
+            parse_error,
+            fallback_to_deterministic,
+        )
+
+    llm_payload = _normalize_llm_payload(llm_payload)
 
     decision_errors = validate_payload(
         root,
@@ -351,11 +455,13 @@ def resolve_candidate_selection(
         llm_payload,
     )
     if decision_errors:
-        resolution["selection_source"] = "fallback"
-        resolution["resolution_reason"] = "llm_output_schema_invalid"
-        resolution["rationale"] = "llm output schema invalid; fallback to deterministic order"
-        resolution["llm_error"] = "; ".join(decision_errors)
-        return resolution
+        return _apply_fallback(
+            resolution,
+            "llm_output_schema_invalid",
+            "llm output schema invalid; fallback to deterministic order",
+            "; ".join(decision_errors),
+            fallback_to_deterministic,
+        )
 
     candidate_set = {
         str(item.get("candidate_id") or "")
@@ -371,24 +477,33 @@ def resolve_candidate_selection(
 
     unknown = [item for item in selected_ids if item not in candidate_set]
     if unknown:
-        resolution["selection_source"] = "fallback"
-        resolution["resolution_reason"] = "llm_selected_unknown_candidates"
-        resolution["rationale"] = "llm selected unknown candidates; fallback to deterministic order"
-        resolution["llm_error"] = f"unknown candidate ids: {', '.join(sorted(unknown))}"
-        return resolution
+        return _apply_fallback(
+            resolution,
+            "llm_selected_unknown_candidates",
+            "llm selected unknown candidates; fallback to deterministic order",
+            f"unknown candidate ids: {', '.join(sorted(unknown))}",
+            fallback_to_deterministic,
+        )
 
     if bool(llm_payload.get("fallback_recommended", False)):
-        resolution["selection_source"] = "fallback"
-        resolution["resolution_reason"] = "llm_requested_fallback"
-        resolution["rationale"] = str(llm_payload.get("rationale") or "fallback requested")
-        resolution["confidence"] = str(llm_payload.get("confidence") or "low")
-        return resolution
+        fallback_result = _apply_fallback(
+            resolution,
+            "llm_requested_fallback",
+            str(llm_payload.get("rationale") or "fallback requested"),
+            "",
+            fallback_to_deterministic,
+        )
+        fallback_result["confidence"] = str(llm_payload.get("confidence") or "low")
+        return fallback_result
 
     if not selected_ids:
-        resolution["selection_source"] = "fallback"
-        resolution["resolution_reason"] = "llm_selected_none"
-        resolution["rationale"] = "llm selected no candidates; fallback to deterministic order"
-        return resolution
+        return _apply_fallback(
+            resolution,
+            "llm_selected_none",
+            "llm selected no candidates; fallback to deterministic order",
+            "",
+            fallback_to_deterministic,
+        )
 
     ordered_ids = selected_ids[:max_selected]
     validated_path = iteration_dir / "llm_decision.validated.json"

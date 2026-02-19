@@ -184,6 +184,121 @@ class ControllerDecisionTests(unittest.TestCase):
             self.assertEqual(result["resolution_reason"], "llm_selected_unknown_candidates")
             self.assertEqual(result["ordered_candidate_ids"], ["cand-1", "cand-2"])
 
+    def test_resolve_selection_normalizes_numeric_confidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            decision = {
+                "selected_candidate_ids": ["cand-2"],
+                "rejected_candidate_ids": ["cand-1"],
+                "rationale": "Numeric confidence from model",
+                "risk_notes": ["None"],
+                "confidence": 0.81,
+                "fallback_recommended": False,
+            }
+            command_code = f"import json; print({json.dumps(json.dumps(decision))})"
+            policy_path = temp_root / "policy.yaml"
+            write_yaml(
+                policy_path,
+                {
+                    "version": 1,
+                    "enabled": True,
+                    "max_selected_candidates": 2,
+                    "llm": {
+                        "enabled": True,
+                        "fallback_to_deterministic": True,
+                        "command": [sys.executable, "-c", command_code],
+                    },
+                },
+            )
+            iteration_dir = temp_root / "iteration"
+            result = resolve_candidate_selection(
+                ROOT,
+                self._packet(),
+                iteration_dir,
+                policy_path=policy_path,
+            )
+            self.assertEqual(result["selection_source"], "llm")
+            self.assertEqual(result["confidence"], "high")
+
+    def test_resolve_selection_supports_repo_root_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            decision = {
+                "selected_candidate_ids": ["cand-1"],
+                "rejected_candidate_ids": ["cand-2"],
+                "rationale": "Placeholder resolution check",
+                "risk_notes": [],
+                "confidence": "medium",
+                "fallback_recommended": False,
+            }
+            command_code = (
+                "import json, sys; assert sys.argv[1]; "
+                f"print({json.dumps(json.dumps(decision))})"
+            )
+            policy_path = temp_root / "policy.yaml"
+            write_yaml(
+                policy_path,
+                {
+                    "version": 1,
+                    "enabled": True,
+                    "max_selected_candidates": 1,
+                    "llm": {
+                        "enabled": True,
+                        "fallback_to_deterministic": True,
+                        "command": [sys.executable, "-c", command_code, "{repo_root}"],
+                    },
+                },
+            )
+            iteration_dir = temp_root / "iteration"
+            result = resolve_candidate_selection(
+                ROOT,
+                self._packet(),
+                iteration_dir,
+                policy_path=policy_path,
+            )
+            self.assertEqual(result["selection_source"], "llm")
+            raw = json.loads((iteration_dir / "llm_decision.raw.json").read_text(encoding="utf-8"))
+            self.assertIn(str(ROOT), raw["command"])
+
+    def test_resolve_selection_honors_fallback_policy_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            decision = {
+                "selected_candidate_ids": ["cand-99"],
+                "rationale": "Unknown candidate",
+                "risk_notes": [],
+                "confidence": "low",
+                "fallback_recommended": False,
+            }
+            command_code = f"import json; print({json.dumps(json.dumps(decision))})"
+            policy_path = temp_root / "policy.yaml"
+            write_yaml(
+                policy_path,
+                {
+                    "version": 1,
+                    "enabled": True,
+                    "max_selected_candidates": 2,
+                    "llm": {
+                        "enabled": True,
+                        "fallback_to_deterministic": False,
+                        "command": [sys.executable, "-c", command_code],
+                    },
+                },
+            )
+            iteration_dir = temp_root / "iteration"
+            result = resolve_candidate_selection(
+                ROOT,
+                self._packet(),
+                iteration_dir,
+                policy_path=policy_path,
+            )
+            self.assertEqual(result["selection_source"], "fallback")
+            self.assertEqual(
+                result["resolution_reason"],
+                "fallback_disallowed:llm_selected_unknown_candidates",
+            )
+            self.assertEqual(result["ordered_candidate_ids"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

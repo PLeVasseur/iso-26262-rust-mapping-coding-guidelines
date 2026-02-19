@@ -1213,6 +1213,59 @@ def main() -> int:
         if selection_source == "fallback":
             state["decision_fallback_count"] = int(state.get("decision_fallback_count") or 0) + 1
 
+        if selection_reason.startswith("fallback_disallowed:"):
+            state["status"] = "error"
+            state["iteration"] = iteration
+            state["last_iteration_decision"] = "stop-error"
+            append_history(
+                state,
+                iteration,
+                "stop-error",
+                "llm fallback disabled and decision invalid",
+                "",
+                selected_by=selection_source,
+                selection_reason=selection_reason,
+            )
+            write_iteration_record(
+                iteration_dir,
+                state["session_id"],
+                iteration,
+                before_observation,
+                candidates,
+                [],
+                "stop-error",
+                "",
+                selection_source=selection_source,
+                selection_reason=selection_reason,
+            )
+            save_state(paths, state)
+            write_blocker_report(
+                paths,
+                state,
+                "llm decision invalid and deterministic fallback disabled",
+                before_observation,
+                attempted_candidates,
+            )
+            handoff_recommendation, handoff_validation_errors = write_handoff_package(
+                root,
+                paths,
+                state,
+                before_observation,
+                args,
+                corpus_pack,
+            )
+            state["handoff_recommendation"] = handoff_recommendation
+            save_state(paths, state)
+            write_final_report(
+                paths,
+                state,
+                before_observation,
+                handoff_recommendation,
+                handoff_validation_errors,
+            )
+            print("[controller] stopped: llm fallback disabled")
+            return EXIT_RUNTIME_FAIL
+
         ordered_candidate_ids = [
             str(item)
             for item in (selection_resolution.get("ordered_candidate_ids") or [])
