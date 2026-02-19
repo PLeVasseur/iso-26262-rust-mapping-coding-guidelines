@@ -1,488 +1,1182 @@
 version: 1
 guidelines:
 - id: RG-10299F77BE61
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with Annex E.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-10299F77BE61
+    (Part 6 Annex E). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-10299F77BE61 (Part 6 Annex E) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-10299F77BE61
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Annex E, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-10299F77BE61/metadata.yaml
+  - tests/guidelines/RG-10299F77BE61/examples/compliant.md
+  - tests/guidelines/RG-10299F77BE61/examples/non_compliant.md
   - audit_checklists/RG-10299F77BE61.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-10299F77BE61/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-10299F77BE61/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-10299F77BE61/examples/compliant.rs
+      doc_path: tests/guidelines/RG-10299F77BE61/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-1E3A1235235C
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 14 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-1E3A1235235C
+    (Part 6 Table 14). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-1E3A1235235C (Part 6 Table 14) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-1E3A1235235C
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 14, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-1E3A1235235C/metadata.yaml
+  - tests/guidelines/RG-1E3A1235235C/examples/compliant.md
+  - tests/guidelines/RG-1E3A1235235C/examples/non_compliant.md
   - audit_checklists/RG-1E3A1235235C.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-1E3A1235235C/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-1E3A1235235C/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-1E3A1235235C/examples/compliant.rs
+      doc_path: tests/guidelines/RG-1E3A1235235C/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-1E3A1235235C%20candidate%20lint
 - id: RG-1E8B8CE3DBF1
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 1 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-1E8B8CE3DBF1
+    (Part 6 Table 1). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-1E8B8CE3DBF1 (Part 6 Table 1) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-1E8B8CE3DBF1
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 1, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-1E8B8CE3DBF1/metadata.yaml
+  - tests/guidelines/RG-1E8B8CE3DBF1/examples/compliant.md
+  - tests/guidelines/RG-1E8B8CE3DBF1/examples/non_compliant.md
   - audit_checklists/RG-1E8B8CE3DBF1.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-1E8B8CE3DBF1/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-1E8B8CE3DBF1/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-1E8B8CE3DBF1/examples/compliant.rs
+      doc_path: tests/guidelines/RG-1E8B8CE3DBF1/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-1E8B8CE3DBF1%20candidate%20lint
 - id: RG-230964AF44D4
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with 5.4.3.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-230964AF44D4
+    (Part 6 5.4.3). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-230964AF44D4 (Part 6 5.4.3) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-230964AF44D4
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for 5.4.3, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-230964AF44D4/metadata.yaml
+  - tests/guidelines/RG-230964AF44D4/examples/compliant.md
+  - tests/guidelines/RG-230964AF44D4/examples/non_compliant.md
   - audit_checklists/RG-230964AF44D4.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-230964AF44D4/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-230964AF44D4/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-230964AF44D4/examples/compliant.rs
+      doc_path: tests/guidelines/RG-230964AF44D4/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-262BBEC1A2A9
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with 5.3.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-262BBEC1A2A9
+    (Part 6 5.3). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-262BBEC1A2A9 (Part 6 5.3) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-262BBEC1A2A9
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for 5.3, so deterministic automated decision is not currently possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-262BBEC1A2A9/metadata.yaml
+  - tests/guidelines/RG-262BBEC1A2A9/examples/compliant.md
+  - tests/guidelines/RG-262BBEC1A2A9/examples/non_compliant.md
   - audit_checklists/RG-262BBEC1A2A9.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-262BBEC1A2A9/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-262BBEC1A2A9/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-262BBEC1A2A9/examples/compliant.rs
+      doc_path: tests/guidelines/RG-262BBEC1A2A9/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-34FDD6EFE8ED
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with 7.4.12.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-34FDD6EFE8ED
+    (Part 6 7.4.12). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-34FDD6EFE8ED (Part 6 7.4.12) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-34FDD6EFE8ED
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for 7.4.12, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-34FDD6EFE8ED/metadata.yaml
+  - tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.md
+  - tests/guidelines/RG-34FDD6EFE8ED/examples/non_compliant.md
   - audit_checklists/RG-34FDD6EFE8ED.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-34FDD6EFE8ED/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-34FDD6EFE8ED/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.rs
+      doc_path: tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-587CE115D9C8
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 11 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-587CE115D9C8
+    (Part 6 Table 11). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-587CE115D9C8 (Part 6 Table 11) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-587CE115D9C8
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 11, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-587CE115D9C8/metadata.yaml
+  - tests/guidelines/RG-587CE115D9C8/examples/compliant.md
+  - tests/guidelines/RG-587CE115D9C8/examples/non_compliant.md
   - audit_checklists/RG-587CE115D9C8.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-587CE115D9C8/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-587CE115D9C8/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-587CE115D9C8/examples/compliant.rs
+      doc_path: tests/guidelines/RG-587CE115D9C8/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-587CE115D9C8%20candidate%20lint
 - id: RG-5B4923F76EEA
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 12 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-5B4923F76EEA
+    (Part 6 Table 12). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-5B4923F76EEA (Part 6 Table 12) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-5B4923F76EEA
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 12, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-5B4923F76EEA/metadata.yaml
+  - tests/guidelines/RG-5B4923F76EEA/examples/compliant.md
+  - tests/guidelines/RG-5B4923F76EEA/examples/non_compliant.md
   - audit_checklists/RG-5B4923F76EEA.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-5B4923F76EEA/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-5B4923F76EEA/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-5B4923F76EEA/examples/compliant.rs
+      doc_path: tests/guidelines/RG-5B4923F76EEA/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-5B4923F76EEA%20candidate%20lint
 - id: RG-697000BF3263
-  category: Tooling, compliance evidence, and deviations
+  category: Required
+  technical_topic: Tooling, compliance evidence, and deviations
   rule_statement: Provide verifiable compliance evidence for activities mapped to
     Table 7.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-697000BF3263
+    (Part 6 Table 7). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-697000BF3263 (Part 6 Table 7) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-697000BF3263
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Table 7, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-697000BF3263/metadata.yaml
+  - tests/guidelines/RG-697000BF3263/examples/compliant.md
+  - tests/guidelines/RG-697000BF3263/examples/non_compliant.md
   - audit_checklists/RG-697000BF3263.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-697000BF3263/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-697000BF3263/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-697000BF3263/examples/compliant.rs
+      doc_path: tests/guidelines/RG-697000BF3263/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-7359C842E4E4
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 10 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-7359C842E4E4
+    (Part 6 Table 10). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-7359C842E4E4 (Part 6 Table 10) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-7359C842E4E4
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 10, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-7359C842E4E4/metadata.yaml
+  - tests/guidelines/RG-7359C842E4E4/examples/compliant.md
+  - tests/guidelines/RG-7359C842E4E4/examples/non_compliant.md
   - audit_checklists/RG-7359C842E4E4.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-7359C842E4E4/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-7359C842E4E4/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-7359C842E4E4/examples/compliant.rs
+      doc_path: tests/guidelines/RG-7359C842E4E4/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7359C842E4E4%20candidate%20lint
 - id: RG-744267BD9DEC
-  category: Complexity & structure
+  category: Required
+  technical_topic: Complexity & structure
   rule_statement: Keep implementation complexity bounded, reviewable, and traceable
     to Table 3.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-744267BD9DEC
+    (Part 6 Table 3). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-744267BD9DEC (Part 6 Table 3) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-744267BD9DEC
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Table 3, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-744267BD9DEC/metadata.yaml
+  - tests/guidelines/RG-744267BD9DEC/examples/compliant.md
+  - tests/guidelines/RG-744267BD9DEC/examples/non_compliant.md
   - audit_checklists/RG-744267BD9DEC.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-744267BD9DEC/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-744267BD9DEC/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-744267BD9DEC/examples/compliant.rs
+      doc_path: tests/guidelines/RG-744267BD9DEC/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-75D65B270D75
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 1 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-75D65B270D75
+    (Part 6 Table 1). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-75D65B270D75 (Part 6 Table 1) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-75D65B270D75
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 1, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-75D65B270D75/metadata.yaml
+  - tests/guidelines/RG-75D65B270D75/examples/compliant.md
+  - tests/guidelines/RG-75D65B270D75/examples/non_compliant.md
   - audit_checklists/RG-75D65B270D75.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-75D65B270D75/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-75D65B270D75/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-75D65B270D75/examples/compliant.rs
+      doc_path: tests/guidelines/RG-75D65B270D75/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-75D65B270D75%20candidate%20lint
 - id: RG-7CB86E3EA294
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 13 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-7CB86E3EA294
+    (Part 6 Table 13). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-7CB86E3EA294 (Part 6 Table 13) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-7CB86E3EA294
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 13, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-7CB86E3EA294/metadata.yaml
+  - tests/guidelines/RG-7CB86E3EA294/examples/compliant.md
+  - tests/guidelines/RG-7CB86E3EA294/examples/non_compliant.md
   - audit_checklists/RG-7CB86E3EA294.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-7CB86E3EA294/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-7CB86E3EA294/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-7CB86E3EA294/examples/compliant.rs
+      doc_path: tests/guidelines/RG-7CB86E3EA294/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7CB86E3EA294%20candidate%20lint
 - id: RG-82B1F0353FD0
-  category: Complexity & structure
+  category: Required
+  technical_topic: Complexity & structure
   rule_statement: Keep implementation complexity bounded, reviewable, and traceable
     to Annex D.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-82B1F0353FD0
+    (Part 6 Annex D). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-82B1F0353FD0 (Part 6 Annex D) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-82B1F0353FD0
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Annex D, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-82B1F0353FD0/metadata.yaml
+  - tests/guidelines/RG-82B1F0353FD0/examples/compliant.md
+  - tests/guidelines/RG-82B1F0353FD0/examples/non_compliant.md
   - audit_checklists/RG-82B1F0353FD0.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-82B1F0353FD0/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-82B1F0353FD0/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-82B1F0353FD0/examples/compliant.rs
+      doc_path: tests/guidelines/RG-82B1F0353FD0/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-90F9CF8770E1
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 10 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-90F9CF8770E1
+    (Part 6 Table 10). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-90F9CF8770E1 (Part 6 Table 10) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-90F9CF8770E1
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 10, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-90F9CF8770E1/metadata.yaml
+  - tests/guidelines/RG-90F9CF8770E1/examples/compliant.md
+  - tests/guidelines/RG-90F9CF8770E1/examples/non_compliant.md
   - audit_checklists/RG-90F9CF8770E1.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-90F9CF8770E1/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-90F9CF8770E1/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-90F9CF8770E1/examples/compliant.rs
+      doc_path: tests/guidelines/RG-90F9CF8770E1/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-90F9CF8770E1%20candidate%20lint
 - id: RG-956D02940FC5
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with 9.4.2.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-956D02940FC5
+    (Part 6 9.4.2). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-956D02940FC5 (Part 6 9.4.2) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-956D02940FC5
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for 9.4.2, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-956D02940FC5/metadata.yaml
+  - tests/guidelines/RG-956D02940FC5/examples/compliant.md
+  - tests/guidelines/RG-956D02940FC5/examples/non_compliant.md
   - audit_checklists/RG-956D02940FC5.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-956D02940FC5/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-956D02940FC5/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-956D02940FC5/examples/compliant.rs
+      doc_path: tests/guidelines/RG-956D02940FC5/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-9B66370DEE3A
-  category: Tooling, compliance evidence, and deviations
+  category: Required
+  technical_topic: Tooling, compliance evidence, and deviations
   rule_statement: Provide verifiable compliance evidence for activities mapped to
     Table 9.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-9B66370DEE3A
+    (Part 6 Table 9). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-9B66370DEE3A (Part 6 Table 9) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-9B66370DEE3A
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Table 9, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-9B66370DEE3A/metadata.yaml
+  - tests/guidelines/RG-9B66370DEE3A/examples/compliant.md
+  - tests/guidelines/RG-9B66370DEE3A/examples/non_compliant.md
   - audit_checklists/RG-9B66370DEE3A.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-9B66370DEE3A/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-9B66370DEE3A/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-9B66370DEE3A/examples/compliant.rs
+      doc_path: tests/guidelines/RG-9B66370DEE3A/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-9BA71FE474B2
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with 5.4.2.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-9BA71FE474B2
+    (Part 6 5.4.2). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-9BA71FE474B2 (Part 6 5.4.2) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-9BA71FE474B2
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for 5.4.2, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-9BA71FE474B2/metadata.yaml
+  - tests/guidelines/RG-9BA71FE474B2/examples/compliant.md
+  - tests/guidelines/RG-9BA71FE474B2/examples/non_compliant.md
   - audit_checklists/RG-9BA71FE474B2.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-9BA71FE474B2/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-9BA71FE474B2/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-9BA71FE474B2/examples/compliant.rs
+      doc_path: tests/guidelines/RG-9BA71FE474B2/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-9E4C0961E7E2
-  category: Tooling, compliance evidence, and deviations
+  category: Required
+  technical_topic: Tooling, compliance evidence, and deviations
   rule_statement: Provide verifiable compliance evidence for activities mapped to
     Table 9.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-9E4C0961E7E2
+    (Part 6 Table 9). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-9E4C0961E7E2 (Part 6 Table 9) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-9E4C0961E7E2
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Table 9, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-9E4C0961E7E2/metadata.yaml
+  - tests/guidelines/RG-9E4C0961E7E2/examples/compliant.md
+  - tests/guidelines/RG-9E4C0961E7E2/examples/non_compliant.md
   - audit_checklists/RG-9E4C0961E7E2.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-9E4C0961E7E2/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-9E4C0961E7E2/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-9E4C0961E7E2/examples/compliant.rs
+      doc_path: tests/guidelines/RG-9E4C0961E7E2/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-A0B720294566
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with Table 1.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-A0B720294566
+    (Part 6 Table 1). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-A0B720294566 (Part 6 Table 1) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-A0B720294566
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Table 1, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-A0B720294566/metadata.yaml
+  - tests/guidelines/RG-A0B720294566/examples/compliant.md
+  - tests/guidelines/RG-A0B720294566/examples/non_compliant.md
   - audit_checklists/RG-A0B720294566.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-A0B720294566/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-A0B720294566/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-A0B720294566/examples/compliant.rs
+      doc_path: tests/guidelines/RG-A0B720294566/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-A313BE9C58CB
-  category: Tooling, compliance evidence, and deviations
+  category: Required
+  technical_topic: Tooling, compliance evidence, and deviations
   rule_statement: Provide verifiable compliance evidence for activities mapped to
     Table 6.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-A313BE9C58CB
+    (Part 6 Table 6). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-A313BE9C58CB (Part 6 Table 6) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-A313BE9C58CB
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Table 6, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-A313BE9C58CB/metadata.yaml
+  - tests/guidelines/RG-A313BE9C58CB/examples/compliant.md
+  - tests/guidelines/RG-A313BE9C58CB/examples/non_compliant.md
   - audit_checklists/RG-A313BE9C58CB.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-A313BE9C58CB/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-A313BE9C58CB/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-A313BE9C58CB/examples/compliant.rs
+      doc_path: tests/guidelines/RG-A313BE9C58CB/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-C5BAB6CA4D74
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with Table 3.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-C5BAB6CA4D74
+    (Part 6 Table 3). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-C5BAB6CA4D74 (Part 6 Table 3) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-C5BAB6CA4D74
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Table 3, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-C5BAB6CA4D74/metadata.yaml
+  - tests/guidelines/RG-C5BAB6CA4D74/examples/compliant.md
+  - tests/guidelines/RG-C5BAB6CA4D74/examples/non_compliant.md
   - audit_checklists/RG-C5BAB6CA4D74.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-C5BAB6CA4D74/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-C5BAB6CA4D74/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-C5BAB6CA4D74/examples/compliant.rs
+      doc_path: tests/guidelines/RG-C5BAB6CA4D74/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-C86203555EAD
-  category: Complexity & structure
+  category: Required
+  technical_topic: Complexity & structure
   rule_statement: Keep implementation complexity bounded, reviewable, and traceable
     to Annex B.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-C86203555EAD
+    (Part 6 Annex B). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-C86203555EAD (Part 6 Annex B) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-C86203555EAD
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Annex B, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-C86203555EAD/metadata.yaml
+  - tests/guidelines/RG-C86203555EAD/examples/compliant.md
+  - tests/guidelines/RG-C86203555EAD/examples/non_compliant.md
   - audit_checklists/RG-C86203555EAD.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-C86203555EAD/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-C86203555EAD/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-C86203555EAD/examples/compliant.rs
+      doc_path: tests/guidelines/RG-C86203555EAD/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-D2DBBE48588A
-  category: Defensive programming & contracts
+  category: Required
+  technical_topic: Defensive programming & contracts
   rule_statement: Apply defensive checks and explicit error handling behaviors consistent
     with 10.4.2.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-D2DBBE48588A
+    (Part 6 10.4.2). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-D2DBBE48588A (Part 6 10.4.2) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-D2DBBE48588A
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for 10.4.2, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-D2DBBE48588A/metadata.yaml
+  - tests/guidelines/RG-D2DBBE48588A/examples/compliant.md
+  - tests/guidelines/RG-D2DBBE48588A/examples/non_compliant.md
   - audit_checklists/RG-D2DBBE48588A.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-D2DBBE48588A/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-D2DBBE48588A/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-D2DBBE48588A/examples/compliant.rs
+      doc_path: tests/guidelines/RG-D2DBBE48588A/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-D3EBCE5ABB2A
-  category: Tooling, compliance evidence, and deviations
+  category: Required
+  technical_topic: Tooling, compliance evidence, and deviations
   rule_statement: Provide verifiable compliance evidence for activities mapped to
     Table 7.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-D3EBCE5ABB2A
+    (Part 6 Table 7). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-D3EBCE5ABB2A (Part 6 Table 7) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-D3EBCE5ABB2A
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: undecidable
+  decidability_rationale: The current rule shape requires reviewer judgment and contextual
+    interpretation for Table 7, so deterministic automated decision is not currently
+    possible.
   state: DRAFT
   enforcement_mode: AUDIT
   enforcement_details: Track compliance through structured manual audit checklist
     evidence.
   evidence_artifacts:
   - tests/guidelines/RG-D3EBCE5ABB2A/metadata.yaml
+  - tests/guidelines/RG-D3EBCE5ABB2A/examples/compliant.md
+  - tests/guidelines/RG-D3EBCE5ABB2A/examples/non_compliant.md
   - audit_checklists/RG-D3EBCE5ABB2A.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-D3EBCE5ABB2A/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-D3EBCE5ABB2A/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: documented-only
+    compliant:
+      code_path: tests/guidelines/RG-D3EBCE5ABB2A/examples/compliant.rs
+      doc_path: tests/guidelines/RG-D3EBCE5ABB2A/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: documented-only
 - id: RG-DCC941884F0D
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 2 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-DCC941884F0D
+    (Part 6 Table 2). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-DCC941884F0D (Part 6 Table 2) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-DCC941884F0D
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 2, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-DCC941884F0D/metadata.yaml
+  - tests/guidelines/RG-DCC941884F0D/examples/compliant.md
+  - tests/guidelines/RG-DCC941884F0D/examples/non_compliant.md
   - audit_checklists/RG-DCC941884F0D.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-DCC941884F0D/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-DCC941884F0D/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-DCC941884F0D/examples/compliant.rs
+      doc_path: tests/guidelines/RG-DCC941884F0D/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-DCC941884F0D%20candidate%20lint
 - id: RG-DE2CEFDCD9D7
-  category: Language subset / forbidden constructs
+  category: Required
+  technical_topic: Language subset / forbidden constructs
   rule_statement: Use only the approved Rust language subset for Table 5 and avoid
     forbidden or high-risk constructs in safety-critical code.
+  amplification: Initial generic guideline derived from ISO 26262 seed SEED-DE2CEFDCD9D7
+    (Part 6 Table 5). This rule is expected to be decomposed into narrower Rust-specific
+    sub-guidelines as corpus evidence grows.
+  exceptions: Exception allowed only through the documented deviation process with
+    explicit safety impact assessment, mitigation evidence, and reviewer approval.
   rationale: Derived from ISO 26262 seed SEED-DE2CEFDCD9D7 (Part 6 Table 5) to maintain
     traceable coding-guideline coverage.
   iso_seeds:
   - SEED-DE2CEFDCD9D7
-  scope: Rust production code and associated safety evidence artifacts.
+  scope: crate
+  decidable: decidable
+  decidability_rationale: The rule is intended to be machine-decidable and appears
+    suitable for static lint enforcement over Table 5, but an exact existing lint
+    mapping is not yet locked.
   state: DRAFT
   enforcement_mode: AUTO
   enforcement_details: Enforce with toolchain automation (rustc/clippy/rustfmt where
     applicable) and deterministic fixture expectations.
   evidence_artifacts:
   - tests/guidelines/RG-DE2CEFDCD9D7/metadata.yaml
+  - tests/guidelines/RG-DE2CEFDCD9D7/examples/compliant.md
+  - tests/guidelines/RG-DE2CEFDCD9D7/examples/non_compliant.md
   - audit_checklists/RG-DE2CEFDCD9D7.md
   deviation_requirements: Document deviation rationale, impact, mitigation, and approval
     evidence per docs/deviation_process.md.
+  examples:
+    non_compliant:
+      code_path: tests/guidelines/RG-DE2CEFDCD9D7/examples/non_compliant.rs
+      doc_path: tests/guidelines/RG-DE2CEFDCD9D7/examples/non_compliant.md
+      explanation: This example intentionally violates the guideline intent and should
+        be used as negative evidence during rule validation.
+      compile_expectation: compile_pass
+    compliant:
+      code_path: tests/guidelines/RG-DE2CEFDCD9D7/examples/compliant.rs
+      doc_path: tests/guidelines/RG-DE2CEFDCD9D7/examples/compliant.md
+      explanation: This example demonstrates a compliant coding pattern aligned with
+        the guideline intent and should be used as positive evidence during rule validation.
+      compile_expectation: no_run
+  decidable_status: possible-with-clippy
+  clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-DE2CEFDCD9D7%20candidate%20lint
