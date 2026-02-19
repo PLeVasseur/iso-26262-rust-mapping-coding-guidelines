@@ -62,21 +62,63 @@ def normalize_confidence(value: Any) -> str | None:
         return None
 
 
+def normalize_expected_outcome(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized == "documented-only":
+        return "documented_only"
+    return normalized
+
+
+def normalize_examples_payload(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+
+    normalized: dict[str, Any] = {}
+    for side in ["compliant", "non_compliant"]:
+        side_payload = value.get(side)
+        if not isinstance(side_payload, dict):
+            continue
+
+        normalized_side: dict[str, Any] = {}
+        for field in ["explanation", "verification_notes", "markdown"]:
+            text = str(side_payload.get(field) or "").strip()
+            if text:
+                normalized_side[field] = text
+
+        expected_outcome = normalize_expected_outcome(side_payload.get("expected_outcome"))
+        if expected_outcome:
+            normalized_side["expected_outcome"] = expected_outcome
+
+        if normalized_side:
+            normalized[side] = normalized_side
+
+    return normalized
+
+
 def normalize_payload(raw: dict[str, Any]) -> dict[str, Any]:
     payload = dict(raw)
-    for field in ["rule_statement", "amplification", "exceptions", "rationale", "uniqueness_rationale"]:
+    for field in [
+        "rule_statement",
+        "amplification",
+        "exceptions",
+        "rationale",
+        "uniqueness_rationale",
+    ]:
         payload[field] = str(payload.get(field) or "").strip()
 
     citation_plan = payload.get("citation_plan")
     if isinstance(citation_plan, str):
         payload["citation_plan"] = [citation_plan]
     elif isinstance(citation_plan, list):
-        payload["citation_plan"] = [str(item).strip() for item in citation_plan if str(item).strip()]
+        payload["citation_plan"] = [
+            str(item).strip() for item in citation_plan if str(item).strip()
+        ]
     else:
         payload["citation_plan"] = []
 
     confidence = normalize_confidence(payload.get("confidence"))
     payload["confidence"] = confidence or "low"
+    payload["examples"] = normalize_examples_payload(payload.get("examples"))
     return payload
 
 
@@ -115,10 +157,56 @@ def validate_constraints(payload: dict[str, Any], constraints: dict[str, Any]) -
         if not any(token in text for token in ["verify", "evidence", "test", "check", "review"]):
             errors.append("rewrite text missing verification/evidence phrase")
 
+    examples = payload.get("examples") or {}
+    for side in ["compliant", "non_compliant"]:
+        side_payload = examples.get(side) or {}
+        expected_outcome = normalize_expected_outcome(side_payload.get("expected_outcome"))
+        if not expected_outcome:
+            continue
+        if expected_outcome not in {
+            "assertion_pass",
+            "compile_fail",
+            "runtime_panic",
+            "lint_trigger",
+            "documented_only",
+        }:
+            errors.append(f"examples.{side}.expected_outcome invalid: {expected_outcome}")
+            continue
+
+        if side == "compliant" and expected_outcome in {
+            "compile_fail",
+            "runtime_panic",
+            "lint_trigger",
+        }:
+            errors.append("examples.compliant.expected_outcome invalid for compliant side")
+        if side == "non_compliant" and expected_outcome == "assertion_pass":
+            errors.append("examples.non_compliant.expected_outcome invalid for non_compliant side")
+
+        markdown = str(side_payload.get("markdown") or "").strip()
+        if markdown and "```" not in markdown:
+            errors.append(f"examples.{side}.markdown missing fenced code block")
+
     return errors
 
 
-def top_neighbors(guidelines: list[dict[str, Any]], guideline_id: str, max_neighbors: int) -> list[dict[str, Any]]:
+def load_example_markdown(root: Path, guideline: dict[str, Any]) -> dict[str, str]:
+    output: dict[str, str] = {}
+    examples = guideline.get("examples") or {}
+    for side in ["compliant", "non_compliant"]:
+        entry = examples.get(side) or {}
+        doc_rel = str(entry.get("doc_path") or "").strip()
+        if not doc_rel:
+            continue
+        doc_path = root / doc_rel
+        if not doc_path.exists():
+            continue
+        output[side] = doc_path.read_text(encoding="utf-8")
+    return output
+
+
+def top_neighbors(
+    guidelines: list[dict[str, Any]], guideline_id: str, max_neighbors: int
+) -> list[dict[str, Any]]:
     target = None
     for guideline in guidelines:
         if str(guideline.get("id") or "").strip() == guideline_id:
@@ -247,6 +335,8 @@ def resolve_guideline_rewrite(
             "amplification": str(target.get("amplification") or ""),
             "exceptions": str(target.get("exceptions") or ""),
             "rationale": str(target.get("rationale") or ""),
+            "examples": target.get("examples") or {},
+            "example_markdown": load_example_markdown(root, target),
         },
         "nearest_neighbors": neighbors,
         "constraints": policy.get("constraints") or {},

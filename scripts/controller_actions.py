@@ -220,6 +220,34 @@ def _proposal_from_deficit(deficit: dict[str, Any]) -> dict[str, Any] | None:
         }
         expected_delta = {"examples": 1, "quality": 1}
         risk_penalty = 0.15
+    elif deficit_type == "example_outcome_gap" and guideline_id:
+        action = {
+            "type": "align_example_with_decidable_status",
+            "guideline_id": guideline_id,
+        }
+        expected_delta = {"examples": 2, "quality": 1}
+        risk_penalty = 0.12
+    elif deficit_type == "example_assertion_gap" and guideline_id:
+        action = {
+            "type": "strengthen_example_assertions",
+            "guideline_id": guideline_id,
+        }
+        expected_delta = {"examples": 2, "quality": 1}
+        risk_penalty = 0.1
+    elif deficit_type == "example_negative_evidence_gap" and guideline_id:
+        action = {
+            "type": "convert_non_compliant_to_compile_fail_or_panic",
+            "guideline_id": guideline_id,
+        }
+        expected_delta = {"examples": 2, "quality": 1}
+        risk_penalty = 0.12
+    elif deficit_type == "example_diversity_gap" and guideline_id:
+        action = {
+            "type": "upgrade_examples_non_placeholder",
+            "guideline_id": guideline_id,
+        }
+        expected_delta = {"examples": 2, "quality": 1, "diversity": 1}
+        risk_penalty = 0.1
     elif deficit_type in {"duplication_gap", "duplication_exception_missing"} and guideline_id:
         action = {
             "type": "diversify_rule_wording",
@@ -360,6 +388,10 @@ def _bundle_repetition_penalty(actions: list[dict[str, Any]]) -> float:
 
     if "upgrade_examples_non_placeholder" in action_types:
         penalty -= 0.05
+    if "strengthen_example_assertions" in action_types:
+        penalty -= 0.08
+    if "convert_non_compliant_to_compile_fail_or_panic" in action_types:
+        penalty -= 0.06
     if "diversify_rule_wording" in action_types:
         penalty -= 0.2
 
@@ -738,7 +770,9 @@ def _anchor_sentence(
             return f"ISO requirement linkage: {marker}."
         return f"Rust API anchor: {marker}."
 
-    index = _stable_variant_index(guideline_id, marker_kind, marker, str(ordinal), modulus=len(templates))
+    index = _stable_variant_index(
+        guideline_id, marker_kind, marker, str(ordinal), modulus=len(templates)
+    )
     template = templates[index]
     sentence = template.format(marker=marker)
     sentence = sentence.strip()
@@ -941,38 +975,144 @@ def _focus_phrase(guideline: dict[str, Any]) -> str:
     return "safety-critical Rust control flow"
 
 
-def _rewrite_example_markdown(path: Path, guideline_id: str, side: str, focus: str) -> None:
+def _normalize_expected_outcome(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_")
+    if normalized == "documented-only":
+        return "documented_only"
+    return normalized
+
+
+def _default_example_outcome(guideline: dict[str, Any], side: str) -> str:
+    decidable = str(guideline.get("decidable") or "").strip()
+    status = str(guideline.get("decidable_status") or "").strip()
+    if side == "compliant":
+        return "assertion_pass" if decidable == "decidable" else "documented_only"
+    if status == "compiler":
+        return "compile_fail"
+    if status == "clippy":
+        return "lint_trigger"
+    if status == "possible-with-clippy":
+        return "runtime_panic"
+    if status == "impossible-with-clippy":
+        return "runtime_panic"
+    return "runtime_panic" if decidable == "decidable" else "documented_only"
+
+
+def _compile_expectation_for_outcome(outcome: str, side: str) -> str:
+    normalized = _normalize_expected_outcome(outcome)
+    if normalized == "compile_fail":
+        return "compile_fail"
+    if normalized == "documented_only":
+        return "documented-only"
+    if normalized == "assertion_pass":
+        return "compile_pass"
+    if normalized in {"runtime_panic", "lint_trigger"}:
+        return "compile_pass"
+    return "compile_pass" if side == "compliant" else "documented-only"
+
+
+def _fence_tag_for_outcome(outcome: str) -> str:
+    normalized = _normalize_expected_outcome(outcome)
+    if normalized == "compile_fail":
+        return "compile_fail"
+    if normalized == "runtime_panic":
+        return "should_panic"
+    if normalized == "documented_only":
+        return "no_run"
+    return "rust"
+
+
+def _example_code_for_outcome(outcome: str, side: str, focus: str) -> str:
+    normalized = _normalize_expected_outcome(outcome)
+    if normalized == "compile_fail":
+        return (
+            "fn main() {\n"
+            "    // Intentional compile failure for negative evidence.\n"
+            '    let must_be_u32: u32 = "invalid";\n'
+            "    let _ = must_be_u32;\n"
+            "}\n"
+        )
+    if normalized == "runtime_panic":
+        return (
+            "fn main() {\n"
+            "    // Intentional runtime panic for negative evidence.\n"
+            "    let values = [10_u32, 20_u32];\n"
+            "    let idx = values.len();\n"
+            "    let _ = values[idx];\n"
+            "}\n"
+        )
+    if normalized == "lint_trigger":
+        return (
+            "fn main() {\n"
+            "    // Negative example for lint-oriented enforcement; replace with rule-specific trigger.\n"
+            "    let mut total = 0_u32;\n"
+            "    for item in [1_u32, 2_u32, 3_u32] {\n"
+            "        total += item;\n"
+            "    }\n"
+            "    if total == 6 {\n"
+            '        println!("{}", total);\n'
+            "    }\n"
+            "}\n"
+        )
+    if normalized == "assertion_pass":
+        return (
+            "fn main() {\n"
+            f"    // Compliant evidence for {focus}.\n"
+            "    let values = [1_u32, 2_u32, 3_u32];\n"
+            "    let total: u32 = values.into_iter().sum();\n"
+            "    assert_eq!(total, 6);\n"
+            "}\n"
+        )
+    if side == "compliant":
+        return "fn main() {\n    let stable_value = 42_u32;\n    let _ = stable_value;\n}\n"
+    return "fn main() {\n    let unchecked = -1_i32;\n    let _ = unchecked;\n}\n"
+
+
+def _rewrite_example_markdown(
+    path: Path,
+    guideline_id: str,
+    side: str,
+    focus: str,
+    expected_outcome: str,
+    verification_notes: str = "",
+) -> None:
     title = f"{side.replace('_', ' ').title()} Example: {guideline_id}"
-    if path.exists():
-        original = path.read_text(encoding="utf-8")
-        sanitized = _sanitize_text(original)
-        if sanitized != original:
-            path.write_text(sanitized, encoding="utf-8")
-            return
+
+    normalized_outcome = _normalize_expected_outcome(expected_outcome) or "documented_only"
+    fence_tag = _fence_tag_for_outcome(normalized_outcome)
+    code = _example_code_for_outcome(normalized_outcome, side, focus).rstrip()
 
     if side == "compliant":
-        body = (
-            f"This example demonstrates {focus} with explicit, reviewable safety constraints.\n\n"
-            "```rust\n"
-            "fn main() {\n"
-            "    let validated_value: u32 = 42;\n"
-            "    let _ = validated_value;\n"
-            "}\n"
-            "```\n"
+        lead = (
+            f"This example demonstrates {focus} with explicit, reviewable constraints and "
+            "deterministic evidence."
         )
     else:
-        body = (
-            "This example violates the "
-            f"{focus} constraints and should be treated as negative evidence.\n\n"
-            "```rust\n"
-            "fn main() {\n"
-            "    let unchecked: i32 = -1;\n"
-            "    let _ = unchecked;\n"
-            "}\n"
-            "```\n"
+        lead = (
+            f"This example intentionally violates {focus} constraints and should be treated "
+            "as negative evidence."
         )
+
+    lines = [
+        f"# {title}",
+        "",
+        lead,
+        "",
+        f"Expected outcome: `{normalized_outcome}`.",
+    ]
+    if verification_notes.strip():
+        lines.extend(["", f"Verification notes: {_sanitize_text(verification_notes.strip())}"])
+    lines.extend(["", f"```{fence_tag}", code, "```", ""])
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# {title}\n\n{body}", encoding="utf-8")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _extract_first_rust_code(markdown: str) -> str:
+    match = re.search(r"```[^\n]*\n(?P<code>[\s\S]*?)\n```", markdown)
+    if not match:
+        return "fn main() {}\n"
+    return f"{match.group('code').rstrip()}\n"
 
 
 def apply_assign_missing_fls_refs(root: Path, action: dict[str, Any]) -> dict[str, Any]:
@@ -1130,6 +1270,18 @@ def apply_spawn_rule_for_obligation_unit(root: Path, action: dict[str, Any]) -> 
             f"{side.replace('_', ' ').title()} evidence for decomposed rule {new_id} "
             f"covering obligation {obligation}."
         )
+        expected_outcome = _normalize_expected_outcome(str(entry.get("expected_outcome") or ""))
+        if not expected_outcome:
+            expected_outcome = _default_example_outcome(child, side)
+        entry["expected_outcome"] = expected_outcome
+        entry["compile_expectation"] = _compile_expectation_for_outcome(expected_outcome, side)
+        if (
+            expected_outcome == "documented_only"
+            and not str(entry.get("verification_notes") or "").strip()
+        ):
+            entry["verification_notes"] = (
+                "Automated execution not required; reviewer verifies context-specific evidence."
+            )
         examples[side] = entry
     child["examples"] = examples
 
@@ -1170,12 +1322,59 @@ def apply_rewrite_rule_statement_specific(root: Path, action: dict[str, Any]) ->
                 "reason": str(llm_rewrite.get("reason") or "llm_rewrite_failed"),
             }
 
-        if bool(llm_rewrite.get("applied", False)) and str(llm_rewrite.get("source") or "") == "llm":
+        if (
+            bool(llm_rewrite.get("applied", False))
+            and str(llm_rewrite.get("source") or "") == "llm"
+        ):
             rewrite_payload = llm_rewrite.get("payload") or {}
             guideline["rule_statement"] = str(rewrite_payload.get("rule_statement") or "")
             guideline["amplification"] = str(rewrite_payload.get("amplification") or "")
             guideline["exceptions"] = str(rewrite_payload.get("exceptions") or "")
             guideline["rationale"] = str(rewrite_payload.get("rationale") or "")
+
+            rewritten_examples = rewrite_payload.get("examples") or {}
+            if isinstance(rewritten_examples, dict):
+                current_examples = guideline.get("examples") or {}
+                for side in ["compliant", "non_compliant"]:
+                    side_payload = rewritten_examples.get(side) or {}
+                    if not isinstance(side_payload, dict):
+                        continue
+                    entry = current_examples.get(side) or {}
+                    if str(side_payload.get("explanation") or "").strip():
+                        entry["explanation"] = _sanitize_text(
+                            str(side_payload.get("explanation") or "")
+                        )
+
+                    expected_outcome = _normalize_expected_outcome(
+                        str(side_payload.get("expected_outcome") or "")
+                    )
+                    if expected_outcome:
+                        entry["expected_outcome"] = expected_outcome
+                        entry["compile_expectation"] = _compile_expectation_for_outcome(
+                            expected_outcome,
+                            side,
+                        )
+
+                    verification_notes = str(side_payload.get("verification_notes") or "").strip()
+                    if verification_notes:
+                        entry["verification_notes"] = _sanitize_text(verification_notes)
+
+                    markdown = str(side_payload.get("markdown") or "").strip()
+                    doc_path = str(entry.get("doc_path") or "").strip()
+                    code_path = str(entry.get("code_path") or "").strip()
+                    if markdown and doc_path:
+                        doc_abs = root / doc_path
+                        doc_abs.parent.mkdir(parents=True, exist_ok=True)
+                        doc_abs.write_text(markdown.rstrip() + "\n", encoding="utf-8")
+                        if code_path:
+                            code_abs = root / code_path
+                            code_abs.parent.mkdir(parents=True, exist_ok=True)
+                            code_abs.write_text(
+                                _extract_first_rust_code(markdown), encoding="utf-8"
+                            )
+
+                    current_examples[side] = entry
+                guideline["examples"] = current_examples
 
             citation_plan = [
                 str(item).strip()
@@ -1224,8 +1423,33 @@ def apply_rewrite_rule_statement_specific(root: Path, action: dict[str, Any]) ->
         for side in ["compliant", "non_compliant"]:
             entry = examples.get(side) or {}
             doc_path = str(entry.get("doc_path") or "").strip()
+            code_path = str(entry.get("code_path") or "").strip()
+            expected_outcome = _normalize_expected_outcome(str(entry.get("expected_outcome") or ""))
+            if not expected_outcome:
+                expected_outcome = _default_example_outcome(guideline, side)
+            entry["expected_outcome"] = expected_outcome
+            entry["compile_expectation"] = _compile_expectation_for_outcome(expected_outcome, side)
+            verification_notes = str(entry.get("verification_notes") or "").strip()
+            if expected_outcome == "documented_only" and not verification_notes:
+                entry["verification_notes"] = (
+                    "Automated execution not required; reviewer verifies context-specific evidence."
+                )
+
             if doc_path:
-                _rewrite_example_markdown(root / doc_path, guideline_id, side, focus)
+                _rewrite_example_markdown(
+                    root / doc_path,
+                    guideline_id,
+                    side,
+                    focus,
+                    expected_outcome,
+                    str(entry.get("verification_notes") or ""),
+                )
+                if code_path:
+                    markdown = (root / doc_path).read_text(encoding="utf-8")
+                    code_abs = root / code_path
+                    code_abs.parent.mkdir(parents=True, exist_ok=True)
+                    code_abs.write_text(_extract_first_rust_code(markdown), encoding="utf-8")
+            examples[side] = entry
         changed = True
         break
 
@@ -1299,11 +1523,182 @@ def apply_upgrade_examples_non_placeholder(root: Path, action: dict[str, Any]) -
         for side in ["compliant", "non_compliant"]:
             entry = examples.get(side) or {}
             doc_path = str(entry.get("doc_path") or "").strip()
+            code_path = str(entry.get("code_path") or "").strip()
             explanation = str(entry.get("explanation") or "")
             entry["explanation"] = _sanitize_text(explanation)
+            expected_outcome = _normalize_expected_outcome(str(entry.get("expected_outcome") or ""))
+            if not expected_outcome:
+                expected_outcome = _default_example_outcome(guideline, side)
+            entry["expected_outcome"] = expected_outcome
+            entry["compile_expectation"] = _compile_expectation_for_outcome(expected_outcome, side)
+            if (
+                expected_outcome == "documented_only"
+                and not str(entry.get("verification_notes") or "").strip()
+            ):
+                entry["verification_notes"] = (
+                    "Automated execution not required; reviewer verifies context-specific evidence."
+                )
             examples[side] = entry
             if doc_path:
-                _rewrite_example_markdown(root / doc_path, guideline_id, side, focus)
+                _rewrite_example_markdown(
+                    root / doc_path,
+                    guideline_id,
+                    side,
+                    focus,
+                    expected_outcome,
+                    str(entry.get("verification_notes") or ""),
+                )
+                if code_path:
+                    markdown = (root / doc_path).read_text(encoding="utf-8")
+                    code_abs = root / code_path
+                    code_abs.parent.mkdir(parents=True, exist_ok=True)
+                    code_abs.write_text(_extract_first_rust_code(markdown), encoding="utf-8")
+        guideline["examples"] = examples
+        changed = True
+        break
+
+    if changed:
+        _write_todo_guidelines(path, payload, guidelines)
+    return {"changed": changed, "guideline_id": guideline_filter}
+
+
+def apply_strengthen_example_assertions(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    guideline_filter = str(action.get("guideline_id") or "").strip()
+    if not guideline_filter:
+        return {"changed": False, "reason": "guideline_id required"}
+
+    path, payload, guidelines = _load_todo_guidelines(root)
+    changed = False
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if guideline_id != guideline_filter:
+            continue
+
+        focus = _focus_phrase(guideline)
+        examples = guideline.get("examples") or {}
+        entry = examples.get("compliant") or {}
+        entry["expected_outcome"] = "assertion_pass"
+        entry["compile_expectation"] = "compile_pass"
+        doc_path = str(entry.get("doc_path") or "").strip()
+        code_path = str(entry.get("code_path") or "").strip()
+        if doc_path:
+            _rewrite_example_markdown(
+                root / doc_path, guideline_id, "compliant", focus, "assertion_pass"
+            )
+            if code_path:
+                markdown = (root / doc_path).read_text(encoding="utf-8")
+                code_abs = root / code_path
+                code_abs.parent.mkdir(parents=True, exist_ok=True)
+                code_abs.write_text(_extract_first_rust_code(markdown), encoding="utf-8")
+
+        examples["compliant"] = entry
+        guideline["examples"] = examples
+        changed = True
+        break
+
+    if changed:
+        _write_todo_guidelines(path, payload, guidelines)
+    return {"changed": changed, "guideline_id": guideline_filter}
+
+
+def apply_convert_non_compliant_to_compile_fail_or_panic(
+    root: Path, action: dict[str, Any]
+) -> dict[str, Any]:
+    guideline_filter = str(action.get("guideline_id") or "").strip()
+    if not guideline_filter:
+        return {"changed": False, "reason": "guideline_id required"}
+
+    path, payload, guidelines = _load_todo_guidelines(root)
+    changed = False
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if guideline_id != guideline_filter:
+            continue
+
+        status = str(guideline.get("decidable_status") or "").strip()
+        outcome = "compile_fail" if status == "compiler" else "runtime_panic"
+
+        focus = _focus_phrase(guideline)
+        examples = guideline.get("examples") or {}
+        entry = examples.get("non_compliant") or {}
+        entry["expected_outcome"] = outcome
+        entry["compile_expectation"] = _compile_expectation_for_outcome(outcome, "non_compliant")
+        if outcome == "documented_only" and not str(entry.get("verification_notes") or "").strip():
+            entry["verification_notes"] = (
+                "Automated execution not required; reviewer verifies context-specific evidence."
+            )
+        doc_path = str(entry.get("doc_path") or "").strip()
+        code_path = str(entry.get("code_path") or "").strip()
+        if doc_path:
+            _rewrite_example_markdown(
+                root / doc_path, guideline_id, "non_compliant", focus, outcome
+            )
+            if code_path:
+                markdown = (root / doc_path).read_text(encoding="utf-8")
+                code_abs = root / code_path
+                code_abs.parent.mkdir(parents=True, exist_ok=True)
+                code_abs.write_text(_extract_first_rust_code(markdown), encoding="utf-8")
+
+        examples["non_compliant"] = entry
+        guideline["examples"] = examples
+        changed = True
+        break
+
+    if changed:
+        _write_todo_guidelines(path, payload, guidelines)
+    return {"changed": changed, "guideline_id": guideline_filter}
+
+
+def apply_align_example_with_decidable_status(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    guideline_filter = str(action.get("guideline_id") or "").strip()
+    if not guideline_filter:
+        return {"changed": False, "reason": "guideline_id required"}
+
+    path, payload, guidelines = _load_todo_guidelines(root)
+    changed = False
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if guideline_id != guideline_filter:
+            continue
+
+        focus = _focus_phrase(guideline)
+        examples = guideline.get("examples") or {}
+
+        for side in ["compliant", "non_compliant"]:
+            entry = examples.get(side) or {}
+            target_outcome = _default_example_outcome(guideline, side)
+            entry["expected_outcome"] = target_outcome
+            entry["compile_expectation"] = _compile_expectation_for_outcome(target_outcome, side)
+            if (
+                target_outcome == "documented_only"
+                and not str(entry.get("verification_notes") or "").strip()
+            ):
+                entry["verification_notes"] = (
+                    "Automated execution not required; reviewer verifies context-specific evidence."
+                )
+
+            doc_path = str(entry.get("doc_path") or "").strip()
+            code_path = str(entry.get("code_path") or "").strip()
+            if doc_path:
+                _rewrite_example_markdown(
+                    root / doc_path,
+                    guideline_id,
+                    side,
+                    focus,
+                    target_outcome,
+                    str(entry.get("verification_notes") or ""),
+                )
+                if code_path:
+                    markdown = (root / doc_path).read_text(encoding="utf-8")
+                    code_abs = root / code_path
+                    code_abs.parent.mkdir(parents=True, exist_ok=True)
+                    code_abs.write_text(_extract_first_rust_code(markdown), encoding="utf-8")
+
+            examples[side] = entry
+
         guideline["examples"] = examples
         changed = True
         break
@@ -1358,7 +1753,9 @@ def apply_add_alignment_citation_signals(root: Path, action: dict[str, Any]) -> 
             if fallback_iso:
                 citation_markers.append(f":cite:`{fallback_iso}`")
 
-        expected_std_refs = _expected_std_refs_for_guideline(guideline, rust_signals, citation_policy)
+        expected_std_refs = _expected_std_refs_for_guideline(
+            guideline, rust_signals, citation_policy
+        )
         std_markers = [f":std:`{ref}`" for ref in expected_std_refs[:max_std]]
 
         rule_statement = str(guideline.get("rule_statement") or "")
@@ -1540,6 +1937,12 @@ def apply_action(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         return apply_rewrite_amplification_with_boundaries(root, action)
     if action_type == "upgrade_examples_non_placeholder":
         return apply_upgrade_examples_non_placeholder(root, action)
+    if action_type == "strengthen_example_assertions":
+        return apply_strengthen_example_assertions(root, action)
+    if action_type == "convert_non_compliant_to_compile_fail_or_panic":
+        return apply_convert_non_compliant_to_compile_fail_or_panic(root, action)
+    if action_type == "align_example_with_decidable_status":
+        return apply_align_example_with_decidable_status(root, action)
     if action_type == "add_alignment_citation_signals":
         return apply_add_alignment_citation_signals(root, action)
     if action_type == "rebalance_alignment_granularity":

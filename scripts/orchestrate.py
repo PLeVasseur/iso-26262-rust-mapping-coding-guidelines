@@ -587,6 +587,10 @@ def main() -> int:
         "evidence_link_score": 0.0,
         "fls_chapter_coverage": 0.0,
         "guideline_quality_avg": 0.0,
+        "example_outcome_match_ratio": 0.0,
+        "example_assertion_backed_ratio": 0.0,
+        "example_negative_evidence_strength_ratio": 0.0,
+        "example_unique_signature_ratio": 0.0,
         "known_good_alignment_avg": 0.0,
         "diversity_unique_token_ratio": 0.0,
         "diversity_near_duplicate_violation_count": 0.0,
@@ -609,6 +613,22 @@ def main() -> int:
         guideline_quality_report = read_json(guideline_quality_report_path)
         current_metrics["guideline_quality_avg"] = float(
             guideline_quality_report.get("average_score") or 0.0
+        )
+
+    if guideline_examples_report_path.exists():
+        guideline_examples_report = read_json(guideline_examples_report_path)
+        example_metrics = guideline_examples_report.get("metrics") or {}
+        current_metrics["example_outcome_match_ratio"] = float(
+            example_metrics.get("outcome_match_ratio") or 0.0
+        )
+        current_metrics["example_assertion_backed_ratio"] = float(
+            example_metrics.get("assertion_backed_compliant_ratio") or 0.0
+        )
+        current_metrics["example_negative_evidence_strength_ratio"] = float(
+            example_metrics.get("negative_evidence_strength_ratio") or 0.0
+        )
+        current_metrics["example_unique_signature_ratio"] = float(
+            example_metrics.get("unique_example_signature_ratio") or 0.0
         )
 
     if guideline_diversity_report_path.exists():

@@ -194,6 +194,15 @@ def write_dashboard(
         f"- placeholder_gap_count: {observation.get('placeholder_gap_count', 0)}",
         f"- known_good_alignment_gap_count: {observation.get('known_good_alignment_gap_count', 0)}",
         f"- known_good_alignment_average: {observation.get('known_good_alignment_average', 0.0)}",
+        f"- example_outcome_gap_count: {observation.get('example_outcome_gap_count', 0)}",
+        f"- example_assertion_gap_count: {observation.get('example_assertion_gap_count', 0)}",
+        f"- example_negative_evidence_gap_count: {observation.get('example_negative_evidence_gap_count', 0)}",
+        f"- example_diversity_gap_count: {observation.get('example_diversity_gap_count', 0)}",
+        f"- example_outcome_match_ratio: {observation.get('example_outcome_match_ratio', 0.0)}",
+        f"- example_assertion_backed_ratio: {observation.get('example_assertion_backed_ratio', 0.0)}",
+        f"- example_negative_evidence_strength_ratio: {observation.get('example_negative_evidence_strength_ratio', 0.0)}",
+        f"- example_documented_only_ratio: {observation.get('example_documented_only_ratio', 0.0)}",
+        f"- example_unique_signature_ratio: {observation.get('example_unique_signature_ratio', 0.0)}",
         f"- duplication_gap_count: {observation.get('duplication_gap_count', 0)}",
         f"- duplication_exception_missing_count: {observation.get('duplication_exception_missing_count', 0)}",
         f"- rust_signal_gap_count: {observation.get('rust_signal_gap_count', 0)}",
@@ -572,21 +581,15 @@ def lane_status_payload(observation: dict[str, Any]) -> dict[str, Any]:
         "quality_gap_count": int(observation.get("quality_gap_count", 0)),
         "placeholder_gap_count": int(observation.get("placeholder_gap_count", 0)),
         "example_gap_count": int(observation.get("example_gap_count", 0)),
-        "known_good_alignment_gap_count": int(
-            observation.get("known_good_alignment_gap_count", 0)
-        ),
-        "known_good_alignment_average": float(
-            observation.get("known_good_alignment_average", 0.0)
-        ),
+        "known_good_alignment_gap_count": int(observation.get("known_good_alignment_gap_count", 0)),
+        "known_good_alignment_average": float(observation.get("known_good_alignment_average", 0.0)),
         "duplication_gap_count": int(observation.get("duplication_gap_count", 0)),
         "duplication_exception_missing_count": int(
             observation.get("duplication_exception_missing_count", 0)
         ),
         "rust_signal_gap_count": int(observation.get("rust_signal_gap_count", 0)),
         "rust_signal_coverage": float(observation.get("rust_signal_coverage", 0.0)),
-        "diversity_unique_token_ratio": float(
-            observation.get("diversity_unique_token_ratio", 0.0)
-        ),
+        "diversity_unique_token_ratio": float(observation.get("diversity_unique_token_ratio", 0.0)),
     }
 
 
@@ -630,21 +633,15 @@ def delta_summary_payload(
         "fls_chapter_coverage": float(observation.get("fls_chapter_coverage", 0.0)),
         "quality_gap_count": int(observation.get("quality_gap_count", 0)),
         "placeholder_gap_count": int(observation.get("placeholder_gap_count", 0)),
-        "known_good_alignment_gap_count": int(
-            observation.get("known_good_alignment_gap_count", 0)
-        ),
-        "known_good_alignment_average": float(
-            observation.get("known_good_alignment_average", 0.0)
-        ),
+        "known_good_alignment_gap_count": int(observation.get("known_good_alignment_gap_count", 0)),
+        "known_good_alignment_average": float(observation.get("known_good_alignment_average", 0.0)),
         "duplication_gap_count": int(observation.get("duplication_gap_count", 0)),
         "duplication_exception_missing_count": int(
             observation.get("duplication_exception_missing_count", 0)
         ),
         "rust_signal_gap_count": int(observation.get("rust_signal_gap_count", 0)),
         "rust_signal_coverage": float(observation.get("rust_signal_coverage", 0.0)),
-        "diversity_unique_token_ratio": float(
-            observation.get("diversity_unique_token_ratio", 0.0)
-        ),
+        "diversity_unique_token_ratio": float(observation.get("diversity_unique_token_ratio", 0.0)),
     }
 
     baseline_metrics = {}

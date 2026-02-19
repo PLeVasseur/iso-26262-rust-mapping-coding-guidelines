@@ -18,6 +18,15 @@
     "quality_gap_count",
     "placeholder_gap_count",
     "example_gap_count",
+    "example_outcome_gap_count",
+    "example_assertion_gap_count",
+    "example_negative_evidence_gap_count",
+    "example_diversity_gap_count",
+    "example_outcome_match_ratio",
+    "example_assertion_backed_ratio",
+    "example_negative_evidence_strength_ratio",
+    "example_documented_only_ratio",
+    "example_unique_signature_ratio",
     "known_good_alignment_gap_count",
     "known_good_alignment_average",
     "duplication_gap_count",
@@ -78,6 +87,47 @@
     "example_gap_count": {
       "type": "integer",
       "minimum": 0
+    },
+    "example_outcome_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "example_assertion_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "example_negative_evidence_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "example_diversity_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "example_outcome_match_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "example_assertion_backed_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "example_negative_evidence_strength_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "example_documented_only_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "example_unique_signature_ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
     },
     "known_good_alignment_gap_count": {
       "type": "integer",

@@ -321,6 +321,7 @@ def collect_quality_deficits(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 def collect_example_deficits(report: dict[str, Any]) -> list[dict[str, Any]]:
     deficits: list[dict[str, Any]] = []
+
     for message in report.get("errors", []):
         text = str(message)
         guideline_match = re.match(r"(?P<guideline>RG-[A-Z0-9]+)", text)
@@ -338,6 +339,93 @@ def collect_example_deficits(report: dict[str, Any]) -> list[dict[str, Any]]:
                 "details": text,
             }
         )
+
+    for item in report.get("example_results", []):
+        guideline_id = str(item.get("guideline_id") or "").strip()
+        side = str(item.get("side") or "").strip()
+        expected_outcome = str(item.get("expected_outcome") or "").strip()
+        observed_outcome = str(item.get("observed_outcome") or "").strip()
+        assertion_present = bool(item.get("assertion_present", False))
+        negative_evidence_strong = bool(item.get("negative_evidence_strong", False))
+
+        if not bool(item.get("outcome_match", False)):
+            deficits.append(
+                {
+                    "deficit_id": f"example-outcome:{guideline_id}:{side}",
+                    "type": "example_outcome_gap",
+                    "severity": "high",
+                    "guideline_id": guideline_id,
+                    "target_id": "",
+                    "obligation_unit_id": "",
+                    "distance_to_pass": 1,
+                    "evidence_ref": "check_guideline_examples",
+                    "details": (
+                        f"{side} expected_outcome={expected_outcome} observed_outcome={observed_outcome}"
+                    ),
+                }
+            )
+
+        if side == "compliant" and expected_outcome == "assertion_pass" and not assertion_present:
+            deficits.append(
+                {
+                    "deficit_id": f"example-assertion:{guideline_id}:{side}",
+                    "type": "example_assertion_gap",
+                    "severity": "medium",
+                    "guideline_id": guideline_id,
+                    "target_id": "",
+                    "obligation_unit_id": "",
+                    "distance_to_pass": 1,
+                    "evidence_ref": "check_guideline_examples",
+                    "details": "compliant assertion_pass example missing explicit assertion",
+                }
+            )
+
+        if (
+            side == "non_compliant"
+            and expected_outcome in {"compile_fail", "runtime_panic", "lint_trigger"}
+            and not negative_evidence_strong
+        ):
+            deficits.append(
+                {
+                    "deficit_id": f"example-negative:{guideline_id}:{side}",
+                    "type": "example_negative_evidence_gap",
+                    "severity": "medium",
+                    "guideline_id": guideline_id,
+                    "target_id": "",
+                    "obligation_unit_id": "",
+                    "distance_to_pass": 1,
+                    "evidence_ref": "check_guideline_examples",
+                    "details": "non_compliant example did not produce strong negative evidence",
+                }
+            )
+
+    for violation in report.get("diversity_violations", []):
+        members = [
+            str(item).strip() for item in (violation.get("example_keys") or []) if str(item).strip()
+        ]
+        guideline_id = ""
+        if members:
+            prefix = members[0].split(":", maxsplit=1)[0]
+            if re.match(r"RG-[A-Z0-9]+", prefix):
+                guideline_id = prefix
+
+        deficits.append(
+            {
+                "deficit_id": f"example-diversity:{guideline_id or 'global'}",
+                "type": "example_diversity_gap",
+                "severity": "medium",
+                "guideline_id": guideline_id,
+                "target_id": "",
+                "obligation_unit_id": "",
+                "distance_to_pass": int(violation.get("count") or 1),
+                "evidence_ref": "check_guideline_examples",
+                "details": (
+                    "repeated example signature count="
+                    f"{violation.get('count')} members={','.join(members[:6])}"
+                ),
+            }
+        )
+
     return deficits
 
 
@@ -435,7 +523,9 @@ def collect_diversity_deficits(report: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     for group in report.get("exact_duplicate_groups", []):
-        guideline_ids = [str(item).strip() for item in (group.get("guideline_ids") or []) if str(item).strip()]
+        guideline_ids = [
+            str(item).strip() for item in (group.get("guideline_ids") or []) if str(item).strip()
+        ]
         if len(guideline_ids) <= 1:
             continue
         lead = guideline_ids[0]
@@ -456,7 +546,9 @@ def collect_diversity_deficits(report: dict[str, Any]) -> list[dict[str, Any]]:
     for cluster in report.get("lead_in_clusters", []):
         if not bool(cluster.get("violates_policy", False)):
             continue
-        guideline_ids = [str(item).strip() for item in (cluster.get("guideline_ids") or []) if str(item).strip()]
+        guideline_ids = [
+            str(item).strip() for item in (cluster.get("guideline_ids") or []) if str(item).strip()
+        ]
         lead = guideline_ids[0] if guideline_ids else ""
         deficits.append(
             {
@@ -489,7 +581,9 @@ def collect_rust_signal_deficits(root: Path) -> tuple[list[dict[str, Any]], floa
     topic_signals = signals.get("topic_signals") or {}
     fls_signals = signals.get("fls_signals") or {}
     defaults = signals.get("global_defaults") or {}
-    fallback_refs = [str(item).strip() for item in (defaults.get("fallback_std_refs") or []) if str(item).strip()]
+    fallback_refs = [
+        str(item).strip() for item in (defaults.get("fallback_std_refs") or []) if str(item).strip()
+    ]
 
     payload = read_yaml(root / "data/todo_guidelines.yaml") or {}
     guidelines = payload.get("guidelines") or []
@@ -639,14 +733,30 @@ def observe_repo(
         [item for item in sorted_deficits if item["type"] == "placeholder_gap"]
     )
     example_gap_count = len([item for item in sorted_deficits if item["type"] == "example_gap"])
+    example_outcome_gap_count = len(
+        [item for item in sorted_deficits if item["type"] == "example_outcome_gap"]
+    )
+    example_assertion_gap_count = len(
+        [item for item in sorted_deficits if item["type"] == "example_assertion_gap"]
+    )
+    example_negative_evidence_gap_count = len(
+        [item for item in sorted_deficits if item["type"] == "example_negative_evidence_gap"]
+    )
+    example_diversity_gap_count = len(
+        [item for item in sorted_deficits if item["type"] == "example_diversity_gap"]
+    )
     known_good_alignment_gap_count = len(
         [item for item in sorted_deficits if item["type"] == "known_good_alignment_gap"]
     )
-    duplication_gap_count = len([item for item in sorted_deficits if item["type"] == "duplication_gap"])
+    duplication_gap_count = len(
+        [item for item in sorted_deficits if item["type"] == "duplication_gap"]
+    )
     duplication_exception_missing_count = len(
         [item for item in sorted_deficits if item["type"] == "duplication_exception_missing"]
     )
-    rust_signal_gap_count = len([item for item in sorted_deficits if item["type"] == "rust_signal_gap"])
+    rust_signal_gap_count = len(
+        [item for item in sorted_deficits if item["type"] == "rust_signal_gap"]
+    )
     traceability_gap_count = len(
         [item for item in sorted_deficits if item["type"] == "traceability_gap"]
     )
@@ -670,6 +780,25 @@ def observe_repo(
         "quality_average_score": float(quality_report.get("average_score") or 0.0),
         "placeholder_gap_count": placeholder_gap_count,
         "example_gap_count": example_gap_count,
+        "example_outcome_gap_count": example_outcome_gap_count,
+        "example_assertion_gap_count": example_assertion_gap_count,
+        "example_negative_evidence_gap_count": example_negative_evidence_gap_count,
+        "example_diversity_gap_count": example_diversity_gap_count,
+        "example_outcome_match_ratio": float(
+            (example_report.get("metrics") or {}).get("outcome_match_ratio") or 0.0
+        ),
+        "example_assertion_backed_ratio": float(
+            (example_report.get("metrics") or {}).get("assertion_backed_compliant_ratio") or 0.0
+        ),
+        "example_negative_evidence_strength_ratio": float(
+            (example_report.get("metrics") or {}).get("negative_evidence_strength_ratio") or 0.0
+        ),
+        "example_documented_only_ratio": float(
+            (example_report.get("metrics") or {}).get("documented_only_ratio") or 0.0
+        ),
+        "example_unique_signature_ratio": float(
+            (example_report.get("metrics") or {}).get("unique_example_signature_ratio") or 0.0
+        ),
         "known_good_alignment_gap_count": known_good_alignment_gap_count,
         "known_good_alignment_average": float(
             known_good_alignment_report.get("average_alignment_score") or 0.0
@@ -696,6 +825,10 @@ def observe_repo(
             metrics["quality_gap_count"] == 0
             and metrics["placeholder_gap_count"] == 0
             and metrics["example_gap_count"] == 0
+            and metrics["example_outcome_gap_count"] == 0
+            and metrics["example_assertion_gap_count"] == 0
+            and metrics["example_negative_evidence_gap_count"] == 0
+            and metrics["example_diversity_gap_count"] == 0
             and metrics["known_good_alignment_gap_count"] == 0
             and metrics["duplication_gap_count"] == 0
             and metrics["duplication_exception_missing_count"] == 0

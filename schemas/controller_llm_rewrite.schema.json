@@ -43,6 +43,48 @@
     "confidence": {
       "type": "string",
       "enum": ["low", "medium", "high"]
+    },
+    "examples": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "compliant": {
+          "$ref": "#/$defs/exampleSide"
+        },
+        "non_compliant": {
+          "$ref": "#/$defs/exampleSide"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "exampleSide": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "explanation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_outcome": {
+          "type": "string",
+          "enum": [
+            "assertion_pass",
+            "compile_fail",
+            "runtime_panic",
+            "lint_trigger",
+            "documented_only"
+          ]
+        },
+        "verification_notes": {
+          "type": "string",
+          "minLength": 1
+        },
+        "markdown": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   }
 }

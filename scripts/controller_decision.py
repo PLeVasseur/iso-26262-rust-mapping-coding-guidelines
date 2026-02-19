@@ -143,6 +143,15 @@ def observation_summary(observation: dict[str, Any]) -> dict[str, Any]:
         "quality_gap_count",
         "placeholder_gap_count",
         "example_gap_count",
+        "example_outcome_gap_count",
+        "example_assertion_gap_count",
+        "example_negative_evidence_gap_count",
+        "example_diversity_gap_count",
+        "example_outcome_match_ratio",
+        "example_assertion_backed_ratio",
+        "example_negative_evidence_strength_ratio",
+        "example_documented_only_ratio",
+        "example_unique_signature_ratio",
         "known_good_alignment_gap_count",
         "known_good_alignment_average",
         "iso_obligation_coverage",
@@ -469,9 +478,7 @@ def resolve_candidate_selection(
         if str(item.get("candidate_id") or "")
     }
     selected_ids = [
-        str(item)
-        for item in llm_payload.get("selected_candidate_ids", [])
-        if str(item)
+        str(item) for item in llm_payload.get("selected_candidate_ids", []) if str(item)
     ]
     selected_ids = list(dict.fromkeys(selected_ids))
 

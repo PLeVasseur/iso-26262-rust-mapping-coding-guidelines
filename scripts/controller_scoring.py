@@ -16,6 +16,10 @@ def metric_vector(observation: dict[str, Any]) -> tuple[float, ...]:
         float(observation.get("quality_gap_count", 0))
         + float(observation.get("placeholder_gap_count", 0))
         + float(observation.get("example_gap_count", 0))
+        + float(observation.get("example_outcome_gap_count", 0))
+        + float(observation.get("example_assertion_gap_count", 0))
+        + float(observation.get("example_negative_evidence_gap_count", 0))
+        + float(observation.get("example_diversity_gap_count", 0))
         + float(observation.get("known_good_alignment_gap_count", 0))
         + float(observation.get("duplication_gap_count", 0))
         + float(observation.get("duplication_exception_missing_count", 0))
@@ -26,6 +30,11 @@ def metric_vector(observation: dict[str, Any]) -> tuple[float, ...]:
     quality_pass_ratio = float(observation.get("quality_pass_ratio", 0.0))
     known_good_alignment_average = float(observation.get("known_good_alignment_average", 0.0))
     rust_signal_coverage = float(observation.get("rust_signal_coverage", 0.0))
+    example_outcome_match_ratio = float(observation.get("example_outcome_match_ratio", 0.0))
+    example_assertion_backed_ratio = float(observation.get("example_assertion_backed_ratio", 0.0))
+    example_negative_evidence_strength_ratio = float(
+        observation.get("example_negative_evidence_strength_ratio", 0.0)
+    )
 
     return (
         runtime_failures,
@@ -38,6 +47,9 @@ def metric_vector(observation: dict[str, Any]) -> tuple[float, ...]:
         -iso_obligation_coverage,
         -fls_chapter_coverage,
         -quality_pass_ratio,
+        -example_outcome_match_ratio,
+        -example_assertion_backed_ratio,
+        -example_negative_evidence_strength_ratio,
         -known_good_alignment_average,
         -rust_signal_coverage,
     )
@@ -54,6 +66,12 @@ def weighted_score(observation: dict[str, Any]) -> float:
     known_good_alignment_average = float(observation.get("known_good_alignment_average", 0.0))
     rust_signal_coverage = float(observation.get("rust_signal_coverage", 0.0))
     diversity_unique_token_ratio = float(observation.get("diversity_unique_token_ratio", 0.0))
+    example_outcome_match_ratio = float(observation.get("example_outcome_match_ratio", 0.0))
+    example_assertion_backed_ratio = float(observation.get("example_assertion_backed_ratio", 0.0))
+    example_negative_evidence_strength_ratio = float(
+        observation.get("example_negative_evidence_strength_ratio", 0.0)
+    )
+    example_unique_signature_ratio = float(observation.get("example_unique_signature_ratio", 0.0))
 
     fanout_ratio = 1.0
     if fanout_target_count > 0:
@@ -67,6 +85,12 @@ def weighted_score(observation: dict[str, Any]) -> float:
     runtime_failures = float(observation.get("runtime_failures", 0))
     policy_failures = float(observation.get("policy_failures", 0))
     example_gap_count = float(observation.get("example_gap_count", 0))
+    example_outcome_gap_count = float(observation.get("example_outcome_gap_count", 0))
+    example_assertion_gap_count = float(observation.get("example_assertion_gap_count", 0))
+    example_negative_evidence_gap_count = float(
+        observation.get("example_negative_evidence_gap_count", 0)
+    )
+    example_diversity_gap_count = float(observation.get("example_diversity_gap_count", 0))
     known_good_alignment_gap_count = float(observation.get("known_good_alignment_gap_count", 0))
     duplication_gap_count = float(observation.get("duplication_gap_count", 0))
     duplication_exception_missing_count = float(
@@ -77,6 +101,10 @@ def weighted_score(observation: dict[str, Any]) -> float:
 
     penalty = (50.0 * runtime_failures) + (30.0 * policy_failures)
     penalty += (10.0 * example_gap_count) + (20.0 * traceability_gap_count)
+    penalty += 12.0 * example_outcome_gap_count
+    penalty += 8.0 * example_assertion_gap_count
+    penalty += 8.0 * example_negative_evidence_gap_count
+    penalty += 6.0 * example_diversity_gap_count
     penalty += 5.0 * known_good_alignment_gap_count
     penalty += 8.0 * duplication_gap_count
     penalty += 12.0 * duplication_exception_missing_count
@@ -87,6 +115,10 @@ def weighted_score(observation: dict[str, Any]) -> float:
     score += 250.0 * known_good_alignment_average
     score += 150.0 * rust_signal_coverage
     score += 120.0 * diversity_unique_token_ratio
+    score += 120.0 * example_outcome_match_ratio
+    score += 90.0 * example_assertion_backed_ratio
+    score += 80.0 * example_negative_evidence_strength_ratio
+    score += 60.0 * example_unique_signature_ratio
     score -= penalty
     return round(score, 3)
 
@@ -113,6 +145,10 @@ def regression_flags(before: dict[str, Any], after: dict[str, Any]) -> list[str]
         "quality_gap_count",
         "placeholder_gap_count",
         "example_gap_count",
+        "example_outcome_gap_count",
+        "example_assertion_gap_count",
+        "example_negative_evidence_gap_count",
+        "example_diversity_gap_count",
         "known_good_alignment_gap_count",
         "duplication_gap_count",
         "duplication_exception_missing_count",
@@ -148,6 +184,21 @@ def regression_flags(before: dict[str, Any], after: dict[str, Any]) -> list[str]
     after_rust = float(after.get("rust_signal_coverage", 0.0))
     if after_rust + 1e-9 < before_rust:
         regressions.append("rust_signal_coverage_decreased")
+
+    before_example_outcome = float(before.get("example_outcome_match_ratio", 0.0))
+    after_example_outcome = float(after.get("example_outcome_match_ratio", 0.0))
+    if after_example_outcome + 1e-9 < before_example_outcome:
+        regressions.append("example_outcome_match_ratio_decreased")
+
+    before_example_assertion = float(before.get("example_assertion_backed_ratio", 0.0))
+    after_example_assertion = float(after.get("example_assertion_backed_ratio", 0.0))
+    if after_example_assertion + 1e-9 < before_example_assertion:
+        regressions.append("example_assertion_backed_ratio_decreased")
+
+    before_negative_strength = float(before.get("example_negative_evidence_strength_ratio", 0.0))
+    after_negative_strength = float(after.get("example_negative_evidence_strength_ratio", 0.0))
+    if after_negative_strength + 1e-9 < before_negative_strength:
+        regressions.append("example_negative_evidence_strength_ratio_decreased")
 
     return regressions
 
