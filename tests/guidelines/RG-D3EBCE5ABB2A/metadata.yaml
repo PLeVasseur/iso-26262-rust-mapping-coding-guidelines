@@ -1,9 +1,12 @@
-version: 1
+version: 2
 rule_id: RG-D3EBCE5ABB2A
-category: Tooling, compliance evidence, and deviations
+category: Required
+technical_topic: Tooling, compliance evidence, and deviations
 mode: AUDIT
+scope: crate
+decidable: undecidable
 state: DRAFT
 iso_seeds:
 - SEED-D3EBCE5ABB2A
-pass_criteria: No violation reported for compliant fixture.
-fail_criteria: Violation reported for violating fixture.
+pass_criteria: Compliant example meets expected compile/lint behavior.
+fail_criteria: Non-compliant example triggers expected compile/lint behavior.

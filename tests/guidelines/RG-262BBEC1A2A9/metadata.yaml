@@ -1,9 +1,12 @@
-version: 1
+version: 2
 rule_id: RG-262BBEC1A2A9
-category: Defensive programming & contracts
+category: Required
+technical_topic: Defensive programming & contracts
 mode: AUDIT
+scope: crate
+decidable: undecidable
 state: DRAFT
 iso_seeds:
 - SEED-262BBEC1A2A9
-pass_criteria: No violation reported for compliant fixture.
-fail_criteria: Violation reported for violating fixture.
+pass_criteria: Compliant example meets expected compile/lint behavior.
+fail_criteria: Non-compliant example triggers expected compile/lint behavior.

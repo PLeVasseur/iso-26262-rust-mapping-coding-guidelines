@@ -1,9 +1,14 @@
-version: 1
+version: 2
 rule_id: RG-5B4923F76EEA
-category: Language subset / forbidden constructs
+category: Required
+technical_topic: Language subset / forbidden constructs
 mode: AUTO
+scope: crate
+decidable: decidable
 state: DRAFT
 iso_seeds:
 - SEED-5B4923F76EEA
-pass_criteria: No violation reported for compliant fixture.
-fail_criteria: Violation reported for violating fixture.
+pass_criteria: Compliant example meets expected compile/lint behavior.
+fail_criteria: Non-compliant example triggers expected compile/lint behavior.
+decidable_status: possible-with-clippy
+clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-5B4923F76EEA%20candidate%20lint
