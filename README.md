@@ -53,13 +53,15 @@ This repo hosts the operational workflow for growing Rust coding guideline cover
    ```bash
    uv run ruff format --check .
    uv run ruff check .
-   uv run python scripts/validate_schemas.py
-   uv run python scripts/update_clippy_lints_catalog.py --check
+uv run python scripts/validate_schemas.py
+uv run python scripts/update_clippy_lints_catalog.py --check
+uv run python scripts/build_rust_signals.py
 uv run python scripts/check_guideline_completeness.py
 uv run python scripts/check_guideline_examples.py
 uv run python scripts/check_rule_decomposition.py
 uv run python scripts/check_fls_proxy_coverage.py
 uv run python scripts/check_guideline_quality.py
+uv run python scripts/check_guideline_diversity.py
 uv run python scripts/check_known_good_alignment.py
 uv run python scripts/check_traceability.py
 uv run python scripts/check_licensing_guard.py
@@ -172,6 +174,7 @@ uv run python scripts/check_guideline_examples.py
 uv run python scripts/check_rule_decomposition.py
 uv run python scripts/check_fls_proxy_coverage.py
 uv run python scripts/check_guideline_quality.py
+uv run python scripts/check_guideline_diversity.py
 uv run python scripts/check_known_good_alignment.py
 uv run python scripts/controller_supervisor.py --session-id run-001 --max-loops 5
 uv run python scripts/review_diffset.py --after-run <run_id>
