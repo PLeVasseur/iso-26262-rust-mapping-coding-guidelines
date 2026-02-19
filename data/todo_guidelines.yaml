@@ -541,15 +541,18 @@ guidelines:
 - id: RG-744267BD9DEC
   category: Required
   technical_topic: Complexity & structure
-  rule_statement: Keep implementation complexity bounded, reviewable, and traceable
-    to Table 3.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-744267BD9DEC
-    (Part 6 Table 3). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-744267BD9DEC (Part 6 Table 3) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: At crate scope, constrain unsafe blocks and invariants to approved
+    patterns and reject ambiguous or implicit behavior in safety-critical Rust code.
+  amplification: Apply this rule to Complexity & structure decisions with explicit
+    preconditions, invariant checks, and objective review evidence. Document permitted
+    and forbidden coding patterns.
+  exceptions: Exceptions require documented hazard impact analysis, mitigation evidence,
+    and independent reviewer approval before merge.
+  rationale: 'Constraining unsafe blocks and invariants reduces latent faults and
+    improves deterministic behavior needed for ISO 26262 compliance evidence. Safety
+    evidence anchor: :cite:`ISO26262-6-2018`. Safety evidence anchor: :cite:`ISO26262-8-2018`.
+    Rust API reference anchor: :std:`std::result::Result`. Rust API reference anchor:
+    :std:`core::option::Option`.'
   iso_seeds:
   - SEED-744267BD9DEC
   scope: crate
