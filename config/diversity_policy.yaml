@@ -1,0 +1,16 @@
+version: 1
+gate_mode: warn
+exact_duplicate:
+  max_groups: 0
+near_duplicate:
+  similarity_threshold: 0.9
+  max_violation_pairs: 0
+  allow_near_duplicate_with_distinct_obligation_unit: true
+  require_verification_constraint_divergence: true
+  min_verification_constraint_delta_count: 1
+  disallow_near_duplicate_within_same_rule_family: true
+lead_in:
+  max_repeated_lead_in_count: 2
+  token_window: 8
+lexical_diversity:
+  min_unique_token_ratio: 0.28

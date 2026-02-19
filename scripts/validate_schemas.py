@@ -43,11 +43,27 @@ def main() -> int:
         ("schemas/corpus_registry.schema.json", "config/corpus_registry.yaml", True),
         ("schemas/change_growth_policy.schema.json", "config/change_growth_policy.yaml", True),
         ("schemas/completeness_policy.schema.json", "config/completeness_policy.yaml", True),
+        (
+            "schemas/citation_grounding_policy.schema.json",
+            "config/citation_grounding_policy.yaml",
+            True,
+        ),
+        ("schemas/diversity_policy.schema.json", "config/diversity_policy.yaml", True),
         ("schemas/known_good_policy.schema.json", "config/known_good_policy.yaml", True),
         ("schemas/alignment_policy.schema.json", "config/alignment_policy.yaml", True),
         (
+            "schemas/rust_signal_sources.schema.json",
+            "config/rust_signal_sources.yaml",
+            True,
+        ),
+        (
             "schemas/controller_decision_policy.schema.json",
             "config/controller_decision_policy.yaml",
+            True,
+        ),
+        (
+            "schemas/controller_rewrite_policy.schema.json",
+            "config/controller_rewrite_policy.yaml",
             True,
         ),
         ("schemas/seed_manifest.schema.json", "seeds/seed_manifest.yaml", True),
@@ -66,6 +82,11 @@ def main() -> int:
         (
             "schemas/decomposition_report.schema.json",
             "data/decomposition_report.yaml",
+            args.strict_generated,
+        ),
+        (
+            "schemas/rust_signals.schema.json",
+            "data/rust_signals.yaml",
             args.strict_generated,
         ),
         (
@@ -118,6 +139,8 @@ def main() -> int:
         "schemas/controller_delta_summary.schema.json",
         "schemas/controller_decision_packet.schema.json",
         "schemas/controller_decision_policy.schema.json",
+        "schemas/controller_llm_rewrite.schema.json",
+        "schemas/controller_rewrite_policy.schema.json",
         "schemas/controller_handoff.schema.json",
         "schemas/controller_iteration.schema.json",
         "schemas/controller_llm_decision.schema.json",
@@ -125,18 +148,23 @@ def main() -> int:
         "schemas/controller_run_registry_candidate.schema.json",
         "schemas/controller_state.schema.json",
         "schemas/controller_supervisor_state.schema.json",
+        "schemas/citation_grounding_policy.schema.json",
         "schemas/decomposition_report.schema.json",
         "schemas/diffset_manifest.schema.json",
         "schemas/diffset_item.schema.json",
         "schemas/diffset_review.schema.json",
+        "schemas/diversity_policy.schema.json",
         "schemas/fls_inventory.schema.json",
         "schemas/fls_target_candidates.schema.json",
         "schemas/alignment_policy.schema.json",
+        "schemas/guideline_diversity_report.schema.json",
         "schemas/known_good_alignment_report.schema.json",
         "schemas/known_good_canonical.schema.json",
         "schemas/known_good_features.schema.json",
         "schemas/known_good_manifest.schema.json",
         "schemas/known_good_policy.schema.json",
+        "schemas/rust_signal_sources.schema.json",
+        "schemas/rust_signals.schema.json",
     ]
     for rel_path in required_schema_files:
         schema_path = root / rel_path

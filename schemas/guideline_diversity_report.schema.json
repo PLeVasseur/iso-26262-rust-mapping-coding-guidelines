@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Guideline Diversity Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "generated_at",
+    "policy_mode",
+    "guideline_count",
+    "metrics",
+    "exact_duplicate_groups",
+    "lead_in_clusters",
+    "near_duplicate_pairs",
+    "warning_count",
+    "error_count",
+    "warnings",
+    "errors",
+    "ok"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy_mode": {
+      "type": "string",
+      "enum": ["warn", "error"]
+    },
+    "guideline_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unique_token_ratio",
+        "exact_duplicate_group_count",
+        "lead_in_violation_count",
+        "near_duplicate_pair_count",
+        "near_duplicate_violation_count",
+        "near_duplicate_exception_allowed_count"
+      ],
+      "properties": {
+        "unique_token_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "exact_duplicate_group_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lead_in_violation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "near_duplicate_pair_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "near_duplicate_violation_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "near_duplicate_exception_allowed_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "exact_duplicate_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["normalized_rule_statement", "guideline_ids"],
+        "properties": {
+          "normalized_rule_statement": {
+            "type": "string"
+          },
+          "guideline_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "lead_in_clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lead_in", "count", "guideline_ids", "violates_policy"],
+        "properties": {
+          "lead_in": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "guideline_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "violates_policy": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "near_duplicate_pairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "guideline_a",
+          "guideline_b",
+          "similarity",
+          "same_rule_family",
+          "different_obligation_unit",
+          "verification_delta_count",
+          "allowed_exception",
+          "violates_policy",
+          "reason_codes"
+        ],
+        "properties": {
+          "guideline_a": {
+            "type": "string",
+            "minLength": 1
+          },
+          "guideline_b": {
+            "type": "string",
+            "minLength": 1
+          },
+          "similarity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "same_rule_family": {
+            "type": "boolean"
+          },
+          "different_obligation_unit": {
+            "type": "boolean"
+          },
+          "verification_delta_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "allowed_exception": {
+            "type": "boolean"
+          },
+          "violates_policy": {
+            "type": "boolean"
+          },
+          "reason_codes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "warning_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "error_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ok": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rust Signals",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "generated_at",
+    "source_id",
+    "topic_signals",
+    "fls_signals",
+    "obligation_class_signals",
+    "global_defaults"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "topic_signals": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/signalBlock"
+      }
+    },
+    "fls_signals": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/signalBlock"
+      }
+    },
+    "obligation_class_signals": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/obligationClass"
+      }
+    },
+    "global_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fallback_std_refs", "fallback_concept_terms"],
+      "properties": {
+        "fallback_std_refs": {
+          "$ref": "#/$defs/stringList"
+        },
+        "fallback_concept_terms": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "signalBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "std_refs",
+        "concept_terms",
+        "preferred_lints",
+        "verification_terms"
+      ],
+      "properties": {
+        "topic_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "match_terms": {
+          "$ref": "#/$defs/stringList"
+        },
+        "std_refs": {
+          "$ref": "#/$defs/stringList"
+        },
+        "concept_terms": {
+          "$ref": "#/$defs/stringList"
+        },
+        "preferred_lints": {
+          "$ref": "#/$defs/stringList"
+        },
+        "verification_terms": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "obligationClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_anchor_classes", "verification_terms"],
+      "properties": {
+        "evidence_anchor_classes": {
+          "$ref": "#/$defs/stringList"
+        },
+        "verification_terms": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    }
+  }
+}

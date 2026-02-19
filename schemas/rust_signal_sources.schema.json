@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rust Signal Sources",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "source_id",
+    "topics",
+    "fls_ref_overrides",
+    "obligation_class_overrides",
+    "global_defaults"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/topic"
+      }
+    },
+    "fls_ref_overrides": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/flsOverride"
+      }
+    },
+    "obligation_class_overrides": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/obligationClass"
+      }
+    },
+    "global_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fallback_std_refs", "fallback_concept_terms"],
+      "properties": {
+        "fallback_std_refs": {
+          "$ref": "#/$defs/stringList"
+        },
+        "fallback_concept_terms": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "topic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "topic_key",
+        "match_terms",
+        "std_refs",
+        "concept_terms",
+        "preferred_lints",
+        "verification_terms"
+      ],
+      "properties": {
+        "topic_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "match_terms": {
+          "$ref": "#/$defs/stringList"
+        },
+        "std_refs": {
+          "$ref": "#/$defs/stringList"
+        },
+        "concept_terms": {
+          "$ref": "#/$defs/stringList"
+        },
+        "preferred_lints": {
+          "$ref": "#/$defs/stringList"
+        },
+        "verification_terms": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "flsOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fls_match", "std_refs", "concept_terms"],
+      "properties": {
+        "fls_match": {
+          "type": "string",
+          "minLength": 1
+        },
+        "std_refs": {
+          "$ref": "#/$defs/stringList"
+        },
+        "concept_terms": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    },
+    "obligationClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_anchor_classes", "verification_terms"],
+      "properties": {
+        "evidence_anchor_classes": {
+          "$ref": "#/$defs/stringList"
+        },
+        "verification_terms": {
+          "$ref": "#/$defs/stringList"
+        }
+      }
+    }
+  }
+}
