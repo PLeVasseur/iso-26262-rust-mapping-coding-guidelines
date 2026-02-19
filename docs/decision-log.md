@@ -12,6 +12,9 @@
 - Diffset gate default: unresolved `block` review items fail promotion checks
 - Traceability gate default: strict (empty guideline/coverage/scope outputs fail by default)
 - Bootstrap relaxation: `--allow-missing-traceability` only for temporary recovery
+- Scope semantics: `system|crate|module` expresses required analysis boundary, not maturity ranking
+- Decidability semantics: if `decidable=undecidable`, omit `decidable_status`
+- Compiler-status default: non-compliant example expectation is `compile_fail` unless explicit exception reason exists
 - Query retrieval defaults:
   - Exact anchors -> lexical mode
   - Concept anchors -> hybrid mode

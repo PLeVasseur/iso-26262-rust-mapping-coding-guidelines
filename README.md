@@ -12,9 +12,10 @@ This repo hosts the operational workflow for growing Rust coding guideline cover
    - `data/todo_guidelines.yaml`
    - `data/coverage_matrix.csv`
    - `data/target_scope.yaml`
-5. Run traceability and licensing gates.
-6. Compute before/after deltas for `change` and `growth` modes.
-7. Promote approved outputs into `data/` and update run registry.
+5. Scaffold/refresh rule fixture examples under `tests/guidelines/<RULE_ID>/examples/`.
+6. Run guideline schema/completeness/example gates plus traceability and licensing checks.
+7. Compute before/after deltas for `change` and `growth` modes.
+8. Promote approved outputs into `data/` and update run registry.
 
 ## Tooling
 
@@ -42,6 +43,9 @@ This repo hosts the operational workflow for growing Rust coding guideline cover
    uv run ruff format --check .
    uv run ruff check .
    uv run python scripts/validate_schemas.py
+   uv run python scripts/update_clippy_lints_catalog.py --check
+   uv run python scripts/check_guideline_completeness.py
+   uv run python scripts/check_guideline_examples.py
    uv run python scripts/check_traceability.py
    uv run python scripts/check_licensing_guard.py
    ```
@@ -76,6 +80,9 @@ Use diffsets for focused, itemized review between runs.
 
 See `docs/diffset-review.md` for full command/reference details.
 
+Guideline v2 field semantics are documented in `docs/guideline-record-spec.md`.
+Clippy status assignment guidance is documented in `docs/clippy-feasibility-guidance.md`.
+
 ## Common Commands
 
 ```bash
@@ -83,6 +90,9 @@ uv sync --frozen
 uv run ruff format --check .
 uv run ruff check .
 uv run python scripts/bootstrap_session.py
+uv run python scripts/update_clippy_lints_catalog.py --check
+uv run python scripts/check_guideline_completeness.py
+uv run python scripts/check_guideline_examples.py
 uv run python scripts/review_diffset.py --after-run <run_id>
 uv run python scripts/scaffold_guideline_fixtures.py
 ```

@@ -31,6 +31,9 @@ Export reviewer feedback from the UI to `feedback/diffset_reviews/<diffset_id>.y
 uv run ruff format --check .
 uv run ruff check .
 uv run python scripts/validate_schemas.py
+uv run python scripts/update_clippy_lints_catalog.py --check
+uv run python scripts/check_guideline_completeness.py
+uv run python scripts/check_guideline_examples.py
 uv run python scripts/check_traceability.py
 uv run python scripts/check_licensing_guard.py
 ```
@@ -42,6 +45,7 @@ If any gate fails, resolve the issue and re-run orchestration before requesting 
 Promotion requires explicit reviewer sign-off for:
 
 - updated guideline/backlog artifacts,
+- compliant/non-compliant examples with rationale/amplification/exceptions,
 - traceability completeness,
 - licensing-guard pass,
 - no unresolved diffset `block` review items,

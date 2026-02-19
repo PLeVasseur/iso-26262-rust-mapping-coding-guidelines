@@ -27,7 +27,8 @@ uv run python scripts/bootstrap_session.py --profile quick
 ```
 
 This run executes seed querying, seed normalization, guideline artifact generation,
-schema validation, traceability checks, and licensing guard checks.
+schema validation, guideline completeness/example checks, traceability checks,
+and licensing guard checks.
 
 For strict non-bootstrap mode (requires baseline in `data/run_registry.yaml`):
 
