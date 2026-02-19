@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
-from _common import EXIT_SUCCESS, read_yaml, repo_root, write_yaml
+from _common import EXIT_SUCCESS, load_guidelines_payload, repo_root, write_yaml
 
 AUTO_FILES = {
     "auto/compliant.rs": "// compliant fixture placeholder\n",
@@ -42,16 +43,123 @@ def write_text_file(path: Path, content: str, overwrite: bool) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def code_fence_tag(expectation: str) -> str:
+    if expectation == "compile_fail":
+        return "compile_fail"
+    if expectation == "no_run":
+        return "no_run"
+    return "rust"
+
+
+def extract_code_body(markdown_content: str) -> str:
+    match = re.search(r"```[^\n]*\n(?P<code>[\s\S]*?)\n```", markdown_content)
+    if not match:
+        return "fn main() {}\n"
+    return f"{match.group('code').rstrip()}\n"
+
+
+def build_example_markdown(
+    rule_id: str,
+    kind: str,
+    expectation: str,
+    explanation: str,
+) -> str:
+    fence_tag = code_fence_tag(expectation)
+    if kind == "non_compliant" and expectation == "compile_fail":
+        code = (
+            "fn main() {\n"
+            "    // Intentional compile failure for non-compliant compiler-checkable example\n"
+            '    let value: u32 = "not-a-number";\n'
+            "    let _ = value;\n"
+            "}\n"
+        )
+    elif kind == "non_compliant":
+        code = (
+            "fn main() {\n"
+            "    // Non-compliant placeholder; replace with rule-specific violation.\n"
+            "    let mut numbers = vec![3, 2, 1];\n"
+            "    numbers.sort();\n"
+            '    println!("{:?}", numbers);\n'
+            "}\n"
+        )
+    else:
+        code = (
+            "fn main() {\n"
+            "    // Compliant pattern placeholder; update with rule-specific compliant example\n"
+            "    let values = [1_u32, 2_u32, 3_u32];\n"
+            "    let total: u32 = values.into_iter().sum();\n"
+            '    println!("{}", total);\n'
+            "}\n"
+        )
+
+    lines = [
+        f"# {kind.replace('_', ' ').title()} Example: {rule_id}",
+        "",
+        explanation,
+        "",
+        f"```{fence_tag}",
+        code.rstrip(),
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def build_metadata_payload(guideline: dict, rule_id: str, mode: str) -> dict:
+    payload = {
+        "version": 2,
+        "rule_id": rule_id,
+        "category": guideline.get("category"),
+        "technical_topic": guideline.get("technical_topic"),
+        "mode": mode,
+        "scope": guideline.get("scope"),
+        "decidable": guideline.get("decidable"),
+        "state": guideline.get("state", "DRAFT"),
+        "iso_seeds": guideline.get("iso_seeds") or [],
+        "pass_criteria": "Compliant example meets expected compile/lint behavior.",
+        "fail_criteria": "Non-compliant example triggers expected compile/lint behavior.",
+    }
+    if guideline.get("decidable_status") is not None:
+        payload["decidable_status"] = guideline.get("decidable_status")
+    if guideline.get("clippy_lint_id"):
+        payload["clippy_lint_id"] = guideline.get("clippy_lint_id")
+    if guideline.get("clippy_lint_url"):
+        payload["clippy_lint_url"] = guideline.get("clippy_lint_url")
+    if guideline.get("clippy_candidate_tracker"):
+        payload["clippy_candidate_tracker"] = guideline.get("clippy_candidate_tracker")
+    return payload
+
+
+def scaffold_examples(rule_dir: Path, examples: dict, overwrite: bool) -> None:
+    for kind in ["compliant", "non_compliant"]:
+        example = examples.get(kind) or {}
+        doc_rel = str(example.get("doc_path") or "")
+        code_rel = str(example.get("code_path") or "")
+        explanation = str(example.get("explanation") or "Example explanation pending.")
+        expectation = str(example.get("compile_expectation") or "documented-only")
+
+        if not doc_rel or not code_rel:
+            continue
+
+        doc_path = rule_dir.parents[2] / doc_rel
+        code_path = rule_dir.parents[2] / code_rel
+        rule_id = rule_dir.name
+
+        markdown = build_example_markdown(rule_id, kind, expectation, explanation)
+        write_text_file(doc_path, markdown, overwrite)
+        write_text_file(code_path, extract_code_body(markdown), overwrite)
+
+
 def main() -> int:
     args = parse_args()
     root = repo_root()
     backlog_path = root / args.todo_guidelines
     tests_root = root / args.tests_root
 
-    payload = read_yaml(backlog_path) or {}
+    payload = load_guidelines_payload(backlog_path)
     guidelines = payload.get("guidelines") or []
 
-    created = 0
+    processed = 0
     for guideline in guidelines:
         rule_id = str(guideline.get("id") or "").strip()
         if not rule_id:
@@ -62,18 +170,11 @@ def main() -> int:
         rule_dir.mkdir(parents=True, exist_ok=True)
 
         metadata_path = rule_dir / "metadata.yaml"
-        metadata_payload = {
-            "version": 1,
-            "rule_id": rule_id,
-            "category": guideline.get("category"),
-            "mode": mode,
-            "state": guideline.get("state", "DRAFT"),
-            "iso_seeds": guideline.get("iso_seeds") or [],
-            "pass_criteria": "No violation reported for compliant fixture.",
-            "fail_criteria": "Violation reported for violating fixture.",
-        }
+        metadata_payload = build_metadata_payload(guideline, rule_id, mode)
         if not metadata_path.exists() or args.overwrite:
             write_yaml(metadata_path, metadata_payload)
+
+        scaffold_examples(rule_dir, guideline.get("examples") or {}, args.overwrite)
 
         for rel_path, content in AUTO_FILES.items():
             if mode in {"AUTO", "HYBRID"}:
@@ -87,9 +188,9 @@ def main() -> int:
             if mode == "HYBRID":
                 write_text_file(rule_dir / rel_path, content, args.overwrite)
 
-        created += 1
+        processed += 1
 
-    print(f"[fixture-scaffold] processed rules={created} -> {tests_root.relative_to(root)}")
+    print(f"[fixture-scaffold] processed rules={processed} -> {tests_root.relative_to(root)}")
     return EXIT_SUCCESS
 
 

@@ -15,6 +15,15 @@ EXIT_SUCCESS = 0
 EXIT_POLICY_FAIL = 2
 EXIT_RUNTIME_FAIL = 3
 
+LEGACY_GUIDELINE_FIELD_ALIASES = {
+    "decideable": "decidable",
+    "decideable-status": "decidable_status",
+}
+
+LEGACY_GUIDELINE_VALUE_ALIASES = {
+    "undecideable": "undecidable",
+}
+
 
 @dataclass(frozen=True)
 class ExtractorPaths:
@@ -143,3 +152,36 @@ def find_registry_baseline(
         if entry.get("corpus_pack_id") == corpus_pack_id and entry.get("mode") == mode:
             return entry
     return None
+
+
+def normalize_guideline_record(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(record)
+
+    for old_key, new_key in LEGACY_GUIDELINE_FIELD_ALIASES.items():
+        if old_key in normalized and new_key not in normalized:
+            normalized[new_key] = normalized.pop(old_key)
+
+    decidable_value = normalized.get("decidable")
+    if isinstance(decidable_value, str):
+        normalized["decidable"] = LEGACY_GUIDELINE_VALUE_ALIASES.get(
+            decidable_value, decidable_value
+        )
+
+    status_value = normalized.get("decidable_status")
+    if isinstance(status_value, str):
+        normalized["decidable_status"] = LEGACY_GUIDELINE_VALUE_ALIASES.get(
+            status_value, status_value
+        )
+
+    return normalized
+
+
+def load_guidelines_payload(path: Path) -> dict[str, Any]:
+    payload = read_yaml(path) or {}
+    guidelines = payload.get("guidelines") or []
+    normalized_guidelines = []
+    for item in guidelines:
+        if isinstance(item, dict):
+            normalized_guidelines.append(normalize_guideline_record(item))
+    payload["guidelines"] = normalized_guidelines
+    return payload

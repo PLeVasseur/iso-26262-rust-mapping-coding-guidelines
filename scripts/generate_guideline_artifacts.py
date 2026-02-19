@@ -11,7 +11,8 @@ from typing import Any
 
 from _common import EXIT_RUNTIME_FAIL, EXIT_SUCCESS, read_yaml, repo_root, write_yaml
 
-DEFAULT_SCOPE = "Rust production code and associated safety evidence artifacts."
+DEFAULT_GUIDELINE_CATEGORY = "Required"
+DEFAULT_SCOPE = "crate"
 DEFAULT_DEVIATION_REQUIREMENTS = (
     "Document deviation rationale, impact, mitigation, and approval evidence per "
     "docs/deviation_process.md."
@@ -85,29 +86,126 @@ def enforcement_details(mode: str) -> str:
     return "Track compliance through structured manual audit checklist evidence."
 
 
-def rule_statement(seed: dict[str, Any]) -> str:
-    category = str(seed.get("category_candidate") or "").lower()
-    reference = str(seed.get("reference") or seed.get("iso_ref") or "the mapped ISO clause")
-    if "language subset" in category:
+def rule_statement(technical_topic: str, reference: str) -> str:
+    lowered = technical_topic.lower()
+    if "language subset" in lowered:
         return (
             f"Use only the approved Rust language subset for {reference} and avoid "
             "forbidden or high-risk constructs in safety-critical code."
         )
-    if "defensive" in category:
+    if "defensive" in lowered:
         return (
             "Apply defensive checks and explicit error handling behaviors consistent with "
             f"{reference}."
         )
-    if "complexity" in category:
+    if "complexity" in lowered:
         return f"Keep implementation complexity bounded, reviewable, and traceable to {reference}."
-    if "concurrency" in category:
+    if "concurrency" in lowered:
         return (
             "Constrain concurrency/shared-state patterns to auditable, deterministic approaches "
             f"for {reference}."
         )
-    if "type safety" in category:
+    if "type safety" in lowered:
         return f"Use explicit, reviewed type-conversion boundaries aligned with {reference}."
     return f"Provide verifiable compliance evidence for activities mapped to {reference}."
+
+
+def choose_scope(seed: dict[str, Any]) -> str:
+    reference = str(seed.get("reference") or "").lower()
+    topic_phrase = str(seed.get("topic_phrase") or "").lower()
+    if "integration" in topic_phrase:
+        return "system"
+    if "module" in reference:
+        return "module"
+    return DEFAULT_SCOPE
+
+
+def derive_decidability(seed: dict[str, Any]) -> tuple[str, str | None, str]:
+    mode = enforcement_mode(seed)
+    reference = str(seed.get("reference") or seed.get("iso_ref") or "mapped ISO reference")
+
+    if mode == "AUDIT":
+        return (
+            "undecidable",
+            None,
+            (
+                "The current rule shape requires reviewer judgment and contextual interpretation "
+                f"for {reference}, so deterministic automated decision is not currently possible."
+            ),
+        )
+
+    if mode == "AUTO":
+        return (
+            "decidable",
+            "possible-with-clippy",
+            (
+                "The rule is intended to be machine-decidable and appears suitable for static lint "
+                "enforcement over "
+                f"{reference}, but an exact existing lint mapping is not yet locked."
+            ),
+        )
+
+    return (
+        "decidable",
+        "possible-with-clippy",
+        (
+            "The rule has a decidable core plus contextual review needs; static lint coverage is "
+            f"plausible for parts of {reference} and should be tracked for future Clippy support."
+        ),
+    )
+
+
+def default_amplification(seed: dict[str, Any]) -> str:
+    return (
+        "Initial generic guideline derived from ISO 26262 seed "
+        f"{seed.get('seed_id')} ({seed.get('iso_ref')}). This rule is expected to be decomposed "
+        "into narrower Rust-specific sub-guidelines as corpus evidence grows."
+    )
+
+
+def default_exceptions() -> str:
+    return (
+        "Exception allowed only through the documented deviation process with explicit "
+        "safety impact "
+        "assessment, mitigation evidence, and reviewer approval."
+    )
+
+
+def build_examples(
+    guideline_id_value: str,
+    decidable: str,
+    decidable_status: str | None,
+) -> dict[str, dict[str, str]]:
+    base = f"tests/guidelines/{guideline_id_value}/examples"
+    compliant_expectation = "no_run" if decidable == "decidable" else "documented-only"
+
+    if decidable_status == "compiler":
+        non_compliant_expectation = "compile_fail"
+    elif decidable_status is None:
+        non_compliant_expectation = "documented-only"
+    else:
+        non_compliant_expectation = "compile_pass"
+
+    return {
+        "non_compliant": {
+            "code_path": f"{base}/non_compliant.rs",
+            "doc_path": f"{base}/non_compliant.md",
+            "explanation": (
+                "This example intentionally violates the guideline intent and should be used as "
+                "negative evidence during rule validation."
+            ),
+            "compile_expectation": non_compliant_expectation,
+        },
+        "compliant": {
+            "code_path": f"{base}/compliant.rs",
+            "doc_path": f"{base}/compliant.md",
+            "explanation": (
+                "This example demonstrates a compliant coding pattern aligned with the guideline "
+                "intent and should be used as positive evidence during rule validation."
+            ),
+            "compile_expectation": compliant_expectation,
+        },
+    }
 
 
 def build_categories(seeds: list[dict[str, Any]]) -> dict[str, Any]:
@@ -160,32 +258,55 @@ def build_guidelines(seeds: list[dict[str, Any]]) -> dict[str, Any]:
 
         gid = guideline_id(seed_id)
         mode = enforcement_mode(seed)
-        guideline_scope = DEFAULT_SCOPE
+        reference = str(seed.get("reference") or seed.get("iso_ref") or "mapped ISO clause")
+        technical_topic = (
+            str(seed.get("category_candidate") or "Uncategorized").strip() or "Uncategorized"
+        )
+        decidable, decidable_status, decidability_rationale = derive_decidability(seed)
+        scope = choose_scope(seed)
+        examples = build_examples(gid, decidable, decidable_status)
+
         evidence_paths = [
             f"tests/guidelines/{gid}/metadata.yaml",
+            examples["compliant"]["doc_path"],
+            examples["non_compliant"]["doc_path"],
             f"audit_checklists/{gid}.md",
         ]
 
-        guidelines.append(
-            {
-                "id": gid,
-                "category": str(seed.get("category_candidate") or "Uncategorized").strip()
-                or "Uncategorized",
-                "rule_statement": rule_statement(seed),
-                "rationale": (
-                    "Derived from ISO 26262 seed "
-                    f"{seed_id} ({seed.get('iso_ref', 'unknown reference')}) to maintain "
-                    "traceable coding-guideline coverage."
-                ),
-                "iso_seeds": [seed_id],
-                "scope": guideline_scope,
-                "state": "DRAFT",
-                "enforcement_mode": mode,
-                "enforcement_details": enforcement_details(mode),
-                "evidence_artifacts": evidence_paths,
-                "deviation_requirements": DEFAULT_DEVIATION_REQUIREMENTS,
-            }
-        )
+        guideline = {
+            "id": gid,
+            "category": DEFAULT_GUIDELINE_CATEGORY,
+            "technical_topic": technical_topic,
+            "rule_statement": rule_statement(technical_topic, reference),
+            "amplification": default_amplification(seed),
+            "exceptions": default_exceptions(),
+            "rationale": (
+                "Derived from ISO 26262 seed "
+                f"{seed_id} ({seed.get('iso_ref', 'unknown reference')}) to maintain "
+                "traceable coding-guideline coverage."
+            ),
+            "iso_seeds": [seed_id],
+            "scope": scope,
+            "decidable": decidable,
+            "decidability_rationale": decidability_rationale,
+            "state": "DRAFT",
+            "enforcement_mode": mode,
+            "enforcement_details": enforcement_details(mode),
+            "evidence_artifacts": evidence_paths,
+            "deviation_requirements": DEFAULT_DEVIATION_REQUIREMENTS,
+            "examples": examples,
+        }
+
+        if decidable_status is not None:
+            guideline["decidable_status"] = decidable_status
+
+        if decidable_status == "possible-with-clippy":
+            guideline["clippy_candidate_tracker"] = (
+                "https://github.com/rust-lang/rust-clippy/issues/new"
+                f"?title={gid}%20candidate%20lint"
+            )
+
+        guidelines.append(guideline)
 
     return {"version": 1, "guidelines": guidelines}
 

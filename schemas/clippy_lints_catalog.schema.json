@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Clippy Lints Catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "source_url", "generated_at", "lint_count", "lints"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lint_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "lints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "url"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    }
+  }
+}

@@ -44,6 +44,7 @@ def main() -> int:
         ("schemas/change_growth_policy.schema.json", "config/change_growth_policy.yaml", True),
         ("schemas/seed_manifest.schema.json", "seeds/seed_manifest.yaml", True),
         ("schemas/run_registry.schema.json", "data/run_registry.yaml", True),
+        ("schemas/clippy_lints_catalog.schema.json", "data/clippy_lints_catalog.yaml", True),
         ("schemas/target_scope.schema.json", "data/target_scope.yaml", True),
         ("schemas/extractor_findings.schema.json", "feedback/extractor_findings.yaml", True),
         ("schemas/seed_topics.schema.json", "data/seed_topics.yaml", args.strict_generated),
@@ -77,6 +78,7 @@ def main() -> int:
 
     review_schema_path = root / "schemas" / "diffset_review.schema.json"
     required_schema_files = [
+        "schemas/clippy_lints_catalog.schema.json",
         "schemas/diffset_manifest.schema.json",
         "schemas/diffset_item.schema.json",
         "schemas/diffset_review.schema.json",

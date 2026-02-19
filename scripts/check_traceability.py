@@ -9,6 +9,7 @@ from pathlib import Path
 from _common import (
     EXIT_POLICY_FAIL,
     EXIT_SUCCESS,
+    load_guidelines_payload,
     read_yaml,
     repo_root,
     write_json,
@@ -68,7 +69,7 @@ def main() -> int:
 
     guideline_ids: set[str] = set()
     if guidelines_path.exists():
-        guidelines_payload = read_yaml(guidelines_path) or {}
+        guidelines_payload = load_guidelines_payload(guidelines_path)
         guideline_ids = {
             str(item.get("id", "")).strip()
             for item in guidelines_payload.get("guidelines", [])

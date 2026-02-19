@@ -333,6 +333,46 @@ def main() -> int:
         elif code == EXIT_POLICY_FAIL:
             policy_errors.append("validate_schemas policy failure")
 
+    guideline_completeness_report_path = run_dir / "check_guideline_completeness.report.json"
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            [
+                "scripts/check_guideline_completeness.py",
+                "--json-output",
+                str(guideline_completeness_report_path),
+            ],
+            report_path=run_dir / "check_guideline_completeness.step.json",
+        )
+        step_results["check_guideline_completeness"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code == EXIT_RUNTIME_FAIL:
+            runtime_errors.append("check_guideline_completeness runtime failure")
+        elif code == EXIT_POLICY_FAIL:
+            policy_errors.append("check_guideline_completeness policy failure")
+
+    guideline_examples_report_path = run_dir / "check_guideline_examples.report.json"
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            [
+                "scripts/check_guideline_examples.py",
+                "--json-output",
+                str(guideline_examples_report_path),
+            ],
+            report_path=run_dir / "check_guideline_examples.step.json",
+        )
+        step_results["check_guideline_examples"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code == EXIT_RUNTIME_FAIL:
+            runtime_errors.append("check_guideline_examples runtime failure")
+        elif code == EXIT_POLICY_FAIL:
+            policy_errors.append("check_guideline_examples policy failure")
+
     traceability_report_path = run_dir / "check_traceability.report.json"
     if not runtime_errors:
         traceability_command = [

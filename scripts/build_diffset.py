@@ -15,6 +15,7 @@ from _common import (
     EXIT_RUNTIME_FAIL,
     EXIT_SUCCESS,
     find_registry_baseline,
+    load_guidelines_payload,
     read_json,
     read_yaml,
     repo_root,
@@ -162,7 +163,7 @@ def load_categories(path: Path | None) -> dict[str, dict[str, Any]]:
 def load_guidelines(path: Path | None) -> dict[str, dict[str, Any]]:
     if path is None or not path.exists():
         return {}
-    payload = read_yaml(path) or {}
+    payload = load_guidelines_payload(path)
     guidelines = payload.get("guidelines") or []
     mapped: dict[str, dict[str, Any]] = {}
     for item in guidelines:
@@ -257,6 +258,14 @@ def build_context(
                 {
                     "guideline_id": active.get("id"),
                     "category": active.get("category"),
+                    "technical_topic": active.get("technical_topic"),
+                    "scope": active.get("scope"),
+                    "decidable": active.get("decidable"),
+                    "decidable_status": active.get("decidable_status"),
+                    "clippy_lint_id": active.get("clippy_lint_id"),
+                    "clippy_candidate_tracker": active.get("clippy_candidate_tracker"),
+                    "amplification": active.get("amplification"),
+                    "exceptions": active.get("exceptions"),
                     "state": active.get("state"),
                     "enforcement_mode": active.get("enforcement_mode"),
                 }
