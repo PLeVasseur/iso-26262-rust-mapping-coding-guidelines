@@ -494,15 +494,26 @@ guidelines:
 - id: RG-7359C842E4E4
   category: Required
   technical_topic: Language subset / forbidden constructs
-  rule_statement: Use only the approved Rust language subset for Table 10 and avoid
-    forbidden or high-risk constructs in safety-critical code.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-7359C842E4E4
-    (Part 6 Table 10). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-7359C842E4E4 (Part 6 Table 10) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Safety-critical crates shall implement and verify a defined Rust
+    subset profile for ISO 26262 Table 10, and must reject forbidden or high-risk
+    language constructs at review and build time.
+  amplification: 'Specify the permitted subset as enforceable crate controls (for
+    example: `#![forbid(unsafe_code)]`, explicit banned APIs, and lint gates), then
+    verify compliance through CI checks, test results, and review evidence that no
+    excluded construct remains. Use explicit unsafe boundaries, pointer and borrow
+    constraints, and deterministic Result/Option error handling in match-based control
+    flow.'
+  exceptions: A deviation is allowed only when a documented safety case identifies
+    the exact construct, defines compensating controls, and provides review and test
+    evidence; reviewers must check bounded impact, approval traceability, and planned
+    retirement of the deviation.
+  rationale: 'A measurable subset policy reduces interpretation variance and supports
+    repeatable verification; build checks, tests, and review evidence demonstrate
+    that Table 10 obligations are satisfied without relying on informal judgment.
+    Evidence anchor: :std:`ISO26262-6:2018 Table 10`. Evidence anchor: :cite:`rust-reference-unsafe-and-ffi`.
+    Evidence anchor: :cite:`rustc-lint-forbid-unsafe-code`. This wording aligns with
+    benchmark Rust guidance terms used for overflow, panic, and trait/struct safety
+    reasoning.'
   iso_seeds:
   - SEED-7359C842E4E4
   scope: crate
@@ -525,17 +536,22 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-7359C842E4E4/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-7359C842E4E4/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
+      explanation: Unsafe raw-pointer dereference violates the forbidden subset policy;
+        with crate-level `forbid(unsafe_code)`, the violation is caught at compile
+        time.
       compile_expectation: compile_pass
       expected_outcome: runtime_panic
+      verification_notes: Run `cargo check` and verify compiler diagnostics report
+        use of unsafe code forbidden by crate policy.
     compliant:
       code_path: tests/guidelines/RG-7359C842E4E4/examples/compliant.rs
       doc_path: tests/guidelines/RG-7359C842E4E4/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      explanation: The crate forbids unsafe code and uses only safe subset operations;
+        assertions provide direct positive evidence of expected behavior.
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
+      verification_notes: Run `cargo run` (or `cargo test`) and check that all assertions
+        pass and no lint/build violations are reported.
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7359C842E4E4%20candidate%20lint
   obligation_units:
