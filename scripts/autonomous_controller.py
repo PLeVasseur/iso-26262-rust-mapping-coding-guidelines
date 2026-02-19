@@ -159,6 +159,8 @@ def write_dashboard(
         f"- fls_span_gap_count: {observation.get('fls_span_gap_count', 0)}",
         f"- quality_gap_count: {observation.get('quality_gap_count', 0)}",
         f"- placeholder_gap_count: {observation.get('placeholder_gap_count', 0)}",
+        f"- known_good_alignment_gap_count: {observation.get('known_good_alignment_gap_count', 0)}",
+        f"- known_good_alignment_average: {observation.get('known_good_alignment_average', 0.0)}",
         f"- total_deficit_count: {observation.get('total_deficit_count', 0)}",
         f"- weighted_score: {weighted_score(observation)}",
     ]
@@ -260,6 +262,7 @@ def evaluate_candidate(
     before_observation: dict[str, Any],
     candidate: dict[str, Any],
     evaluation_profile: str,
+    known_good_alignment_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     candidate_id = str(candidate.get("candidate_id") or "unknown")
     candidate_dir = iteration_dir / f"candidate_{candidate_id}_{evaluation_profile}"
@@ -299,7 +302,11 @@ def evaluate_candidate(
                 candidate_dir / "orchestrate.json",
             )
 
-        after_observation = observe_repo(root, candidate_dir / "observation")
+        after_observation = observe_repo(
+            root,
+            candidate_dir / "observation",
+            known_good_alignment_overrides=known_good_alignment_overrides,
+        )
         regressions = regression_flags(before_observation, after_observation)
         improved = improves(before_observation, after_observation)
         accepted = orchestrate_ok and improved and not regressions
@@ -422,6 +429,12 @@ def lane_status_payload(observation: dict[str, Any]) -> dict[str, Any]:
         "quality_gap_count": int(observation.get("quality_gap_count", 0)),
         "placeholder_gap_count": int(observation.get("placeholder_gap_count", 0)),
         "example_gap_count": int(observation.get("example_gap_count", 0)),
+        "known_good_alignment_gap_count": int(
+            observation.get("known_good_alignment_gap_count", 0)
+        ),
+        "known_good_alignment_average": float(
+            observation.get("known_good_alignment_average", 0.0)
+        ),
     }
 
 
@@ -465,6 +478,12 @@ def delta_summary_payload(
         "fls_chapter_coverage": float(observation.get("fls_chapter_coverage", 0.0)),
         "quality_gap_count": int(observation.get("quality_gap_count", 0)),
         "placeholder_gap_count": int(observation.get("placeholder_gap_count", 0)),
+        "known_good_alignment_gap_count": int(
+            observation.get("known_good_alignment_gap_count", 0)
+        ),
+        "known_good_alignment_average": float(
+            observation.get("known_good_alignment_average", 0.0)
+        ),
     }
 
     baseline_metrics = {}
@@ -654,6 +673,8 @@ def write_final_report(
         f"- quality_gap_count: {observation.get('quality_gap_count', 0)}",
         f"- placeholder_gap_count: {observation.get('placeholder_gap_count', 0)}",
         f"- example_gap_count: {observation.get('example_gap_count', 0)}",
+        f"- known_good_alignment_gap_count: {observation.get('known_good_alignment_gap_count', 0)}",
+        f"- known_good_alignment_average: {observation.get('known_good_alignment_average', 0.0)}",
         f"- weighted_score: {weighted_score(observation)}",
         "",
         "## Reproducible Commands",
@@ -674,6 +695,90 @@ def resolve_corpus_pack(root: Path, requested: str | None) -> str:
         return requested.strip()
     registry = read_yaml(root / "config/corpus_registry.yaml") or {}
     return str(registry.get("default_corpus_pack") or "iso-core-part6").strip()
+
+
+def interpolate_linear(start: float, target: float, progress: float) -> float:
+    bounded = max(0.0, min(1.0, progress))
+    return start + ((target - start) * bounded)
+
+
+def alignment_overrides_for_iteration(root: Path, iteration: int) -> dict[str, Any]:
+    policy = read_yaml(root / "config/alignment_policy.yaml") or {}
+    progression = policy.get("controller_progression") or {}
+    if not bool(progression.get("enabled", False)):
+        return {}
+
+    start_iteration = int(progression.get("start_iteration") or 1)
+    target_iteration = int(progression.get("target_iteration") or start_iteration)
+    target_iteration = max(start_iteration, target_iteration)
+
+    if target_iteration == start_iteration:
+        progress = 1.0
+    else:
+        progress = (iteration - start_iteration) / float(target_iteration - start_iteration)
+    progress = max(0.0, min(1.0, progress))
+
+    threshold_defaults = policy.get("thresholds") or {}
+    start_thresholds = progression.get("start_thresholds") or {}
+    target_thresholds = progression.get("target_thresholds") or {}
+
+    start_global = float(
+        start_thresholds.get(
+            "min_global_alignment",
+            threshold_defaults.get("min_global_alignment", 0.75),
+        )
+    )
+    target_global = float(
+        target_thresholds.get(
+            "min_global_alignment",
+            threshold_defaults.get("min_global_alignment", 0.75),
+        )
+    )
+
+    start_changed = float(
+        start_thresholds.get(
+            "min_changed_guideline_alignment",
+            threshold_defaults.get("min_changed_guideline_alignment", 0.8),
+        )
+    )
+    target_changed = float(
+        target_thresholds.get(
+            "min_changed_guideline_alignment",
+            threshold_defaults.get("min_changed_guideline_alignment", 0.8),
+        )
+    )
+
+    start_outliers = float(
+        start_thresholds.get(
+            "granularity_outliers_allowed",
+            threshold_defaults.get("granularity_outliers_allowed", 0),
+        )
+    )
+    target_outliers = float(
+        target_thresholds.get(
+            "granularity_outliers_allowed",
+            threshold_defaults.get("granularity_outliers_allowed", 0),
+        )
+    )
+
+    start_gate_mode = str(progression.get("start_gate_mode") or policy.get("gate_mode") or "warn")
+    target_gate_mode = str(progression.get("target_gate_mode") or start_gate_mode)
+    gate_mode = start_gate_mode if progress < 1.0 else target_gate_mode
+
+    return {
+        "min_global_alignment": round(interpolate_linear(start_global, target_global, progress), 6),
+        "min_changed_guideline_alignment": round(
+            interpolate_linear(start_changed, target_changed, progress),
+            6,
+        ),
+        "granularity_outliers_allowed": int(
+            round(interpolate_linear(start_outliers, target_outliers, progress))
+        ),
+        "gate_mode": gate_mode,
+        "progress": round(progress, 6),
+        "start_iteration": start_iteration,
+        "target_iteration": target_iteration,
+    }
 
 
 def suppressed_signatures_from_state(state: dict[str, Any], threshold: int) -> set[str]:
@@ -722,6 +827,9 @@ def main() -> int:
         iteration = int(state["iteration"]) + 1
         iteration_dir = paths["iterations_root"] / f"{iteration:03d}"
         iteration_dir.mkdir(parents=True, exist_ok=True)
+
+        alignment_overrides = alignment_overrides_for_iteration(root, iteration)
+        write_json(iteration_dir / "known_good_alignment_overrides.json", alignment_overrides)
 
         pre_profile = args.profile
         if args.full_eval_every > 0 and iteration % args.full_eval_every == 0:
@@ -777,7 +885,11 @@ def main() -> int:
                 print("[controller] stopped: orchestrate failed")
                 return EXIT_RUNTIME_FAIL
 
-        before_observation = observe_repo(root, iteration_dir / "before")
+        before_observation = observe_repo(
+            root,
+            iteration_dir / "before",
+            known_good_alignment_overrides=alignment_overrides,
+        )
         state["last_observation"] = before_observation
         write_json(iteration_dir / "observe.json", before_observation)
         write_dashboard(paths, state, before_observation)
@@ -908,6 +1020,7 @@ def main() -> int:
                 before_observation,
                 candidate,
                 "quick",
+                known_good_alignment_overrides=alignment_overrides,
             )
             quick_evaluations.append(evaluation)
             attempted_candidates.append(
@@ -939,6 +1052,7 @@ def main() -> int:
                     before_observation,
                     candidate,
                     "full",
+                    known_good_alignment_overrides=alignment_overrides,
                 )
                 full_eval["quick_reference"] = {
                     "accepted": bool(quick_eval.get("accepted", False)),
@@ -1045,7 +1159,11 @@ def main() -> int:
                 if run_id:
                     state["last_orchestrate_run_id"] = run_id
 
-            after_observation = observe_repo(root, iteration_dir / "after")
+            after_observation = observe_repo(
+                root,
+                iteration_dir / "after",
+                known_good_alignment_overrides=alignment_overrides,
+            )
             regressions = regression_flags(before_observation, after_observation)
             accepted = bool(apply_result.get("ok", False)) and accept_orchestrate_ok
             accepted = accepted and improves(before_observation, after_observation)

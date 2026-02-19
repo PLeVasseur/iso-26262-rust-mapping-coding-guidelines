@@ -17,7 +17,9 @@
     "fls_chapter_gap_count",
     "quality_gap_count",
     "placeholder_gap_count",
-    "example_gap_count"
+    "example_gap_count",
+    "known_good_alignment_gap_count",
+    "known_good_alignment_average"
   ],
   "properties": {
     "hard_gate_pass": {
@@ -71,6 +73,15 @@
     "example_gap_count": {
       "type": "integer",
       "minimum": 0
+    },
+    "known_good_alignment_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "known_good_alignment_average": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
     }
   }
 }

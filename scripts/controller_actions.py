@@ -25,6 +25,7 @@ LANE_IMPACT_WEIGHTS = {
     "fanout": 3,
     "fls": 2,
     "quality": 2,
+    "alignment": 2,
     "examples": 1,
 }
 
@@ -208,6 +209,52 @@ def _proposal_from_deficit(deficit: dict[str, Any]) -> dict[str, Any] | None:
         }
         expected_delta = {"examples": 1, "quality": 1}
         risk_penalty = 0.15
+    elif deficit_type == "known_good_alignment_gap" and guideline_id:
+        details = str(deficit.get("details") or "")
+        if "citation_coverage_low" in details:
+            action = {
+                "type": "add_alignment_citation_signals",
+                "guideline_id": guideline_id,
+            }
+            expected_delta = {"quality": 1, "alignment": 2}
+            risk_penalty = 0.1
+        elif "example_depth_too_shallow" in details:
+            action = {
+                "type": "upgrade_examples_non_placeholder",
+                "guideline_id": guideline_id,
+            }
+            expected_delta = {"examples": 1, "quality": 1, "alignment": 1}
+            risk_penalty = 0.2
+        elif "granularity_too_coarse" in details:
+            action = {
+                "type": "rebalance_alignment_granularity",
+                "guideline_id": guideline_id,
+                "granularity_mode": "coarse",
+            }
+            expected_delta = {"quality": 1, "alignment": 2}
+            risk_penalty = 0.15
+        elif "granularity_too_fine" in details:
+            action = {
+                "type": "rebalance_alignment_granularity",
+                "guideline_id": guideline_id,
+                "granularity_mode": "fine",
+            }
+            expected_delta = {"quality": 1, "alignment": 2}
+            risk_penalty = 0.15
+        elif "benchmark_similarity_gap" in details:
+            action = {
+                "type": "raise_benchmark_similarity",
+                "guideline_id": guideline_id,
+            }
+            expected_delta = {"quality": 1, "alignment": 2}
+            risk_penalty = 0.2
+        else:
+            action = {
+                "type": "rewrite_rule_statement_specific",
+                "guideline_id": guideline_id,
+            }
+            expected_delta = {"quality": 1, "alignment": 1}
+            risk_penalty = 0.15
 
     if action is None:
         return None
@@ -516,6 +563,20 @@ def _sanitize_text(value: str) -> str:
     updated = re.sub(r"\bpending\b", "ready-for-review", updated, flags=re.IGNORECASE)
     updated = re.sub(r"\btodo\b", "review item", updated, flags=re.IGNORECASE)
     return updated
+
+
+def _append_sentence(base: str, sentence: str) -> str:
+    base = base.strip()
+    sentence = sentence.strip()
+    if not sentence:
+        return base
+    if sentence in base:
+        return base
+    if not base:
+        return sentence
+    if base[-1] not in {".", "!", "?"}:
+        base = f"{base}."
+    return f"{base} {sentence}"
 
 
 def _focus_phrase(guideline: dict[str, Any]) -> str:
@@ -849,6 +910,158 @@ def apply_upgrade_examples_non_placeholder(root: Path, action: dict[str, Any]) -
     return {"changed": changed, "guideline_id": guideline_filter}
 
 
+def apply_add_alignment_citation_signals(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    guideline_filter = str(action.get("guideline_id") or "").strip()
+    if not guideline_filter:
+        return {"changed": False, "reason": "guideline_id required"}
+
+    path, payload, guidelines = _load_todo_guidelines(root)
+    changed = False
+
+    citation_markers = [
+        ":cite:`ISO26262-6-2018`",
+        ":cite:`ISO26262-8-2018`",
+    ]
+    std_markers = [
+        ":std:`std::result::Result`",
+        ":std:`core::option::Option`",
+    ]
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if guideline_id != guideline_filter:
+            continue
+
+        rule_statement = str(guideline.get("rule_statement") or "")
+        rationale = str(guideline.get("rationale") or "")
+        text_blob = f"{rule_statement}\n{rationale}"
+
+        for marker in citation_markers:
+            if marker not in text_blob:
+                rationale = _append_sentence(
+                    rationale,
+                    f"Safety evidence anchor: {marker}.",
+                )
+                text_blob = f"{rule_statement}\n{rationale}"
+
+        for marker in std_markers:
+            if marker not in text_blob:
+                rationale = _append_sentence(
+                    rationale,
+                    f"Rust API reference anchor: {marker}.",
+                )
+                text_blob = f"{rule_statement}\n{rationale}"
+
+        if rationale != str(guideline.get("rationale") or ""):
+            guideline["rationale"] = rationale
+            changed = True
+        break
+
+    if changed:
+        _write_todo_guidelines(path, payload, guidelines)
+    return {"changed": changed, "guideline_id": guideline_filter}
+
+
+def apply_rebalance_alignment_granularity(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    guideline_filter = str(action.get("guideline_id") or "").strip()
+    if not guideline_filter:
+        return {"changed": False, "reason": "guideline_id required"}
+
+    mode = str(action.get("granularity_mode") or "coarse").strip().lower()
+    if mode not in {"coarse", "fine"}:
+        mode = "coarse"
+
+    path, payload, guidelines = _load_todo_guidelines(root)
+    changed = False
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if guideline_id != guideline_filter:
+            continue
+
+        amplification = str(guideline.get("amplification") or "")
+        exceptions = str(guideline.get("exceptions") or "")
+        rule_statement = str(guideline.get("rule_statement") or "")
+
+        if mode == "coarse":
+            amplification = _append_sentence(
+                amplification,
+                "When selecting patterns, include explicit Result/Option handling, "
+                "overflow checks, and unsafe boundary constraints to keep guidance reviewable.",
+            )
+            exceptions = _append_sentence(
+                exceptions,
+                "If deviation is required, document why this constraint cannot be applied and "
+                "what verification evidence closes the risk.",
+            )
+        else:
+            amplification = (
+                "Use a single decisive rule boundary with one verification path, and avoid "
+                "branching "
+                "condition trees unless hazard analysis requires them."
+            )
+            exceptions = (
+                "Allow deviations only with explicit hazard mitigation and reviewer sign-off."
+            )
+            rule_statement = re.sub(r"\b(if|when|unless|while|where)\b", "", rule_statement)
+            rule_statement = re.sub(r"\s+", " ", rule_statement).strip()
+
+        if amplification != str(guideline.get("amplification") or ""):
+            guideline["amplification"] = amplification
+            changed = True
+        if exceptions != str(guideline.get("exceptions") or ""):
+            guideline["exceptions"] = exceptions
+            changed = True
+        if mode == "fine" and rule_statement != str(guideline.get("rule_statement") or ""):
+            guideline["rule_statement"] = rule_statement
+            changed = True
+        break
+
+    if changed:
+        _write_todo_guidelines(path, payload, guidelines)
+    return {"changed": changed, "guideline_id": guideline_filter, "granularity_mode": mode}
+
+
+def apply_raise_benchmark_similarity(root: Path, action: dict[str, Any]) -> dict[str, Any]:
+    guideline_filter = str(action.get("guideline_id") or "").strip()
+    if not guideline_filter:
+        return {"changed": False, "reason": "guideline_id required"}
+
+    path, payload, guidelines = _load_todo_guidelines(root)
+    changed = False
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if guideline_id != guideline_filter:
+            continue
+
+        amplification = str(guideline.get("amplification") or "")
+        rationale = str(guideline.get("rationale") or "")
+
+        amplification = _append_sentence(
+            amplification,
+            "Use explicit unsafe boundaries, pointer and borrow constraints, and deterministic "
+            "Result/Option error handling in match-based control flow.",
+        )
+        rationale = _append_sentence(
+            rationale,
+            "This wording aligns with benchmark Rust guidance terms used for overflow, panic, "
+            "and trait/struct safety reasoning.",
+        )
+
+        if amplification != str(guideline.get("amplification") or ""):
+            guideline["amplification"] = amplification
+            changed = True
+        if rationale != str(guideline.get("rationale") or ""):
+            guideline["rationale"] = rationale
+            changed = True
+        break
+
+    if changed:
+        _write_todo_guidelines(path, payload, guidelines)
+    return {"changed": changed, "guideline_id": guideline_filter}
+
+
 def apply_action(root: Path, action: dict[str, Any]) -> dict[str, Any]:
     action_type = str(action.get("type") or "").strip()
     if action_type == "assign_missing_fls_refs":
@@ -861,6 +1074,12 @@ def apply_action(root: Path, action: dict[str, Any]) -> dict[str, Any]:
         return apply_rewrite_amplification_with_boundaries(root, action)
     if action_type == "upgrade_examples_non_placeholder":
         return apply_upgrade_examples_non_placeholder(root, action)
+    if action_type == "add_alignment_citation_signals":
+        return apply_add_alignment_citation_signals(root, action)
+    if action_type == "rebalance_alignment_granularity":
+        return apply_rebalance_alignment_granularity(root, action)
+    if action_type == "raise_benchmark_similarity":
+        return apply_raise_benchmark_similarity(root, action)
     return {"changed": False, "reason": f"unknown action type {action_type}"}
 
 

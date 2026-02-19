@@ -37,12 +37,44 @@ GATE_SPECS: list[tuple[str, list[str]]] = [
         "check_guideline_examples",
         ["scripts/check_guideline_examples.py"],
     ),
+    (
+        "check_known_good_alignment",
+        ["scripts/check_known_good_alignment.py", "--allow-missing-benchmark"],
+    ),
 ]
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
-def run_gates(root: Path, output_dir: Path) -> dict[str, Any]:
+def known_good_override_args(overrides: dict[str, Any] | None) -> list[str]:
+    if not overrides:
+        return []
+
+    args: list[str] = []
+    value = overrides.get("min_global_alignment")
+    if value is not None:
+        args.extend(["--min-global-alignment", f"{float(value):.6f}"])
+
+    value = overrides.get("min_changed_guideline_alignment")
+    if value is not None:
+        args.extend(["--min-changed-guideline-alignment", f"{float(value):.6f}"])
+
+    value = overrides.get("granularity_outliers_allowed")
+    if value is not None:
+        args.extend(["--granularity-outliers-allowed", str(int(value))])
+
+    gate_mode = str(overrides.get("gate_mode") or "").strip()
+    if gate_mode in {"warn", "error"}:
+        args.extend(["--gate-mode", gate_mode])
+
+    return args
+
+
+def run_gates(
+    root: Path,
+    output_dir: Path,
+    known_good_alignment_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     reports: dict[str, Any] = {}
     runtime_failures = 0
@@ -51,6 +83,8 @@ def run_gates(root: Path, output_dir: Path) -> dict[str, Any]:
     for gate_name, script_args in GATE_SPECS:
         report_path = output_dir / f"{gate_name}.report.json"
         command = [sys.executable, *script_args, "--json-output", str(report_path)]
+        if gate_name == "check_known_good_alignment":
+            command.extend(known_good_override_args(known_good_alignment_overrides))
         completed = run_command(command, cwd=root)
 
         if completed.returncode == 3:
@@ -303,6 +337,62 @@ def collect_example_deficits(report: dict[str, Any]) -> list[dict[str, Any]]:
     return deficits
 
 
+def collect_known_good_alignment_deficits(report: dict[str, Any]) -> list[dict[str, Any]]:
+    deficits: list[dict[str, Any]] = []
+
+    for item in report.get("guideline_results", []):
+        guideline_id = str(item.get("guideline_id") or "").strip()
+        alignment_score = float(item.get("alignment_score") or 0.0)
+        nearest = item.get("nearest_neighbors") or []
+        nearest_id = ""
+        if nearest:
+            nearest_id = str((nearest[0] or {}).get("guideline_id") or "").strip()
+
+        for flag in item.get("flags", []):
+            flag_text = str(flag).strip()
+            if not flag_text:
+                continue
+
+            severity = "medium"
+            if flag_text in {"known_good_alignment_gap", "benchmark_similarity_gap"}:
+                severity = "high"
+
+            details = f"flag={flag_text} alignment_score={alignment_score:.3f}"
+            if nearest_id:
+                details = f"{details} nearest={nearest_id}"
+
+            deficits.append(
+                {
+                    "deficit_id": f"known-good:{guideline_id}:{flag_text}",
+                    "type": "known_good_alignment_gap",
+                    "severity": severity,
+                    "guideline_id": guideline_id,
+                    "target_id": "",
+                    "obligation_unit_id": "",
+                    "distance_to_pass": round(max(0.0, 1.0 - alignment_score), 6),
+                    "evidence_ref": "check_known_good_alignment",
+                    "details": details,
+                }
+            )
+
+    for message in report.get("errors", []):
+        deficits.append(
+            {
+                "deficit_id": f"known-good:error:{len(deficits) + 1}",
+                "type": "known_good_alignment_gap",
+                "severity": "high",
+                "guideline_id": "",
+                "target_id": "",
+                "obligation_unit_id": "",
+                "distance_to_pass": 1,
+                "evidence_ref": "check_known_good_alignment",
+                "details": str(message),
+            }
+        )
+
+    return deficits
+
+
 def sort_deficits(deficits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     def key(item: dict[str, Any]) -> tuple[Any, ...]:
         severity = str(item.get("severity") or "low")
@@ -316,14 +406,19 @@ def sort_deficits(deficits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(deficits, key=key)
 
 
-def observe_repo(root: Path, output_dir: Path) -> dict[str, Any]:
-    reports = run_gates(root, output_dir)
+def observe_repo(
+    root: Path,
+    output_dir: Path,
+    known_good_alignment_overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    reports = run_gates(root, output_dir, known_good_alignment_overrides)
 
     traceability_report = reports.get("check_traceability", {}).get("report", {})
     decomposition_report = reports.get("check_rule_decomposition", {}).get("report", {})
     fls_report = reports.get("check_fls_proxy_coverage", {}).get("report", {})
     quality_report = reports.get("check_guideline_quality", {}).get("report", {})
     example_report = reports.get("check_guideline_examples", {}).get("report", {})
+    known_good_alignment_report = reports.get("check_known_good_alignment", {}).get("report", {})
 
     in_scope_obligations, covered_obligations = load_iso_obligation_sets(root)
     missing_obligations = sorted(in_scope_obligations - covered_obligations)
@@ -352,6 +447,7 @@ def observe_repo(root: Path, output_dir: Path) -> dict[str, Any]:
     deficits.extend(collect_fls_deficits(fls_report))
     deficits.extend(collect_quality_deficits(quality_report))
     deficits.extend(collect_example_deficits(example_report))
+    deficits.extend(collect_known_good_alignment_deficits(known_good_alignment_report))
     deficits.extend(collect_placeholder_gaps(root))
 
     sorted_deficits = sort_deficits(deficits)
@@ -375,6 +471,9 @@ def observe_repo(root: Path, output_dir: Path) -> dict[str, Any]:
         [item for item in sorted_deficits if item["type"] == "placeholder_gap"]
     )
     example_gap_count = len([item for item in sorted_deficits if item["type"] == "example_gap"])
+    known_good_alignment_gap_count = len(
+        [item for item in sorted_deficits if item["type"] == "known_good_alignment_gap"]
+    )
     traceability_gap_count = len(
         [item for item in sorted_deficits if item["type"] == "traceability_gap"]
     )
@@ -398,6 +497,10 @@ def observe_repo(root: Path, output_dir: Path) -> dict[str, Any]:
         "quality_average_score": float(quality_report.get("average_score") or 0.0),
         "placeholder_gap_count": placeholder_gap_count,
         "example_gap_count": example_gap_count,
+        "known_good_alignment_gap_count": known_good_alignment_gap_count,
+        "known_good_alignment_average": float(
+            known_good_alignment_report.get("average_alignment_score") or 0.0
+        ),
         "total_deficit_count": len(sorted_deficits),
     }
 
@@ -413,6 +516,7 @@ def observe_repo(root: Path, output_dir: Path) -> dict[str, Any]:
             metrics["quality_gap_count"] == 0
             and metrics["placeholder_gap_count"] == 0
             and metrics["example_gap_count"] == 0
+            and metrics["known_good_alignment_gap_count"] == 0
         ),
         "hard_gate_pass": metrics["runtime_failures"] == 0 and metrics["policy_failures"] == 0,
     }

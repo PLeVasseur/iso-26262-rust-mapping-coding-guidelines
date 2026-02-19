@@ -16,10 +16,12 @@ def metric_vector(observation: dict[str, Any]) -> tuple[float, ...]:
         float(observation.get("quality_gap_count", 0))
         + float(observation.get("placeholder_gap_count", 0))
         + float(observation.get("example_gap_count", 0))
+        + float(observation.get("known_good_alignment_gap_count", 0))
     )
     iso_obligation_coverage = float(observation.get("iso_obligation_coverage", 0.0))
     fls_chapter_coverage = float(observation.get("fls_chapter_coverage", 0.0))
     quality_pass_ratio = float(observation.get("quality_pass_ratio", 0.0))
+    known_good_alignment_average = float(observation.get("known_good_alignment_average", 0.0))
 
     return (
         runtime_failures,
@@ -32,6 +34,7 @@ def metric_vector(observation: dict[str, Any]) -> tuple[float, ...]:
         -iso_obligation_coverage,
         -fls_chapter_coverage,
         -quality_pass_ratio,
+        -known_good_alignment_average,
     )
 
 
@@ -43,6 +46,7 @@ def weighted_score(observation: dict[str, Any]) -> float:
     fls_span_gap_count = float(observation.get("fls_span_gap_count", 0))
     fls_chapter_coverage = float(observation.get("fls_chapter_coverage", 0.0))
     quality_pass_ratio = float(observation.get("quality_pass_ratio", 0.0))
+    known_good_alignment_average = float(observation.get("known_good_alignment_average", 0.0))
 
     fanout_ratio = 1.0
     if fanout_target_count > 0:
@@ -56,13 +60,16 @@ def weighted_score(observation: dict[str, Any]) -> float:
     runtime_failures = float(observation.get("runtime_failures", 0))
     policy_failures = float(observation.get("policy_failures", 0))
     example_gap_count = float(observation.get("example_gap_count", 0))
+    known_good_alignment_gap_count = float(observation.get("known_good_alignment_gap_count", 0))
     traceability_gap_count = float(observation.get("traceability_gap_count", 0))
 
     penalty = (50.0 * runtime_failures) + (30.0 * policy_failures)
     penalty += (10.0 * example_gap_count) + (20.0 * traceability_gap_count)
+    penalty += 5.0 * known_good_alignment_gap_count
 
     score = (1000.0 * iso_coverage) + (500.0 * fanout_ratio)
     score += (400.0 * fls_proxy) + (300.0 * quality_pass_ratio)
+    score += 250.0 * known_good_alignment_average
     score -= penalty
     return round(score, 3)
 
@@ -89,6 +96,7 @@ def regression_flags(before: dict[str, Any], after: dict[str, Any]) -> list[str]
         "quality_gap_count",
         "placeholder_gap_count",
         "example_gap_count",
+        "known_good_alignment_gap_count",
     ]
     for field in lane_gap_fields:
         before_gap = int(before.get(field, 0))
@@ -105,6 +113,11 @@ def regression_flags(before: dict[str, Any], after: dict[str, Any]) -> list[str]
     after_fls = float(after.get("fls_chapter_coverage", 0.0))
     if after_fls + 1e-9 < before_fls:
         regressions.append("fls_chapter_coverage_decreased")
+
+    before_alignment = float(before.get("known_good_alignment_average", 0.0))
+    after_alignment = float(after.get("known_good_alignment_average", 0.0))
+    if after_alignment + 1e-9 < before_alignment:
+        regressions.append("known_good_alignment_decreased")
 
     return regressions
 

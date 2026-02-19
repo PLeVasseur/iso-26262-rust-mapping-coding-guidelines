@@ -13,8 +13,12 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from autonomous_controller import recommend_handoff_status  # noqa: E402
+from autonomous_controller import (  # noqa: E402
+    alignment_overrides_for_iteration,
+    recommend_handoff_status,
+)
 from controller_actions import (  # noqa: E402
+    apply_add_alignment_citation_signals,
     apply_rewrite_rule_statement_specific,
     apply_spawn_rule_for_obligation_unit,
     generate_candidates,
@@ -149,6 +153,50 @@ class AutonomousControllerLogicTests(unittest.TestCase):
         self.assertTrue(
             all(candidate.get("bundle_signature") != signature for candidate in suppressed)
         )
+
+    def test_generate_candidates_maps_known_good_flags_to_targeted_actions(self) -> None:
+        observation = {
+            "deficits": [
+                {
+                    "deficit_id": "known-good:RG-1:citation_coverage_low",
+                    "type": "known_good_alignment_gap",
+                    "severity": "high",
+                    "guideline_id": "RG-1",
+                    "target_id": "",
+                    "obligation_unit_id": "",
+                    "details": "flag=citation_coverage_low alignment_score=0.61",
+                },
+                {
+                    "deficit_id": "known-good:RG-2:benchmark_similarity_gap",
+                    "type": "known_good_alignment_gap",
+                    "severity": "high",
+                    "guideline_id": "RG-2",
+                    "target_id": "",
+                    "obligation_unit_id": "",
+                    "details": "flag=benchmark_similarity_gap alignment_score=0.55",
+                },
+                {
+                    "deficit_id": "known-good:RG-3:granularity_too_fine",
+                    "type": "known_good_alignment_gap",
+                    "severity": "medium",
+                    "guideline_id": "RG-3",
+                    "target_id": "",
+                    "obligation_unit_id": "",
+                    "details": "flag=granularity_too_fine alignment_score=0.58",
+                },
+            ]
+        }
+
+        candidates = generate_candidates(observation, beam_width=12, max_actions_per_bundle=3)
+        action_types = {
+            str(action.get("type") or "")
+            for candidate in candidates
+            for action in candidate.get("actions", [])
+        }
+
+        self.assertIn("add_alignment_citation_signals", action_types)
+        self.assertIn("raise_benchmark_similarity", action_types)
+        self.assertIn("rebalance_alignment_granularity", action_types)
 
     def test_recommend_handoff_status(self) -> None:
         lane_status = {
@@ -390,6 +438,88 @@ class AutonomousControllerLogicTests(unittest.TestCase):
             )
             self.assertEqual(child["decomposition_parent"], parent_id)
             self.assertEqual(child["obligation_units"], [obligation])
+
+    def test_add_alignment_citation_signals_adds_markers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            guideline_id = "RG-CITATION0001"
+            write_yaml(
+                root / "data" / "todo_guidelines.yaml",
+                {
+                    "version": 1,
+                    "guidelines": [
+                        {
+                            "id": guideline_id,
+                            "rule_statement": "Use explicit safety constraints.",
+                            "amplification": "Describe deterministic enforcement.",
+                            "exceptions": "Allow only justified deviations.",
+                            "rationale": "Baseline rationale text.",
+                            "examples": {},
+                        }
+                    ],
+                },
+            )
+
+            result = apply_add_alignment_citation_signals(
+                root,
+                {
+                    "type": "add_alignment_citation_signals",
+                    "guideline_id": guideline_id,
+                },
+            )
+            self.assertTrue(result["changed"])
+
+            updated = yaml.safe_load(
+                (root / "data" / "todo_guidelines.yaml").read_text(encoding="utf-8")
+            )
+            rationale = str(updated["guidelines"][0]["rationale"])
+            self.assertIn(":cite:`ISO26262-6-2018`", rationale)
+            self.assertIn(":std:`std::result::Result`", rationale)
+
+    def test_alignment_overrides_for_iteration_interpolates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            write_yaml(
+                root / "config" / "alignment_policy.yaml",
+                {
+                    "version": 1,
+                    "thresholds": {
+                        "min_global_alignment": 0.75,
+                        "min_changed_guideline_alignment": 0.8,
+                        "granularity_outliers_allowed": 0,
+                    },
+                    "gate_mode": "warn",
+                    "controller_progression": {
+                        "enabled": True,
+                        "start_iteration": 1,
+                        "target_iteration": 5,
+                        "start_thresholds": {
+                            "min_global_alignment": 0.6,
+                            "min_changed_guideline_alignment": 0.65,
+                            "granularity_outliers_allowed": 4,
+                        },
+                        "target_thresholds": {
+                            "min_global_alignment": 0.75,
+                            "min_changed_guideline_alignment": 0.8,
+                            "granularity_outliers_allowed": 0,
+                        },
+                        "start_gate_mode": "warn",
+                        "target_gate_mode": "error",
+                    },
+                },
+            )
+
+            first = alignment_overrides_for_iteration(root, 1)
+            middle = alignment_overrides_for_iteration(root, 3)
+            final = alignment_overrides_for_iteration(root, 5)
+
+            self.assertEqual(first["min_global_alignment"], 0.6)
+            self.assertEqual(first["gate_mode"], "warn")
+            self.assertGreater(middle["min_global_alignment"], first["min_global_alignment"])
+            self.assertEqual(final["min_global_alignment"], 0.75)
+            self.assertEqual(final["min_changed_guideline_alignment"], 0.8)
+            self.assertEqual(final["granularity_outliers_allowed"], 0)
+            self.assertEqual(final["gate_mode"], "error")
 
 
 if __name__ == "__main__":
