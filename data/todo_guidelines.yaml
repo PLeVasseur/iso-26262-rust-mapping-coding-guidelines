@@ -364,15 +364,26 @@ guidelines:
 - id: RG-587CE115D9C8
   category: Required
   technical_topic: Language subset / forbidden constructs
-  rule_statement: Use only the approved Rust language subset for Table 11 and avoid
-    forbidden or high-risk constructs in safety-critical code.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-587CE115D9C8
-    (Part 6 Table 11). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-587CE115D9C8 (Part 6 Table 11) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: 'At crate scope, teams shall enforce the Table 11 Rust subset: require
+    safe abstractions, explicit `unsafe` justifications, and match-based `Result`/`Option`
+    handling; forbidden high-risk constructs must be rejected by review and automated
+    checks.'
+  amplification: 'Verify conformance with an auditable allow/deny checklist traced
+    to Table 11, check each module for prohibited patterns (such as unchecked `unwrap`
+    paths or unreviewed `unsafe` dereference), and retain test evidence that nominal
+    and fault paths are handled deterministically without unintended panic. Rust semantic
+    anchor for verification: :std:`core::ptr`.'
+  exceptions: Exceptions are permitted only through a documented deviation record;
+    reviewers must check safety impact, verify compensating controls, and approve
+    objective evidence (analysis, tests, or tool reports) before integration.
+  rationale: 'This rule preserves ISO 26262 Table 11 intent by constraining language
+    usage to analyzable constructs; review and test evidence improve repeatability,
+    while explicit checks on `unsafe` and fallible control flow reduce latent faults
+    in safety-critical crates. Evidence anchor: :std:`ISO 26262-6:2018 Table 11`.
+    Evidence anchor: :cite:`rust-reference/unsafe-keyword`. Evidence anchor: :cite:`rust-book/ch09-error-handling`.
+    ISO requirement linkage: :cite:`ISO26262-Part6-Table-11`. Rust semantic anchor
+    for verification: :std:`core::mem::MaybeUninit`. Rust language/library evidence
+    point: :std:`core::slice`.'
   iso_seeds:
   - SEED-587CE115D9C8
   scope: crate
@@ -395,17 +406,21 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-587CE115D9C8/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-587CE115D9C8/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
+      explanation: Non-compliant because it uses unchecked `unwrap`, a high-risk construct
+        that bypasses explicit error handling and can panic at runtime.
       compile_expectation: compile_pass
       expected_outcome: runtime_panic
+      verification_notes: 'Execute and confirm panic evidence: `called \`Option::unwrap()\`
+        on a \`None\` value`.'
     compliant:
       code_path: tests/guidelines/RG-587CE115D9C8/examples/compliant.rs
       doc_path: tests/guidelines/RG-587CE115D9C8/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      explanation: Compliant because all fallible inputs are handled with explicit
+        pattern matching, and behavior is verified through assertions.
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
+      verification_notes: Run as a test or executable; evidence is the passing assertions
+        for valid, out-of-range, and missing-sample branches.
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-587CE115D9C8%20candidate%20lint
   obligation_units:
