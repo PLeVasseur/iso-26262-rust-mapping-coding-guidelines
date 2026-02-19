@@ -1,0 +1,7 @@
+version: 1
+enabled: true
+max_selected_candidates: 2
+llm:
+  enabled: false
+  fallback_to_deterministic: true
+  command: []
