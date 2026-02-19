@@ -276,15 +276,24 @@ guidelines:
 - id: RG-262BBEC1A2A9
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with 5.3.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-262BBEC1A2A9
-    (Part 6 5.3). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-262BBEC1A2A9 (Part 6 5.3) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Within the crate, safety-relevant functions shall validate external
+    or computed preconditions and map every recoverable fault to explicit `Result`
+    errors, while requiring tests that check accepted inputs and rejected boundary
+    cases.
+  amplification: 'For each safety-relevant API, define input/domain contracts, implement
+    guard checks before state changes, and provide evidence through unit tests that
+    verify both success paths and error paths; review artifacts should show no unchecked
+    recoverable failure remains. Rust API constraint anchor: :std:`core::option::Option`.'
+  exceptions: An exception is permitted only through the documented deviation workflow;
+    reviewers must verify a safety impact analysis, mitigation plan, and objective
+    evidence (test results or analysis records) that residual risk is acceptable.
+  rationale: 'ISO 26262-6:2018 clause 5.3 emphasizes predictable fault handling; explicit
+    contracts plus checked error propagation improve reviewability and provide verifiable
+    evidence that defensive behavior is implemented consistently at crate scope. Evidence
+    anchor: :std:`ISO26262-6:2018:5.3`. Evidence anchor: :cite:`fls_functions_core`.
+    Evidence anchor: :cite:`fls_exceptions_and_errors_core`. ISO traceability anchor:
+    :cite:`ISO26262-Part6-5-3`. Rust language/library evidence point: :std:`std::result::Result`.
+    Rust language/library evidence point: :std:`std::error::Error`.'
   iso_seeds:
   - SEED-262BBEC1A2A9
   scope: crate
@@ -306,21 +315,22 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-262BBEC1A2A9/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-262BBEC1A2A9/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only negative
-        evidence.
+      explanation: Non-compliant because it omits defensive range checks and uses
+        `unwrap()` on a recoverable error path, causing a deterministic panic for
+        invalid input.
+      compile_expectation: compile_pass
+      expected_outcome: runtime_panic
+      verification_notes: Run the program and check that it panics when `-1` is processed.
     compliant:
       code_path: tests/guidelines/RG-262BBEC1A2A9/examples/compliant.rs
       doc_path: tests/guidelines/RG-262BBEC1A2A9/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only compliant
-        evidence.
+      explanation: Compliant because it enforces an explicit range contract and returns
+        `Result` for invalid values; assertions verify both accepted and rejected
+        cases.
+      compile_expectation: compile_pass
+      expected_outcome: assertion_pass
+      verification_notes: Run `cargo test` and verify all assertions pass, including
+        boundary rejection checks.
   obligation_units:
   - ISO26262-6-2018:5_3:clause:5_3
   fls_refs:
