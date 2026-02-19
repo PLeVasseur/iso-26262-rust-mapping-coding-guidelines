@@ -17,11 +17,15 @@ def metric_vector(observation: dict[str, Any]) -> tuple[float, ...]:
         + float(observation.get("placeholder_gap_count", 0))
         + float(observation.get("example_gap_count", 0))
         + float(observation.get("known_good_alignment_gap_count", 0))
+        + float(observation.get("duplication_gap_count", 0))
+        + float(observation.get("duplication_exception_missing_count", 0))
+        + float(observation.get("rust_signal_gap_count", 0))
     )
     iso_obligation_coverage = float(observation.get("iso_obligation_coverage", 0.0))
     fls_chapter_coverage = float(observation.get("fls_chapter_coverage", 0.0))
     quality_pass_ratio = float(observation.get("quality_pass_ratio", 0.0))
     known_good_alignment_average = float(observation.get("known_good_alignment_average", 0.0))
+    rust_signal_coverage = float(observation.get("rust_signal_coverage", 0.0))
 
     return (
         runtime_failures,
@@ -35,6 +39,7 @@ def metric_vector(observation: dict[str, Any]) -> tuple[float, ...]:
         -fls_chapter_coverage,
         -quality_pass_ratio,
         -known_good_alignment_average,
+        -rust_signal_coverage,
     )
 
 
@@ -47,6 +52,8 @@ def weighted_score(observation: dict[str, Any]) -> float:
     fls_chapter_coverage = float(observation.get("fls_chapter_coverage", 0.0))
     quality_pass_ratio = float(observation.get("quality_pass_ratio", 0.0))
     known_good_alignment_average = float(observation.get("known_good_alignment_average", 0.0))
+    rust_signal_coverage = float(observation.get("rust_signal_coverage", 0.0))
+    diversity_unique_token_ratio = float(observation.get("diversity_unique_token_ratio", 0.0))
 
     fanout_ratio = 1.0
     if fanout_target_count > 0:
@@ -61,15 +68,25 @@ def weighted_score(observation: dict[str, Any]) -> float:
     policy_failures = float(observation.get("policy_failures", 0))
     example_gap_count = float(observation.get("example_gap_count", 0))
     known_good_alignment_gap_count = float(observation.get("known_good_alignment_gap_count", 0))
+    duplication_gap_count = float(observation.get("duplication_gap_count", 0))
+    duplication_exception_missing_count = float(
+        observation.get("duplication_exception_missing_count", 0)
+    )
+    rust_signal_gap_count = float(observation.get("rust_signal_gap_count", 0))
     traceability_gap_count = float(observation.get("traceability_gap_count", 0))
 
     penalty = (50.0 * runtime_failures) + (30.0 * policy_failures)
     penalty += (10.0 * example_gap_count) + (20.0 * traceability_gap_count)
     penalty += 5.0 * known_good_alignment_gap_count
+    penalty += 8.0 * duplication_gap_count
+    penalty += 12.0 * duplication_exception_missing_count
+    penalty += 6.0 * rust_signal_gap_count
 
     score = (1000.0 * iso_coverage) + (500.0 * fanout_ratio)
     score += (400.0 * fls_proxy) + (300.0 * quality_pass_ratio)
     score += 250.0 * known_good_alignment_average
+    score += 150.0 * rust_signal_coverage
+    score += 120.0 * diversity_unique_token_ratio
     score -= penalty
     return round(score, 3)
 
@@ -97,6 +114,9 @@ def regression_flags(before: dict[str, Any], after: dict[str, Any]) -> list[str]
         "placeholder_gap_count",
         "example_gap_count",
         "known_good_alignment_gap_count",
+        "duplication_gap_count",
+        "duplication_exception_missing_count",
+        "rust_signal_gap_count",
     ]
     for field in lane_gap_fields:
         before_gap = int(before.get(field, 0))
@@ -118,6 +138,16 @@ def regression_flags(before: dict[str, Any], after: dict[str, Any]) -> list[str]
     after_alignment = float(after.get("known_good_alignment_average", 0.0))
     if after_alignment + 1e-9 < before_alignment:
         regressions.append("known_good_alignment_decreased")
+
+    before_diversity = float(before.get("diversity_unique_token_ratio", 0.0))
+    after_diversity = float(after.get("diversity_unique_token_ratio", 0.0))
+    if after_diversity + 1e-9 < before_diversity:
+        regressions.append("diversity_unique_token_ratio_decreased")
+
+    before_rust = float(before.get("rust_signal_coverage", 0.0))
+    after_rust = float(after.get("rust_signal_coverage", 0.0))
+    if after_rust + 1e-9 < before_rust:
+        regressions.append("rust_signal_coverage_decreased")
 
     return regressions
 

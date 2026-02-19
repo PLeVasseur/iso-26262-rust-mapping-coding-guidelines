@@ -19,7 +19,12 @@
     "placeholder_gap_count",
     "example_gap_count",
     "known_good_alignment_gap_count",
-    "known_good_alignment_average"
+    "known_good_alignment_average",
+    "duplication_gap_count",
+    "duplication_exception_missing_count",
+    "rust_signal_gap_count",
+    "rust_signal_coverage",
+    "diversity_unique_token_ratio"
   ],
   "properties": {
     "hard_gate_pass": {
@@ -79,6 +84,28 @@
       "minimum": 0
     },
     "known_good_alignment_average": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "duplication_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "duplication_exception_missing_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "rust_signal_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "rust_signal_coverage": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "diversity_unique_token_ratio": {
       "type": "number",
       "minimum": 0,
       "maximum": 1

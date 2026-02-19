@@ -38,6 +38,10 @@ GATE_SPECS: list[tuple[str, list[str]]] = [
         ["scripts/check_guideline_examples.py"],
     ),
     (
+        "check_guideline_diversity",
+        ["scripts/check_guideline_diversity.py"],
+    ),
+    (
         "check_known_good_alignment",
         ["scripts/check_known_good_alignment.py", "--allow-missing-benchmark"],
     ),
@@ -393,6 +397,166 @@ def collect_known_good_alignment_deficits(report: dict[str, Any]) -> list[dict[s
     return deficits
 
 
+def collect_diversity_deficits(report: dict[str, Any]) -> list[dict[str, Any]]:
+    deficits: list[dict[str, Any]] = []
+
+    for pair in report.get("near_duplicate_pairs", []):
+        if not bool(pair.get("violates_policy", False)):
+            continue
+        guideline_a = str(pair.get("guideline_a") or "").strip()
+        guideline_b = str(pair.get("guideline_b") or "").strip()
+        similarity = float(pair.get("similarity") or 0.0)
+        reason_codes = ",".join(str(item) for item in (pair.get("reason_codes") or []))
+        verification_delta = int(pair.get("verification_delta_count") or 0)
+        different_obligation = bool(pair.get("different_obligation_unit", False))
+
+        deficit_type = "duplication_gap"
+        severity = "high"
+        if (not different_obligation) or verification_delta <= 0:
+            deficit_type = "duplication_exception_missing"
+            severity = "critical"
+
+        details = (
+            f"near-duplicate similarity={similarity:.3f} "
+            f"guidelines={guideline_a},{guideline_b} reason_codes={reason_codes}"
+        )
+        deficits.append(
+            {
+                "deficit_id": f"diversity:{guideline_a}:{guideline_b}",
+                "type": deficit_type,
+                "severity": severity,
+                "guideline_id": guideline_a,
+                "target_id": "",
+                "obligation_unit_id": "",
+                "distance_to_pass": round(max(0.0, similarity - 0.5), 6),
+                "evidence_ref": "check_guideline_diversity",
+                "details": details,
+            }
+        )
+
+    for group in report.get("exact_duplicate_groups", []):
+        guideline_ids = [str(item).strip() for item in (group.get("guideline_ids") or []) if str(item).strip()]
+        if len(guideline_ids) <= 1:
+            continue
+        lead = guideline_ids[0]
+        deficits.append(
+            {
+                "deficit_id": f"diversity:exact:{lead}",
+                "type": "duplication_gap",
+                "severity": "critical",
+                "guideline_id": lead,
+                "target_id": "",
+                "obligation_unit_id": "",
+                "distance_to_pass": len(guideline_ids) - 1,
+                "evidence_ref": "check_guideline_diversity",
+                "details": f"exact-duplicate group size={len(guideline_ids)} ids={','.join(guideline_ids)}",
+            }
+        )
+
+    for cluster in report.get("lead_in_clusters", []):
+        if not bool(cluster.get("violates_policy", False)):
+            continue
+        guideline_ids = [str(item).strip() for item in (cluster.get("guideline_ids") or []) if str(item).strip()]
+        lead = guideline_ids[0] if guideline_ids else ""
+        deficits.append(
+            {
+                "deficit_id": f"diversity:lead-in:{lead}",
+                "type": "duplication_gap",
+                "severity": "medium",
+                "guideline_id": lead,
+                "target_id": "",
+                "obligation_unit_id": "",
+                "distance_to_pass": int(cluster.get("count") or 0),
+                "evidence_ref": "check_guideline_diversity",
+                "details": f"repeated lead-in count={cluster.get('count')} lead_in={cluster.get('lead_in')}",
+            }
+        )
+
+    return deficits
+
+
+def _topic_signal_key(topic: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", topic.lower()).strip("_")
+    return normalized or "misc"
+
+
+def collect_rust_signal_deficits(root: Path) -> tuple[list[dict[str, Any]], float]:
+    signals_path = root / "data/rust_signals.yaml"
+    if not signals_path.exists():
+        return [], 0.0
+
+    signals = read_yaml(signals_path) or {}
+    topic_signals = signals.get("topic_signals") or {}
+    fls_signals = signals.get("fls_signals") or {}
+    defaults = signals.get("global_defaults") or {}
+    fallback_refs = [str(item).strip() for item in (defaults.get("fallback_std_refs") or []) if str(item).strip()]
+
+    payload = read_yaml(root / "data/todo_guidelines.yaml") or {}
+    guidelines = payload.get("guidelines") or []
+    if not guidelines:
+        return [], 1.0
+
+    deficits: list[dict[str, Any]] = []
+    covered = 0
+
+    for guideline in guidelines:
+        guideline_id = str(guideline.get("id") or "").strip()
+        if not guideline_id:
+            continue
+
+        topic_key = _topic_signal_key(str(guideline.get("technical_topic") or ""))
+        expected_refs: list[str] = []
+        topic_payload = topic_signals.get(topic_key) or {}
+        for ref in topic_payload.get("std_refs", []):
+            text = str(ref).strip()
+            if text and text not in expected_refs:
+                expected_refs.append(text)
+
+        for fls_ref in guideline.get("fls_refs", []) or []:
+            lowered = str(fls_ref).strip().lower()
+            for prefix, signal_payload in fls_signals.items():
+                if prefix and prefix in lowered:
+                    for ref in signal_payload.get("std_refs", []):
+                        text = str(ref).strip()
+                        if text and text not in expected_refs:
+                            expected_refs.append(text)
+
+        if not expected_refs:
+            expected_refs = list(fallback_refs)
+
+        text_blob = "\n".join(
+            [
+                str(guideline.get("rule_statement") or ""),
+                str(guideline.get("amplification") or ""),
+                str(guideline.get("exceptions") or ""),
+                str(guideline.get("rationale") or ""),
+            ]
+        )
+        present_refs = set(re.findall(r":std:`([^`]+)`", text_blob))
+        matched = [ref for ref in expected_refs if ref in present_refs]
+
+        if matched:
+            covered += 1
+            continue
+
+        deficits.append(
+            {
+                "deficit_id": f"rust-signal:{guideline_id}",
+                "type": "rust_signal_gap",
+                "severity": "medium",
+                "guideline_id": guideline_id,
+                "target_id": "",
+                "obligation_unit_id": "",
+                "distance_to_pass": 1,
+                "evidence_ref": "data/rust_signals.yaml",
+                "details": f"missing std refs from expected set: {', '.join(expected_refs[:3])}",
+            }
+        )
+
+    coverage_ratio = covered / len(guidelines)
+    return deficits, round(coverage_ratio, 6)
+
+
 def sort_deficits(deficits: list[dict[str, Any]]) -> list[dict[str, Any]]:
     def key(item: dict[str, Any]) -> tuple[Any, ...]:
         severity = str(item.get("severity") or "low")
@@ -418,6 +582,7 @@ def observe_repo(
     fls_report = reports.get("check_fls_proxy_coverage", {}).get("report", {})
     quality_report = reports.get("check_guideline_quality", {}).get("report", {})
     example_report = reports.get("check_guideline_examples", {}).get("report", {})
+    diversity_report = reports.get("check_guideline_diversity", {}).get("report", {})
     known_good_alignment_report = reports.get("check_known_good_alignment", {}).get("report", {})
 
     in_scope_obligations, covered_obligations = load_iso_obligation_sets(root)
@@ -447,8 +612,11 @@ def observe_repo(
     deficits.extend(collect_fls_deficits(fls_report))
     deficits.extend(collect_quality_deficits(quality_report))
     deficits.extend(collect_example_deficits(example_report))
+    deficits.extend(collect_diversity_deficits(diversity_report))
     deficits.extend(collect_known_good_alignment_deficits(known_good_alignment_report))
     deficits.extend(collect_placeholder_gaps(root))
+    rust_signal_deficits, rust_signal_coverage = collect_rust_signal_deficits(root)
+    deficits.extend(rust_signal_deficits)
 
     sorted_deficits = sort_deficits(deficits)
 
@@ -474,6 +642,11 @@ def observe_repo(
     known_good_alignment_gap_count = len(
         [item for item in sorted_deficits if item["type"] == "known_good_alignment_gap"]
     )
+    duplication_gap_count = len([item for item in sorted_deficits if item["type"] == "duplication_gap"])
+    duplication_exception_missing_count = len(
+        [item for item in sorted_deficits if item["type"] == "duplication_exception_missing"]
+    )
+    rust_signal_gap_count = len([item for item in sorted_deficits if item["type"] == "rust_signal_gap"])
     traceability_gap_count = len(
         [item for item in sorted_deficits if item["type"] == "traceability_gap"]
     )
@@ -501,6 +674,13 @@ def observe_repo(
         "known_good_alignment_average": float(
             known_good_alignment_report.get("average_alignment_score") or 0.0
         ),
+        "diversity_unique_token_ratio": float(
+            (diversity_report.get("metrics") or {}).get("unique_token_ratio") or 0.0
+        ),
+        "duplication_gap_count": duplication_gap_count,
+        "duplication_exception_missing_count": duplication_exception_missing_count,
+        "rust_signal_gap_count": rust_signal_gap_count,
+        "rust_signal_coverage": rust_signal_coverage,
         "total_deficit_count": len(sorted_deficits),
     }
 
@@ -517,6 +697,9 @@ def observe_repo(
             and metrics["placeholder_gap_count"] == 0
             and metrics["example_gap_count"] == 0
             and metrics["known_good_alignment_gap_count"] == 0
+            and metrics["duplication_gap_count"] == 0
+            and metrics["duplication_exception_missing_count"] == 0
+            and metrics["rust_signal_gap_count"] == 0
         ),
         "hard_gate_pass": metrics["runtime_failures"] == 0 and metrics["policy_failures"] == 0,
     }

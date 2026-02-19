@@ -307,6 +307,19 @@ def main() -> int:
     if not runtime_errors:
         code, output = run_python_step(
             root,
+            ["scripts/build_rust_signals.py"],
+            report_path=run_dir / "build_rust_signals.step.json",
+        )
+        step_results["build_rust_signals"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code != 0:
+            runtime_errors.append("build_rust_signals failed")
+
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
             ["scripts/build_fls_inventory.py"],
             report_path=run_dir / "build_fls_inventory.step.json",
         )
@@ -524,6 +537,26 @@ def main() -> int:
         elif code == EXIT_POLICY_FAIL:
             policy_errors.append("check_guideline_quality policy failure")
 
+    guideline_diversity_report_path = run_dir / "check_guideline_diversity.report.json"
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            [
+                "scripts/check_guideline_diversity.py",
+                "--json-output",
+                str(guideline_diversity_report_path),
+            ],
+            report_path=run_dir / "check_guideline_diversity.step.json",
+        )
+        step_results["check_guideline_diversity"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code == EXIT_RUNTIME_FAIL:
+            runtime_errors.append("check_guideline_diversity runtime failure")
+        elif code == EXIT_POLICY_FAIL:
+            policy_errors.append("check_guideline_diversity policy failure")
+
     known_good_alignment_report_path = run_dir / "check_known_good_alignment.report.json"
     if not runtime_errors:
         code, output = run_python_step(
@@ -555,6 +588,8 @@ def main() -> int:
         "fls_chapter_coverage": 0.0,
         "guideline_quality_avg": 0.0,
         "known_good_alignment_avg": 0.0,
+        "diversity_unique_token_ratio": 0.0,
+        "diversity_near_duplicate_violation_count": 0.0,
     }
 
     if traceability_report_path.exists():
@@ -574,6 +609,16 @@ def main() -> int:
         guideline_quality_report = read_json(guideline_quality_report_path)
         current_metrics["guideline_quality_avg"] = float(
             guideline_quality_report.get("average_score") or 0.0
+        )
+
+    if guideline_diversity_report_path.exists():
+        guideline_diversity_report = read_json(guideline_diversity_report_path)
+        metrics = guideline_diversity_report.get("metrics") or {}
+        current_metrics["diversity_unique_token_ratio"] = float(
+            metrics.get("unique_token_ratio") or 0.0
+        )
+        current_metrics["diversity_near_duplicate_violation_count"] = float(
+            metrics.get("near_duplicate_violation_count") or 0.0
         )
 
     if known_good_alignment_report_path.exists():
@@ -641,6 +686,7 @@ def main() -> int:
         "run_id": run_id,
         "candidate_files": [
             "data/seed_topics.yaml",
+            "data/rust_signals.yaml",
             "data/fls_inventory.yaml",
             "data/fls_target_candidates.yaml",
             "data/decomposition_report.yaml",
