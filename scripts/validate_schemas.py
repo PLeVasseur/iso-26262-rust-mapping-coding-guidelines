@@ -92,6 +92,9 @@ def main() -> int:
     required_schema_files = [
         "schemas/completeness_policy.schema.json",
         "schemas/clippy_lints_catalog.schema.json",
+        "schemas/controller_blocker_report.schema.json",
+        "schemas/controller_iteration.schema.json",
+        "schemas/controller_state.schema.json",
         "schemas/decomposition_report.schema.json",
         "schemas/diffset_manifest.schema.json",
         "schemas/diffset_item.schema.json",

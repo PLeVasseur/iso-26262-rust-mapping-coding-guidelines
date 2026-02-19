@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Autonomous Controller Iteration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "session_id",
+    "iteration",
+    "before_observation",
+    "candidates",
+    "evaluations",
+    "decision",
+    "recorded_at"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "before_observation": {
+      "type": "object"
+    },
+    "after_observation": {
+      "type": "object"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "actions"],
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "rationale": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "evaluations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "accepted", "observation"],
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "accepted": {
+            "type": "boolean"
+          },
+          "observation": {
+            "type": "object"
+          },
+          "regressions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["accepted", "rejected", "stall", "stop-success", "stop-blocked", "stop-error"]
+    },
+    "selected_candidate_id": {
+      "type": "string"
+    },
+    "recorded_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

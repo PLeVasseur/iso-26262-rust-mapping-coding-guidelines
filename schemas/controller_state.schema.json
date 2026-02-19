@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Autonomous Controller State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "session_id",
+    "status",
+    "iteration",
+    "max_iterations",
+    "stall_window",
+    "consecutive_successes",
+    "no_improvement_count",
+    "best_observation",
+    "history",
+    "started_at",
+    "updated_at"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["running", "success", "blocked", "error"]
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "max_iterations": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "stall_window": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "consecutive_successes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "no_improvement_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "best_observation": {
+      "type": "object"
+    },
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["iteration", "decision", "recorded_at"],
+        "properties": {
+          "iteration": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "decision": {
+            "type": "string",
+            "enum": ["accepted", "rejected", "stall", "stop-success", "stop-blocked", "stop-error"]
+          },
+          "candidate_id": {
+            "type": "string"
+          },
+          "recorded_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}
