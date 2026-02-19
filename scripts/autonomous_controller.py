@@ -3,25 +3,38 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 from _common import (
     EXIT_POLICY_FAIL,
     EXIT_RUNTIME_FAIL,
     EXIT_SUCCESS,
+    find_registry_baseline,
+    read_json,
     read_yaml,
     repo_root,
     run_command,
+    stable_scope_fingerprint,
     utc_now,
     write_json,
+    write_yaml,
 )
 from controller_actions import apply_candidate, generate_candidates
 from controller_observe import observe_repo
-from controller_scoring import improves, metric_vector, regression_flags, weighted_score
+from controller_scoring import (
+    evaluation_sort_key,
+    improves,
+    metric_vector,
+    regression_flags,
+    weighted_score,
+)
 
 MUTABLE_PATHS = [
     "data/coverage_matrix.csv",
@@ -41,8 +54,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-iterations", type=int, default=30)
     parser.add_argument("--stall-window", type=int, default=5)
     parser.add_argument("--beam-width", type=int, default=4)
+    parser.add_argument("--max-actions-per-bundle", type=int, default=3)
     parser.add_argument("--full-eval-every", type=int, default=3)
+    parser.add_argument("--full-eval-top-k", type=int, default=2)
     parser.add_argument("--success-window", type=int, default=3)
+    parser.add_argument("--suppress-after-failures", type=int, default=2)
     parser.add_argument("--commit-each-accept", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--use-orchestrate", action="store_true")
@@ -56,6 +72,7 @@ def controller_paths(root: Path, session_id: str) -> dict[str, Path]:
     return {
         "session_root": session_root,
         "iterations_root": session_root / "iterations",
+        "handoff_root": session_root / "handoff",
         "state_json": session_root / "state.json",
         "dashboard_md": session_root / "dashboard.md",
         "final_report_md": session_root / "final_report.md",
@@ -63,12 +80,7 @@ def controller_paths(root: Path, session_id: str) -> dict[str, Path]:
     }
 
 
-def load_or_init_state(paths: dict[str, Path], args: argparse.Namespace) -> dict[str, Any]:
-    state_path = paths["state_json"]
-    if state_path.exists():
-        with state_path.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-
+def _default_state(args: argparse.Namespace, corpus_pack: str) -> dict[str, Any]:
     return {
         "version": 1,
         "session_id": args.session_id,
@@ -79,10 +91,33 @@ def load_or_init_state(paths: dict[str, Path], args: argparse.Namespace) -> dict
         "consecutive_successes": 0,
         "no_improvement_count": 0,
         "best_observation": {},
+        "last_observation": {},
         "history": [],
+        "bundle_failure_counts": {},
+        "candidate_signatures": [],
+        "last_orchestrate_run_id": "",
+        "corpus_pack": corpus_pack,
+        "handoff_recommendation": "blocked",
         "started_at": utc_now(),
         "updated_at": utc_now(),
     }
+
+
+def load_or_init_state(
+    paths: dict[str, Path], args: argparse.Namespace, corpus_pack: str
+) -> dict[str, Any]:
+    state_path = paths["state_json"]
+    if state_path.exists():
+        with state_path.open("r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        defaults = _default_state(args, corpus_pack)
+        for key, value in defaults.items():
+            if key not in state:
+                state[key] = value
+        state["corpus_pack"] = str(state.get("corpus_pack") or corpus_pack)
+        return state
+
+    return _default_state(args, corpus_pack)
 
 
 def save_state(paths: dict[str, Path], state: dict[str, Any]) -> None:
@@ -91,7 +126,11 @@ def save_state(paths: dict[str, Path], state: dict[str, Any]) -> None:
 
 
 def append_history(
-    state: dict[str, Any], iteration: int, decision: str, note: str, candidate_id: str
+    state: dict[str, Any],
+    iteration: int,
+    decision: str,
+    note: str,
+    candidate_id: str,
 ) -> None:
     state["history"].append(
         {
@@ -114,6 +153,7 @@ def write_dashboard(
         f"- iteration: {state['iteration']}/{state['max_iterations']}",
         f"- no_improvement_count: {state['no_improvement_count']}",
         f"- consecutive_successes: {state['consecutive_successes']}",
+        f"- last_orchestrate_run_id: {state.get('last_orchestrate_run_id', '')}",
         f"- iso_obligation_coverage: {observation.get('iso_obligation_coverage', 0.0)}",
         f"- target_fanout_gap_count: {observation.get('target_fanout_gap_count', 0)}",
         f"- fls_span_gap_count: {observation.get('fls_span_gap_count', 0)}",
@@ -169,24 +209,20 @@ def restore_workspace(root: Path, backup_root: Path) -> None:
                 shutil.copy2(backup, current)
 
 
-def run_orchestrate_if_enabled(
+def parse_run_id_from_output(output: str) -> str:
+    match = re.search(r"run_id=([A-Za-z0-9_-]+)", output)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def run_orchestrate(
     root: Path,
     args: argparse.Namespace,
-    iteration: int,
-    iteration_dir: Path,
+    corpus_pack: str,
+    profile: str,
+    output_path: Path,
 ) -> tuple[bool, dict[str, Any]]:
-    if not args.use_orchestrate:
-        return True, {"enabled": False}
-
-    corpus_pack = args.corpus_pack
-    if not corpus_pack:
-        registry = read_yaml(root / "config/corpus_registry.yaml") or {}
-        corpus_pack = str(registry.get("default_corpus_pack") or "").strip()
-
-    profile = args.profile
-    if args.full_eval_every > 0 and iteration % args.full_eval_every == 0:
-        profile = "full"
-
     command = [
         sys.executable,
         "scripts/orchestrate.py",
@@ -201,57 +237,85 @@ def run_orchestrate_if_enabled(
         command.append("--allow-bootstrap")
 
     completed = run_command(command, cwd=root)
+    combined_output = f"{completed.stdout}\n{completed.stderr}"
+    run_id = parse_run_id_from_output(combined_output)
+
     report = {
-        "enabled": True,
         "command": " ".join(command),
         "return_code": completed.returncode,
         "stdout": completed.stdout,
         "stderr": completed.stderr,
+        "run_id": run_id,
+        "profile": profile,
     }
-    write_json(iteration_dir / "orchestrate.json", report)
+    write_json(output_path, report)
     return completed.returncode == 0, report
 
 
 def evaluate_candidate(
     root: Path,
+    args: argparse.Namespace,
+    corpus_pack: str,
     iteration_dir: Path,
     before_observation: dict[str, Any],
     candidate: dict[str, Any],
+    evaluation_profile: str,
 ) -> dict[str, Any]:
     candidate_id = str(candidate.get("candidate_id") or "unknown")
-    candidate_dir = iteration_dir / f"candidate_{candidate_id}"
+    candidate_dir = iteration_dir / f"candidate_{candidate_id}_{evaluation_profile}"
     candidate_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="controller-candidate-") as temp_dir:
         backup_root = Path(temp_dir)
         snapshot_workspace(root, backup_root)
+
         apply_result = apply_candidate(root, candidate)
         write_json(candidate_dir / "apply_result.json", apply_result)
-
         if not apply_result.get("ok", False):
             restore_workspace(root, backup_root)
             return {
                 "candidate_id": candidate_id,
+                "bundle_signature": str(candidate.get("bundle_signature") or ""),
                 "accepted": False,
                 "observation": before_observation,
                 "regressions": ["apply_candidate_failed"],
                 "note": "candidate apply or regeneration failed",
                 "weighted_score": weighted_score(before_observation),
+                "metric_vector": metric_vector(before_observation),
+                "evaluation_profile": evaluation_profile,
+                "mutation_footprint_estimate": int(
+                    candidate.get("mutation_footprint_estimate") or 0
+                ),
             }
+
+        orchestrate_ok = True
+        orchestrate_report: dict[str, Any] = {"enabled": False}
+        if args.use_orchestrate:
+            orchestrate_ok, orchestrate_report = run_orchestrate(
+                root,
+                args,
+                corpus_pack,
+                evaluation_profile,
+                candidate_dir / "orchestrate.json",
+            )
 
         after_observation = observe_repo(root, candidate_dir / "observation")
         regressions = regression_flags(before_observation, after_observation)
         improved = improves(before_observation, after_observation)
-        accepted = improved and not regressions
+        accepted = orchestrate_ok and improved and not regressions
 
         evaluation = {
             "candidate_id": candidate_id,
+            "bundle_signature": str(candidate.get("bundle_signature") or ""),
             "accepted": accepted,
             "observation": after_observation,
             "regressions": regressions,
             "note": "improved" if accepted else "not improved or regressed",
             "weighted_score": weighted_score(after_observation),
             "metric_vector": metric_vector(after_observation),
+            "evaluation_profile": evaluation_profile,
+            "mutation_footprint_estimate": int(candidate.get("mutation_footprint_estimate") or 0),
+            "orchestrate_run_id": str(orchestrate_report.get("run_id") or ""),
         }
 
         write_json(candidate_dir / "evaluation.json", evaluation)
@@ -310,8 +374,269 @@ def write_blocker_report(
     write_json(paths["blocker_json"], payload)
 
 
+def write_iteration_record(
+    iteration_dir: Path,
+    session_id: str,
+    iteration: int,
+    before_observation: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    evaluations: list[dict[str, Any]],
+    decision: str,
+    selected_candidate_id: str,
+    after_observation: dict[str, Any] | None = None,
+) -> None:
+    payload = {
+        "version": 1,
+        "session_id": session_id,
+        "iteration": iteration,
+        "before_observation": before_observation,
+        "after_observation": after_observation or {},
+        "candidates": candidates,
+        "evaluations": evaluations,
+        "decision": decision,
+        "selected_candidate_id": selected_candidate_id,
+        "recorded_at": utc_now(),
+    }
+    write_json(iteration_dir / "iteration.json", payload)
+
+
+def validate_payload_with_schema(root: Path, schema_rel_path: str, payload: Any) -> list[str]:
+    schema = read_json(root / schema_rel_path)
+    validator = Draft202012Validator(schema)
+    return [error.message for error in validator.iter_errors(payload)]
+
+
+def lane_status_payload(observation: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "hard_gate_pass": bool(observation.get("hard_gate_pass", False)),
+        "iso_lane_pass": bool(observation.get("iso_lane_pass", False)),
+        "decomposition_lane_pass": bool(observation.get("decomposition_lane_pass", False)),
+        "fls_lane_pass": bool(observation.get("fls_lane_pass", False)),
+        "quality_lane_pass": bool(observation.get("quality_lane_pass", False)),
+        "runtime_failures": int(observation.get("runtime_failures", 0)),
+        "policy_failures": int(observation.get("policy_failures", 0)),
+        "iso_obligation_coverage": float(observation.get("iso_obligation_coverage", 0.0)),
+        "target_fanout_gap_count": int(observation.get("target_fanout_gap_count", 0)),
+        "fls_span_gap_count": int(observation.get("fls_span_gap_count", 0)),
+        "fls_chapter_gap_count": int(observation.get("fls_chapter_gap_count", 0)),
+        "quality_gap_count": int(observation.get("quality_gap_count", 0)),
+        "placeholder_gap_count": int(observation.get("placeholder_gap_count", 0)),
+        "example_gap_count": int(observation.get("example_gap_count", 0)),
+    }
+
+
+def recommend_handoff_status(
+    lane_status: dict[str, Any],
+    consecutive_successes: int,
+    success_window: int,
+    has_run_id: bool,
+) -> tuple[str, str]:
+    if not bool(lane_status.get("hard_gate_pass", False)):
+        return "blocked", "hard gates failing"
+
+    lane_keys = ["iso_lane_pass", "decomposition_lane_pass", "fls_lane_pass", "quality_lane_pass"]
+    if not all(bool(lane_status.get(key, False)) for key in lane_keys):
+        return "blocked", "one or more quality lanes failing"
+
+    if consecutive_successes < success_window:
+        return "needs_review", "success window not reached"
+
+    if not has_run_id:
+        return "needs_review", "no accepted orchestration run id available"
+
+    return "ready", "all lanes pass and convergence window satisfied"
+
+
+def delta_summary_payload(
+    root: Path,
+    corpus_pack: str,
+    mode: str,
+    current_run_id: str,
+    observation: dict[str, Any],
+) -> dict[str, Any]:
+    run_registry = read_yaml(root / "data/run_registry.yaml") or {"accepted_runs": []}
+    baseline_entry = find_registry_baseline(run_registry, corpus_pack, mode)
+    baseline_run_id = str((baseline_entry or {}).get("accepted_run_id") or "")
+
+    current_metrics = {
+        "iso_obligation_coverage": float(observation.get("iso_obligation_coverage", 0.0)),
+        "target_fanout_gap_count": int(observation.get("target_fanout_gap_count", 0)),
+        "fls_span_gap_count": int(observation.get("fls_span_gap_count", 0)),
+        "fls_chapter_coverage": float(observation.get("fls_chapter_coverage", 0.0)),
+        "quality_gap_count": int(observation.get("quality_gap_count", 0)),
+        "placeholder_gap_count": int(observation.get("placeholder_gap_count", 0)),
+    }
+
+    baseline_metrics = {}
+    deltas = {}
+    if baseline_run_id:
+        baseline_metrics_path = root / ".cache" / "ops" / "runs" / baseline_run_id / "metrics.json"
+        if baseline_metrics_path.exists():
+            baseline_metrics = read_json(baseline_metrics_path)
+            for key, value in current_metrics.items():
+                baseline_value = baseline_metrics.get(key)
+                if isinstance(value, int):
+                    deltas[key] = int(value) - int(baseline_value or 0)
+                else:
+                    deltas[key] = round(float(value) - float(baseline_value or 0.0), 6)
+
+    return {
+        "version": 1,
+        "corpus_pack": corpus_pack,
+        "mode": mode,
+        "baseline_run_id": baseline_run_id,
+        "current_run_id": current_run_id,
+        "current_metrics": current_metrics,
+        "baseline_metrics": baseline_metrics,
+        "deltas": deltas,
+        "generated_at": utc_now(),
+    }
+
+
+def load_scope_fingerprint(root: Path, run_id: str) -> str:
+    if run_id:
+        metrics_path = root / ".cache" / "ops" / "runs" / run_id / "metrics.json"
+        if metrics_path.exists():
+            metrics = read_json(metrics_path)
+            value = str(metrics.get("scope_fingerprint") or "").strip()
+            if value:
+                return value
+
+    scope_payload = read_yaml(root / "data/target_scope.yaml") or {}
+    targets = scope_payload.get("in_scope_target_ids", [])
+    return stable_scope_fingerprint([str(item) for item in targets])
+
+
+def write_handoff_package(
+    root: Path,
+    paths: dict[str, Path],
+    state: dict[str, Any],
+    observation: dict[str, Any],
+    args: argparse.Namespace,
+    corpus_pack: str,
+) -> tuple[str, list[str]]:
+    handoff_root = paths["handoff_root"]
+    handoff_root.mkdir(parents=True, exist_ok=True)
+
+    run_id = str(state.get("last_orchestrate_run_id") or "")
+    lane_status = lane_status_payload(observation)
+    write_json(handoff_root / "lane_status.json", lane_status)
+
+    delta_summary = delta_summary_payload(root, corpus_pack, args.mode, run_id, observation)
+    write_json(handoff_root / "delta_summary.json", delta_summary)
+
+    has_run_id = bool(run_id)
+    recommendation, reason = recommend_handoff_status(
+        lane_status,
+        int(state.get("consecutive_successes", 0)),
+        args.success_window,
+        has_run_id,
+    )
+
+    handoff_payload = {
+        "version": 1,
+        "session_id": state["session_id"],
+        "status": state["status"],
+        "recommendation": recommendation,
+        "reason": reason,
+        "mode": args.mode,
+        "corpus_pack": corpus_pack,
+        "run_id": run_id,
+        "consecutive_successes": int(state.get("consecutive_successes", 0)),
+        "required_success_window": args.success_window,
+        "lane_status": lane_status,
+        "delta_summary": delta_summary,
+        "generated_at": utc_now(),
+    }
+
+    validation_errors: list[str] = []
+    for schema_rel, payload in [
+        ("schemas/controller_lane_status.schema.json", lane_status),
+        ("schemas/controller_delta_summary.schema.json", delta_summary),
+        ("schemas/controller_handoff.schema.json", handoff_payload),
+    ]:
+        validation_errors.extend(
+            f"{schema_rel}: {message}"
+            for message in validate_payload_with_schema(root, schema_rel, payload)
+        )
+
+    if validation_errors and recommendation == "ready":
+        recommendation = "needs_review"
+        reason = "handoff schema validation failed"
+        handoff_payload["recommendation"] = recommendation
+        handoff_payload["reason"] = reason
+
+    handoff_payload["validation_errors"] = validation_errors
+    write_json(handoff_root / "handoff.json", handoff_payload)
+
+    lines = [
+        f"# Controller Handoff ({state['session_id']})",
+        "",
+        f"- recommendation: {recommendation}",
+        f"- reason: {reason}",
+        f"- mode: {args.mode}",
+        f"- corpus_pack: {corpus_pack}",
+        f"- run_id: {run_id or 'none'}",
+        f"- consecutive_successes: {state.get('consecutive_successes', 0)}",
+        f"- required_success_window: {args.success_window}",
+        f"- iso_lane_pass: {lane_status['iso_lane_pass']}",
+        f"- decomposition_lane_pass: {lane_status['decomposition_lane_pass']}",
+        f"- fls_lane_pass: {lane_status['fls_lane_pass']}",
+        f"- quality_lane_pass: {lane_status['quality_lane_pass']}",
+    ]
+    if validation_errors:
+        lines.append("")
+        lines.append("## Validation Errors")
+        lines.extend(f"- {message}" for message in validation_errors)
+
+    (handoff_root / "handoff.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    run_registry_candidate_path = handoff_root / "run_registry_candidate.yaml"
+    if recommendation == "ready" and run_id:
+        candidate = {
+            "version": 1,
+            "corpus_pack_id": corpus_pack,
+            "mode": args.mode,
+            "accepted_run_id": run_id,
+            "scope_fingerprint": load_scope_fingerprint(root, run_id),
+            "accepted_at": utc_now(),
+            "accepted_by": f"autonomous-controller:{state['session_id']}",
+        }
+        candidate_errors = validate_payload_with_schema(
+            root,
+            "schemas/controller_run_registry_candidate.schema.json",
+            candidate,
+        )
+        if candidate_errors:
+            validation_errors.extend(
+                f"schemas/controller_run_registry_candidate.schema.json: {message}"
+                for message in candidate_errors
+            )
+            if recommendation == "ready":
+                recommendation = "needs_review"
+                handoff_payload["recommendation"] = recommendation
+                handoff_payload["reason"] = "run-registry candidate validation failed"
+                handoff_payload["validation_errors"] = validation_errors
+                write_json(handoff_root / "handoff.json", handoff_payload)
+                if run_registry_candidate_path.exists():
+                    run_registry_candidate_path.unlink()
+            else:
+                if run_registry_candidate_path.exists():
+                    run_registry_candidate_path.unlink()
+        else:
+            write_yaml(run_registry_candidate_path, candidate)
+    elif run_registry_candidate_path.exists():
+        run_registry_candidate_path.unlink()
+
+    return recommendation, validation_errors
+
+
 def write_final_report(
-    paths: dict[str, Path], state: dict[str, Any], observation: dict[str, Any]
+    paths: dict[str, Path],
+    state: dict[str, Any],
+    observation: dict[str, Any],
+    handoff_recommendation: str,
+    handoff_validation_errors: list[str],
 ) -> None:
     lines = [
         f"# Autonomous Controller Final Report ({state['session_id']})",
@@ -320,6 +645,8 @@ def write_final_report(
         f"- iteration: {state['iteration']}",
         f"- no_improvement_count: {state['no_improvement_count']}",
         f"- consecutive_successes: {state['consecutive_successes']}",
+        f"- last_orchestrate_run_id: {state.get('last_orchestrate_run_id', '')}",
+        f"- handoff_recommendation: {handoff_recommendation}",
         f"- iso_obligation_coverage: {observation.get('iso_obligation_coverage', 0.0)}",
         f"- target_fanout_gap_count: {observation.get('target_fanout_gap_count', 0)}",
         f"- fls_span_gap_count: {observation.get('fls_span_gap_count', 0)}",
@@ -332,52 +659,126 @@ def write_final_report(
         "## Reproducible Commands",
         f"- python scripts/autonomous_controller.py --session-id {state['session_id']}",
     ]
+
+    if handoff_validation_errors:
+        lines.append("")
+        lines.append("## Handoff Validation Errors")
+        lines.extend(f"- {message}" for message in handoff_validation_errors)
+
     paths["final_report_md"].parent.mkdir(parents=True, exist_ok=True)
     paths["final_report_md"].write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def resolve_corpus_pack(root: Path, requested: str | None) -> str:
+    if requested and requested.strip():
+        return requested.strip()
+    registry = read_yaml(root / "config/corpus_registry.yaml") or {}
+    return str(registry.get("default_corpus_pack") or "iso-core-part6").strip()
+
+
+def suppressed_signatures_from_state(state: dict[str, Any], threshold: int) -> set[str]:
+    failure_counts = state.get("bundle_failure_counts") or {}
+    return {
+        str(signature)
+        for signature, count in failure_counts.items()
+        if int(count) >= threshold and str(signature)
+    }
+
+
+def apply_failure_feedback(state: dict[str, Any], evaluations: list[dict[str, Any]]) -> None:
+    failure_counts = state.get("bundle_failure_counts") or {}
+    for evaluation in evaluations:
+        signature = str(evaluation.get("bundle_signature") or "")
+        if not signature:
+            continue
+        state_signatures = state.get("candidate_signatures") or []
+        if signature not in state_signatures:
+            state_signatures.append(signature)
+            state["candidate_signatures"] = state_signatures
+
+        if bool(evaluation.get("accepted", False)):
+            failure_counts[signature] = 0
+        else:
+            failure_counts[signature] = int(failure_counts.get(signature, 0)) + 1
+
+    state["bundle_failure_counts"] = failure_counts
 
 
 def main() -> int:
     args = parse_args()
     root = repo_root()
+    corpus_pack = resolve_corpus_pack(root, args.corpus_pack)
     paths = controller_paths(root, args.session_id)
     paths["iterations_root"].mkdir(parents=True, exist_ok=True)
 
-    state = load_or_init_state(paths, args)
+    state = load_or_init_state(paths, args, corpus_pack)
     save_state(paths, state)
 
     attempted_candidates: list[dict[str, Any]] = []
+    handoff_recommendation = str(state.get("handoff_recommendation") or "blocked")
+    handoff_validation_errors: list[str] = []
 
-    while state["iteration"] < state["max_iterations"]:
+    while int(state["iteration"]) < int(state["max_iterations"]):
         iteration = int(state["iteration"]) + 1
         iteration_dir = paths["iterations_root"] / f"{iteration:03d}"
         iteration_dir.mkdir(parents=True, exist_ok=True)
 
-        orchestrate_ok, orchestrate_report = run_orchestrate_if_enabled(
-            root, args, iteration, iteration_dir
-        )
-        if not orchestrate_ok:
-            state["status"] = "error"
-            append_history(
-                state,
-                iteration,
-                "stop-error",
-                "orchestrate failed before observation",
-                "",
-            )
-            save_state(paths, state)
-            write_blocker_report(
-                paths,
-                state,
-                "orchestrate failed",
-                state.get("best_observation") or {},
-                attempted_candidates,
-            )
-            write_final_report(paths, state, state.get("best_observation") or {})
-            print("[controller] stopped: orchestrate failed")
-            return EXIT_RUNTIME_FAIL
+        pre_profile = args.profile
+        if args.full_eval_every > 0 and iteration % args.full_eval_every == 0:
+            pre_profile = "full"
 
-        write_json(iteration_dir / "orchestrate.summary.json", orchestrate_report)
+        if args.use_orchestrate:
+            orchestrate_ok, orchestrate_report = run_orchestrate(
+                root,
+                args,
+                corpus_pack,
+                pre_profile,
+                iteration_dir / "orchestrate.preobserve.json",
+            )
+            if str(orchestrate_report.get("run_id") or ""):
+                state["last_orchestrate_run_id"] = str(orchestrate_report.get("run_id") or "")
+            if not orchestrate_ok:
+                state["status"] = "error"
+                append_history(
+                    state,
+                    iteration,
+                    "stop-error",
+                    "orchestrate failed before observation",
+                    "",
+                )
+                save_state(paths, state)
+                best_observation = state.get("best_observation") or {}
+                if not best_observation:
+                    best_observation = state.get("last_observation") or {}
+                write_blocker_report(
+                    paths,
+                    state,
+                    "orchestrate failed",
+                    best_observation,
+                    attempted_candidates,
+                )
+                handoff_recommendation, handoff_validation_errors = write_handoff_package(
+                    root,
+                    paths,
+                    state,
+                    best_observation,
+                    args,
+                    corpus_pack,
+                )
+                state["handoff_recommendation"] = handoff_recommendation
+                save_state(paths, state)
+                write_final_report(
+                    paths,
+                    state,
+                    best_observation,
+                    handoff_recommendation,
+                    handoff_validation_errors,
+                )
+                print("[controller] stopped: orchestrate failed")
+                return EXIT_RUNTIME_FAIL
+
         before_observation = observe_repo(root, iteration_dir / "before")
+        state["last_observation"] = before_observation
         write_json(iteration_dir / "observe.json", before_observation)
         write_dashboard(paths, state, before_observation)
 
@@ -386,27 +787,75 @@ def main() -> int:
         else:
             state["consecutive_successes"] = 0
 
-        if state["consecutive_successes"] >= args.success_window:
+        if int(state["consecutive_successes"]) >= args.success_window:
             state["status"] = "success"
             state["iteration"] = iteration
             state["best_observation"] = before_observation
             append_history(state, iteration, "stop-success", "success window reached", "")
+            handoff_recommendation, handoff_validation_errors = write_handoff_package(
+                root,
+                paths,
+                state,
+                before_observation,
+                args,
+                corpus_pack,
+            )
+            state["handoff_recommendation"] = handoff_recommendation
             save_state(paths, state)
-            write_final_report(paths, state, before_observation)
+            write_final_report(
+                paths,
+                state,
+                before_observation,
+                handoff_recommendation,
+                handoff_validation_errors,
+            )
             print("[controller] success: convergence criteria satisfied")
             return EXIT_SUCCESS
 
-        candidates = generate_candidates(before_observation, args.beam_width)
+        suppressed_signatures = suppressed_signatures_from_state(
+            state,
+            args.suppress_after_failures,
+        )
+        historical_signatures = {
+            str(signature) for signature in state.get("candidate_signatures", []) if str(signature)
+        }
+
+        candidates = generate_candidates(
+            before_observation,
+            args.beam_width,
+            max_actions_per_bundle=args.max_actions_per_bundle,
+            suppressed_signatures=suppressed_signatures,
+            historical_signatures=historical_signatures,
+        )
         write_json(iteration_dir / "candidates.json", {"candidates": candidates})
 
         if not candidates:
             state["iteration"] = iteration
             state["no_improvement_count"] = int(state["no_improvement_count"]) + 1
             append_history(state, iteration, "stall", "no candidate actions generated", "")
+            write_iteration_record(
+                iteration_dir,
+                state["session_id"],
+                iteration,
+                before_observation,
+                candidates,
+                [],
+                "stall",
+                "",
+            )
             save_state(paths, state)
 
-            if state["no_improvement_count"] >= state["stall_window"]:
+            if int(state["no_improvement_count"]) >= int(state["stall_window"]):
                 state["status"] = "blocked"
+                handoff_recommendation, handoff_validation_errors = write_handoff_package(
+                    root,
+                    paths,
+                    state,
+                    before_observation,
+                    args,
+                    corpus_pack,
+                )
+                state["handoff_recommendation"] = handoff_recommendation
                 save_state(paths, state)
                 write_blocker_report(
                     paths,
@@ -415,59 +864,142 @@ def main() -> int:
                     before_observation,
                     attempted_candidates,
                 )
-                write_final_report(paths, state, before_observation)
+                write_final_report(
+                    paths,
+                    state,
+                    before_observation,
+                    handoff_recommendation,
+                    handoff_validation_errors,
+                )
                 print("[controller] blocked: no candidate actions")
                 return EXIT_POLICY_FAIL
             continue
 
-        evaluations = []
+        candidate_map = {
+            str(candidate.get("candidate_id") or ""): candidate for candidate in candidates
+        }
+
+        quick_evaluations: list[dict[str, Any]] = []
         for candidate in candidates:
             if args.dry_run:
-                evaluations.append(
+                quick_evaluations.append(
                     {
                         "candidate_id": candidate.get("candidate_id"),
+                        "bundle_signature": candidate.get("bundle_signature"),
                         "accepted": False,
                         "observation": before_observation,
                         "regressions": ["dry-run"],
                         "note": "dry-run candidate skipped",
                         "weighted_score": weighted_score(before_observation),
                         "metric_vector": metric_vector(before_observation),
+                        "evaluation_profile": "quick",
+                        "mutation_footprint_estimate": int(
+                            candidate.get("mutation_footprint_estimate") or 0
+                        ),
                     }
                 )
                 continue
 
-            evaluation = evaluate_candidate(root, iteration_dir, before_observation, candidate)
-            evaluations.append(evaluation)
+            evaluation = evaluate_candidate(
+                root,
+                args,
+                corpus_pack,
+                iteration_dir,
+                before_observation,
+                candidate,
+                "quick",
+            )
+            quick_evaluations.append(evaluation)
             attempted_candidates.append(
                 {
                     "iteration": iteration,
                     "candidate_id": evaluation["candidate_id"],
+                    "bundle_signature": evaluation.get("bundle_signature", ""),
                     "accepted": evaluation["accepted"],
+                    "profile": "quick",
                     "note": evaluation.get("note", ""),
                 }
             )
 
-        write_json(iteration_dir / "evaluation.json", {"evaluations": evaluations})
+        quick_passes = [item for item in quick_evaluations if bool(item.get("accepted", False))]
+        quick_passes.sort(key=lambda item: evaluation_sort_key(before_observation, item))
 
-        accepted_candidates = [item for item in evaluations if item.get("accepted", False)]
-        selected: dict[str, Any] | None = None
-        if accepted_candidates:
-            accepted_candidates.sort(
-                key=lambda item: (
-                    tuple(item.get("metric_vector") or metric_vector(before_observation)),
-                    -float(item.get("weighted_score") or 0.0),
+        full_evaluations: list[dict[str, Any]] = []
+        if not args.dry_run and quick_passes:
+            for quick_eval in quick_passes[: max(1, args.full_eval_top_k)]:
+                candidate_id = str(quick_eval.get("candidate_id") or "")
+                candidate = candidate_map.get(candidate_id)
+                if candidate is None:
+                    continue
+                full_eval = evaluate_candidate(
+                    root,
+                    args,
+                    corpus_pack,
+                    iteration_dir,
+                    before_observation,
+                    candidate,
+                    "full",
                 )
-            )
-            selected = accepted_candidates[0]
+                full_eval["quick_reference"] = {
+                    "accepted": bool(quick_eval.get("accepted", False)),
+                    "metric_vector": quick_eval.get("metric_vector"),
+                    "weighted_score": quick_eval.get("weighted_score"),
+                }
+                full_evaluations.append(full_eval)
+                attempted_candidates.append(
+                    {
+                        "iteration": iteration,
+                        "candidate_id": full_eval["candidate_id"],
+                        "bundle_signature": full_eval.get("bundle_signature", ""),
+                        "accepted": full_eval["accepted"],
+                        "profile": "full",
+                        "note": full_eval.get("note", ""),
+                    }
+                )
 
-        if selected is None:
+        final_evaluations = full_evaluations if full_evaluations else quick_evaluations
+        write_json(
+            iteration_dir / "evaluation.json",
+            {
+                "quick": quick_evaluations,
+                "full": full_evaluations,
+                "final": final_evaluations,
+            },
+        )
+
+        apply_failure_feedback(state, final_evaluations)
+        accepted_candidates = [
+            item for item in final_evaluations if bool(item.get("accepted", False))
+        ]
+        accepted_candidates.sort(key=lambda item: evaluation_sort_key(before_observation, item))
+
+        if not accepted_candidates:
             state["iteration"] = iteration
             state["no_improvement_count"] = int(state["no_improvement_count"]) + 1
             append_history(state, iteration, "rejected", "no acceptable candidate", "")
+            write_iteration_record(
+                iteration_dir,
+                state["session_id"],
+                iteration,
+                before_observation,
+                candidates,
+                final_evaluations,
+                "rejected",
+                "",
+            )
             save_state(paths, state)
 
-            if state["no_improvement_count"] >= state["stall_window"]:
+            if int(state["no_improvement_count"]) >= int(state["stall_window"]):
                 state["status"] = "blocked"
+                handoff_recommendation, handoff_validation_errors = write_handoff_package(
+                    root,
+                    paths,
+                    state,
+                    before_observation,
+                    args,
+                    corpus_pack,
+                )
+                state["handoff_recommendation"] = handoff_recommendation
                 save_state(paths, state)
                 write_blocker_report(
                     paths,
@@ -476,29 +1008,47 @@ def main() -> int:
                     before_observation,
                     attempted_candidates,
                 )
-                write_final_report(paths, state, before_observation)
+                write_final_report(
+                    paths,
+                    state,
+                    before_observation,
+                    handoff_recommendation,
+                    handoff_validation_errors,
+                )
                 print("[controller] blocked: no acceptable candidate")
                 return EXIT_POLICY_FAIL
             continue
 
+        selected = accepted_candidates[0]
         selected_candidate_id = str(selected.get("candidate_id") or "")
-        selected_candidate = next(
-            candidate
-            for candidate in candidates
-            if str(candidate.get("candidate_id") or "") == selected_candidate_id
-        )
+        selected_candidate = candidate_map[selected_candidate_id]
+        selected_profile = str(selected.get("evaluation_profile") or "quick")
 
         with tempfile.TemporaryDirectory(prefix="controller-accept-") as temp_dir:
             backup_root = Path(temp_dir)
             snapshot_workspace(root, backup_root)
+
             apply_result = apply_candidate(root, selected_candidate)
             write_json(iteration_dir / "accepted_apply_result.json", apply_result)
 
+            accept_orchestrate_ok = True
+            accept_orchestrate_report = {"enabled": False}
+            if args.use_orchestrate:
+                accept_orchestrate_ok, accept_orchestrate_report = run_orchestrate(
+                    root,
+                    args,
+                    corpus_pack,
+                    selected_profile,
+                    iteration_dir / "orchestrate.accept.json",
+                )
+                run_id = str(accept_orchestrate_report.get("run_id") or "")
+                if run_id:
+                    state["last_orchestrate_run_id"] = run_id
+
             after_observation = observe_repo(root, iteration_dir / "after")
             regressions = regression_flags(before_observation, after_observation)
-            accepted = bool(apply_result.get("ok", False)) and improves(
-                before_observation, after_observation
-            )
+            accepted = bool(apply_result.get("ok", False)) and accept_orchestrate_ok
+            accepted = accepted and improves(before_observation, after_observation)
             accepted = accepted and not regressions
 
             if accepted and args.commit_each_accept and not args.dry_run:
@@ -526,10 +1076,36 @@ def main() -> int:
                     "selected candidate failed acceptance check",
                     selected_candidate_id,
                 )
+
+                failure_counts = state.get("bundle_failure_counts") or {}
+                signature = str(selected.get("bundle_signature") or "")
+                if signature:
+                    failure_counts[signature] = int(failure_counts.get(signature, 0)) + 1
+                state["bundle_failure_counts"] = failure_counts
+
+                write_iteration_record(
+                    iteration_dir,
+                    state["session_id"],
+                    iteration,
+                    before_observation,
+                    candidates,
+                    final_evaluations,
+                    "rejected",
+                    selected_candidate_id,
+                )
                 save_state(paths, state)
 
-                if state["no_improvement_count"] >= state["stall_window"]:
+                if int(state["no_improvement_count"]) >= int(state["stall_window"]):
                     state["status"] = "blocked"
+                    handoff_recommendation, handoff_validation_errors = write_handoff_package(
+                        root,
+                        paths,
+                        state,
+                        before_observation,
+                        args,
+                        corpus_pack,
+                    )
+                    state["handoff_recommendation"] = handoff_recommendation
                     save_state(paths, state)
                     write_blocker_report(
                         paths,
@@ -538,7 +1114,13 @@ def main() -> int:
                         before_observation,
                         attempted_candidates,
                     )
-                    write_final_report(paths, state, before_observation)
+                    write_final_report(
+                        paths,
+                        state,
+                        before_observation,
+                        handoff_recommendation,
+                        handoff_validation_errors,
+                    )
                     print("[controller] blocked: selected candidate failed")
                     return EXIT_POLICY_FAIL
                 continue
@@ -556,11 +1138,24 @@ def main() -> int:
             "candidate accepted",
             selected_candidate_id,
         )
+        write_iteration_record(
+            iteration_dir,
+            state["session_id"],
+            iteration,
+            before_observation,
+            candidates,
+            final_evaluations,
+            "accepted",
+            selected_candidate_id,
+            after_observation,
+        )
         save_state(paths, state)
 
     state["status"] = "blocked"
     save_state(paths, state)
     observation = state.get("best_observation") or {}
+    if not observation:
+        observation = state.get("last_observation") or {}
     write_blocker_report(
         paths,
         state,
@@ -568,7 +1163,23 @@ def main() -> int:
         observation,
         attempted_candidates,
     )
-    write_final_report(paths, state, observation)
+    handoff_recommendation, handoff_validation_errors = write_handoff_package(
+        root,
+        paths,
+        state,
+        observation,
+        args,
+        corpus_pack,
+    )
+    state["handoff_recommendation"] = handoff_recommendation
+    save_state(paths, state)
+    write_final_report(
+        paths,
+        state,
+        observation,
+        handoff_recommendation,
+        handoff_validation_errors,
+    )
     print("[controller] blocked: max iterations reached")
     return EXIT_POLICY_FAIL
 

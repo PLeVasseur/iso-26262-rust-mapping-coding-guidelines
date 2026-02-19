@@ -100,11 +100,21 @@ Controller artifacts are written under:
 - `.cache/controller/<session_id>/state.json`
 - `.cache/controller/<session_id>/dashboard.md`
 - `.cache/controller/<session_id>/iterations/<n>/`
+- `.cache/controller/<session_id>/handoff/handoff.json`
+- `.cache/controller/<session_id>/handoff/handoff.md`
+- `.cache/controller/<session_id>/handoff/lane_status.json`
+- `.cache/controller/<session_id>/handoff/delta_summary.json`
 
 Optional extractor-backed orchestration per iteration:
 
 ```bash
 uv run python scripts/autonomous_controller.py --session-id run-001 --use-orchestrate --allow-bootstrap
+```
+
+Tune beam bundle search and full-pass reranking:
+
+```bash
+uv run python scripts/autonomous_controller.py --session-id run-001 --beam-width 6 --max-actions-per-bundle 3 --full-eval-top-k 2
 ```
 
 Guideline v3 field semantics are documented in `docs/guideline-record-spec.md`.
