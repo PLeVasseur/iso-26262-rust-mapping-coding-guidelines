@@ -87,7 +87,27 @@ Use diffsets for focused, itemized review between runs.
 
 See `docs/diffset-review.md` for full command/reference details.
 
-Guideline v2 field semantics are documented in `docs/guideline-record-spec.md`.
+## Autonomous Convergence Controller
+
+Run iterative autonomous improvements using the controller loop:
+
+```bash
+uv run python scripts/autonomous_controller.py --session-id run-001
+```
+
+Controller artifacts are written under:
+
+- `.cache/controller/<session_id>/state.json`
+- `.cache/controller/<session_id>/dashboard.md`
+- `.cache/controller/<session_id>/iterations/<n>/`
+
+Optional extractor-backed orchestration per iteration:
+
+```bash
+uv run python scripts/autonomous_controller.py --session-id run-001 --use-orchestrate --allow-bootstrap
+```
+
+Guideline v3 field semantics are documented in `docs/guideline-record-spec.md`.
 Clippy status assignment guidance is documented in `docs/clippy-feasibility-guidance.md`.
 
 ## Common Commands
@@ -105,4 +125,5 @@ uv run python scripts/check_fls_proxy_coverage.py
 uv run python scripts/check_guideline_quality.py
 uv run python scripts/review_diffset.py --after-run <run_id>
 uv run python scripts/scaffold_guideline_fixtures.py
+uv run python scripts/autonomous_controller.py --session-id run-001
 ```

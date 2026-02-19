@@ -1,0 +1,311 @@
+from __future__ import annotations
+
+import csv
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+SCRIPTS = ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from controller_actions import (  # noqa: E402
+    apply_rewrite_rule_statement_specific,
+    apply_spawn_rule_for_obligation_unit,
+    generate_candidates,
+)
+from controller_scoring import improves, regression_flags  # noqa: E402
+
+
+def write_yaml(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(payload, handle, sort_keys=False, allow_unicode=False)
+
+
+class AutonomousControllerLogicTests(unittest.TestCase):
+    def test_improves_prefers_smaller_gap_vector(self) -> None:
+        before = {
+            "runtime_failures": 0,
+            "policy_failures": 0,
+            "iso_obligation_gap_count": 1,
+            "traceability_gap_count": 0,
+            "target_fanout_gap_count": 3,
+            "fls_span_gap_count": 2,
+            "fls_chapter_gap_count": 0,
+            "quality_gap_count": 5,
+            "placeholder_gap_count": 2,
+            "example_gap_count": 1,
+            "iso_obligation_coverage": 0.8,
+            "fls_chapter_coverage": 0.6,
+            "quality_pass_ratio": 0.2,
+        }
+        after = {
+            **before,
+            "iso_obligation_gap_count": 0,
+            "target_fanout_gap_count": 2,
+            "quality_gap_count": 3,
+            "iso_obligation_coverage": 1.0,
+            "quality_pass_ratio": 0.4,
+        }
+        self.assertTrue(improves(before, after))
+
+    def test_regression_flags_detect_new_gap(self) -> None:
+        before = {
+            "runtime_failures": 0,
+            "policy_failures": 0,
+            "iso_obligation_gap_count": 0,
+            "traceability_gap_count": 0,
+            "target_fanout_gap_count": 0,
+            "fls_span_gap_count": 0,
+            "fls_chapter_gap_count": 0,
+            "quality_gap_count": 0,
+            "placeholder_gap_count": 0,
+            "example_gap_count": 0,
+            "iso_obligation_coverage": 1.0,
+            "fls_chapter_coverage": 1.0,
+            "quality_pass_ratio": 1.0,
+        }
+        after = {**before, "quality_gap_count": 1}
+        flags = regression_flags(before, after)
+        self.assertIn("regressed_quality_gap_count", flags)
+
+    def test_generate_candidates_deterministic(self) -> None:
+        observation = {
+            "deficits": [
+                {
+                    "deficit_id": "iso-obligation:obl-1",
+                    "type": "iso_obligation_gap",
+                    "severity": "critical",
+                    "guideline_id": "",
+                    "target_id": "T-1",
+                    "obligation_unit_id": "obl-1",
+                },
+                {
+                    "deficit_id": "quality:RG-1",
+                    "type": "quality_gap",
+                    "severity": "medium",
+                    "guideline_id": "RG-1",
+                    "target_id": "",
+                    "obligation_unit_id": "",
+                },
+            ]
+        }
+        first = generate_candidates(observation, beam_width=3)
+        second = generate_candidates(observation, beam_width=3)
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(len(first), 1)
+
+    def test_rewrite_rule_statement_specific_removes_placeholder_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            guideline_id = "RG-AAAA00000001"
+            compliant_code_path = f"tests/guidelines/{guideline_id}/examples/compliant.rs"
+            compliant_doc_path = f"tests/guidelines/{guideline_id}/examples/compliant.md"
+            non_compliant_code_path = f"tests/guidelines/{guideline_id}/examples/non_compliant.rs"
+            non_compliant_doc_path = f"tests/guidelines/{guideline_id}/examples/non_compliant.md"
+
+            write_yaml(
+                root / "data" / "todo_guidelines.yaml",
+                {
+                    "version": 1,
+                    "guidelines": [
+                        {
+                            "id": guideline_id,
+                            "category": "Required",
+                            "technical_topic": "Language subset / forbidden constructs",
+                            "rule_statement": "Placeholder rule",
+                            "amplification": (
+                                "Initial generic guideline derived from placeholder seed."
+                            ),
+                            "exceptions": "Pending review",
+                            "rationale": "todo rationale",
+                            "iso_seeds": ["SEED-A"],
+                            "fls_refs": ["fls_unsafety_core"],
+                            "scope": "crate",
+                            "decidable": "undecidable",
+                            "decidability_rationale": "pending",
+                            "state": "DRAFT",
+                            "enforcement_mode": "AUDIT",
+                            "enforcement_details": "details",
+                            "evidence_artifacts": [
+                                f"tests/guidelines/{guideline_id}/metadata.yaml"
+                            ],
+                            "deviation_requirements": "dev",
+                            "examples": {
+                                "compliant": {
+                                    "code_path": compliant_code_path,
+                                    "doc_path": compliant_doc_path,
+                                    "explanation": "ok",
+                                    "compile_expectation": "documented-only",
+                                },
+                                "non_compliant": {
+                                    "code_path": non_compliant_code_path,
+                                    "doc_path": non_compliant_doc_path,
+                                    "explanation": "bad",
+                                    "compile_expectation": "documented-only",
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+            compliant_doc = (
+                root / "tests" / "guidelines" / guideline_id / "examples" / "compliant.md"
+            )
+            compliant_doc.parent.mkdir(parents=True, exist_ok=True)
+            compliant_doc.write_text("placeholder sample", encoding="utf-8")
+
+            result = apply_rewrite_rule_statement_specific(
+                root,
+                {
+                    "type": "rewrite_rule_statement_specific",
+                    "guideline_id": guideline_id,
+                },
+            )
+            self.assertTrue(result["changed"])
+
+            updated = yaml.safe_load(
+                (root / "data" / "todo_guidelines.yaml").read_text(encoding="utf-8")
+            )
+            guideline = updated["guidelines"][0]
+            self.assertNotIn("placeholder", guideline["rule_statement"].lower())
+            self.assertNotIn("todo", guideline["rationale"].lower())
+            self.assertNotIn("pending", guideline["decidability_rationale"].lower())
+
+            rewritten_doc = compliant_doc.read_text(encoding="utf-8").lower()
+            self.assertNotIn("placeholder", rewritten_doc)
+
+    def test_spawn_rule_for_obligation_unit_adds_child_guideline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target_id = "ISO26262-6-2018:table_1:clause:table_1"
+            obligation = "ISO26262-6-2018:table:table_1:001:1"
+            seed_id = "SEED-A"
+            parent_id = "RG-PARENT000001"
+            parent_compliant_code_path = f"tests/guidelines/{parent_id}/examples/compliant.rs"
+            parent_compliant_doc_path = f"tests/guidelines/{parent_id}/examples/compliant.md"
+            parent_non_compliant_code_path = (
+                f"tests/guidelines/{parent_id}/examples/non_compliant.rs"
+            )
+            parent_non_compliant_doc_path = (
+                f"tests/guidelines/{parent_id}/examples/non_compliant.md"
+            )
+
+            write_yaml(
+                root / "data" / "seed_topics.yaml",
+                {
+                    "version": 1,
+                    "run_id": "test-run",
+                    "seed_topics": [
+                        {
+                            "seed_id": seed_id,
+                            "iso_ref": "Part 6 Table 1",
+                            "chunk_id": "chunk-1",
+                            "citation": "citation",
+                            "topic_phrase": "topic",
+                            "context_summary": "summary",
+                            "category_candidate": "Language subset / forbidden constructs",
+                            "enforceability_hint": "AUTO",
+                            "citation_anchor_id": target_id,
+                            "obligation_unit_id": obligation,
+                        }
+                    ],
+                },
+            )
+            write_yaml(
+                root / "data" / "todo_guidelines.yaml",
+                {
+                    "version": 1,
+                    "guidelines": [
+                        {
+                            "id": parent_id,
+                            "category": "Required",
+                            "technical_topic": "Language subset / forbidden constructs",
+                            "rule_statement": "Parent statement",
+                            "amplification": "Parent amplification",
+                            "exceptions": "Parent exceptions",
+                            "rationale": "Parent rationale",
+                            "iso_seeds": [seed_id],
+                            "fls_refs": ["fls_program_structure_and_compilation_core"],
+                            "scope": "crate",
+                            "decidable": "decidable",
+                            "decidable_status": "possible-with-clippy",
+                            "decidability_rationale": "Parent decidability",
+                            "state": "DRAFT",
+                            "enforcement_mode": "AUTO",
+                            "enforcement_details": "details",
+                            "evidence_artifacts": [f"tests/guidelines/{parent_id}/metadata.yaml"],
+                            "deviation_requirements": "dev",
+                            "examples": {
+                                "compliant": {
+                                    "code_path": parent_compliant_code_path,
+                                    "doc_path": parent_compliant_doc_path,
+                                    "explanation": "ok",
+                                    "compile_expectation": "no_run",
+                                },
+                                "non_compliant": {
+                                    "code_path": parent_non_compliant_code_path,
+                                    "doc_path": parent_non_compliant_doc_path,
+                                    "explanation": "bad",
+                                    "compile_expectation": "compile_pass",
+                                },
+                            },
+                        }
+                    ],
+                },
+            )
+
+            coverage_path = root / "data" / "coverage_matrix.csv"
+            coverage_path.parent.mkdir(parents=True, exist_ok=True)
+            with coverage_path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "target_id",
+                        "obligation_unit_id",
+                        "seed_id",
+                        "guideline_id",
+                        "fls_ref",
+                        "evidence_path",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerow(
+                    {
+                        "target_id": target_id,
+                        "obligation_unit_id": obligation,
+                        "seed_id": seed_id,
+                        "guideline_id": parent_id,
+                        "fls_ref": "fls_program_structure_and_compilation_core",
+                        "evidence_path": f"tests/guidelines/{parent_id}/metadata.yaml",
+                    }
+                )
+
+            result = apply_spawn_rule_for_obligation_unit(
+                root,
+                {
+                    "type": "spawn_rule_for_obligation_unit",
+                    "target_id": target_id,
+                },
+            )
+            self.assertTrue(result["changed"])
+            self.assertIn("new_guideline_id", result)
+
+            payload = yaml.safe_load(
+                (root / "data" / "todo_guidelines.yaml").read_text(encoding="utf-8")
+            )
+            self.assertEqual(len(payload["guidelines"]), 2)
+            child = next(
+                item for item in payload["guidelines"] if item["id"] == result["new_guideline_id"]
+            )
+            self.assertEqual(child["decomposition_parent"], parent_id)
+            self.assertEqual(child["obligation_units"], [obligation])
+
+
+if __name__ == "__main__":
+    unittest.main()
