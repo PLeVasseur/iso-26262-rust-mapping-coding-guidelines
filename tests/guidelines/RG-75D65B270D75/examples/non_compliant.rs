@@ -1,6 +1,5 @@
 fn main() {
-    // Non-compliant pattern placeholder; update with rule-specific violation example
-    let mut numbers = vec![3, 2, 1];
-    numbers.sort();
-    println!("{:?}", numbers);
+    // Intentional compile failure for negative evidence.
+    let must_be_u32: u32 = "invalid";
+    let _ = must_be_u32;
 }

@@ -696,15 +696,24 @@ guidelines:
 - id: RG-75D65B270D75
   category: Required
   technical_topic: Language subset / forbidden constructs
-  rule_statement: Use only the approved Rust language subset for Table 1 and avoid
-    forbidden or high-risk constructs in safety-critical code.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-75D65B270D75
-    (Part 6 Table 1). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-75D65B270D75 (Part 6 Table 1) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Safety-related crate code shall stay within the Table 1 approved
+    Rust subset and must avoid forbidden or high-risk constructs, with compliance
+    verified by checklist-based review and test evidence.
+  amplification: Verify subset conformance by checking each module for disallowed
+    patterns such as unchecked `unsafe` blocks, raw-pointer dereference paths, uninitialized-memory
+    handling outside approved wrappers, and panic-oriented control flow (`unwrap`/`expect`)
+    in safety logic. Evidence should include review records, static-check output,
+    and test results that demonstrate deterministic `Result`/`Option` handling.
+  exceptions: A deviation is permitted only when a documented safety case identifies
+    the specific construct, defines compensating measures, and provides evidence from
+    focused review and tests that residual risk remains acceptable; verify independent
+    reviewer approval before integration.
+  rationale: 'Restricting language features to an approved subset reduces undefined-behavior
+    exposure and improves auditability of safety arguments. This rule supports ISO
+    26262 Table 1 compliance by requiring checkable implementation constraints and
+    objective evidence from code review, static analysis, and repeatable tests. Evidence
+    anchor: :cite:`ISO26262-Part6-Table-1`. Evidence anchor: :cite:`ISO26262-6-2018:table:table_1:001:3`.
+    Evidence anchor: :std:`core::ptr`.'
   iso_seeds:
   - SEED-75D65B270D75
   scope: crate
@@ -727,17 +736,22 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-75D65B270D75/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-75D65B270D75/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: compile_pass
-      expected_outcome: runtime_panic
+      explanation: This example uses an `unsafe` block in code that forbids such constructs,
+        triggering enforcement and demonstrating a forbidden/high-risk construct path.
+      compile_expectation: compile_fail
+      expected_outcome: compile_fail
+      verification_notes: Compile with `rustc` or `cargo check`; build should fail
+        because `unsafe` usage is denied.
     compliant:
       code_path: tests/guidelines/RG-75D65B270D75/examples/compliant.rs
       doc_path: tests/guidelines/RG-75D65B270D75/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      explanation: 'This example stays in a constrained safe subset: bounds checks
+        are explicit, failures are represented with `Option`, and behavior is verified
+        with assertions.'
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
+      verification_notes: Run as a normal test or binary execution; all assertions
+        should pass and no panic should occur.
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-75D65B270D75%20candidate%20lint
   obligation_units:
