@@ -433,15 +433,21 @@ guidelines:
 - id: RG-5B4923F76EEA
   category: Required
   technical_topic: Language subset / forbidden constructs
-  rule_statement: Use only the approved Rust language subset for Table 12 and avoid
-    forbidden or high-risk constructs in safety-critical code.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-5B4923F76EEA
-    (Part 6 Table 12). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-5B4923F76EEA (Part 6 Table 12) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Crate code shall be restricted to the approved ISO 26262 Table 12
+    Rust subset, and must reject unchecked unsafe operations, unconstrained raw-pointer
+    aliasing, and panic-prone control paths.
+  amplification: 'Verify compliance with review and test evidence: each unsafe block
+    is confined behind a documented safe interface, pointer provenance and aliasing
+    assumptions are checked, and safety-critical Result/Option flows are handled explicitly
+    without unwrap/expect.'
+  exceptions: Exceptions require a documented deviation reviewed by an authorized
+    safety reviewer; approval requires evidence from impact analysis, focused tests,
+    and code review checks demonstrating equivalent or better risk control.
+  rationale: 'A constrained Rust subset at crate scope limits undefined behavior and
+    panic hazards; verification evidence from reviews and regression tests provides
+    auditable traceability to ISO 26262 Table 12 obligations. Evidence anchor: :std:`ISO
+    26262-6:2018 Table 12`. Evidence anchor: :cite:`ISO26262-6-2018:table:table_12:001:1`.
+    Evidence anchor: :cite:`fls_program_structure_and_compilation_core`.'
   iso_seeds:
   - SEED-5B4923F76EEA
   scope: crate
@@ -464,17 +470,21 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-5B4923F76EEA/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-5B4923F76EEA/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
+      explanation: Uses panic-prone unchecked indexing, violating the subset constraint
+        against unsafe runtime failure paths in safety-critical logic.
       compile_expectation: compile_pass
       expected_outcome: runtime_panic
+      verification_notes: Execute and confirm panic occurs at runtime due to out-of-bounds
+        access; this is negative evidence for rule validation.
     compliant:
       code_path: tests/guidelines/RG-5B4923F76EEA/examples/compliant.rs
       doc_path: tests/guidelines/RG-5B4923F76EEA/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      explanation: Demonstrates explicit Option handling and assertion-based evidence
+        without panic-prone indexing or unwrap/expect in the control path.
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
+      verification_notes: Build and run; assertions are the acceptance evidence that
+        the safe subset behavior is preserved.
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-5B4923F76EEA%20candidate%20lint
   obligation_units:

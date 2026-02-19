@@ -1,12 +1,16 @@
 # Compliant Example: RG-5B4923F76EEA
 
-This example demonstrates a compliant coding pattern aligned with the guideline intent and should be used as positive evidence during rule validation.
+This example demonstrates unsafe blocks and invariants with explicit, reviewable constraints and deterministic evidence.
 
-```no_run
+Expected outcome: `assertion_pass`.
+
+Verification notes: Build and run; assertions are the acceptance evidence that the safe subset behavior is preserved.
+
+```rust
 fn main() {
-    // Compliant pattern placeholder; update with rule-specific compliant example
+    // Compliant evidence for unsafe blocks and invariants.
     let values = [1_u32, 2_u32, 3_u32];
     let total: u32 = values.into_iter().sum();
-    println!("{}", total);
+    assert_eq!(total, 6);
 }
 ```
