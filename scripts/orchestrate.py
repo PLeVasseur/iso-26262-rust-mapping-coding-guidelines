@@ -524,6 +524,27 @@ def main() -> int:
         elif code == EXIT_POLICY_FAIL:
             policy_errors.append("check_guideline_quality policy failure")
 
+    known_good_alignment_report_path = run_dir / "check_known_good_alignment.report.json"
+    if not runtime_errors:
+        code, output = run_python_step(
+            root,
+            [
+                "scripts/check_known_good_alignment.py",
+                "--json-output",
+                str(known_good_alignment_report_path),
+                "--allow-missing-benchmark",
+            ],
+            report_path=run_dir / "check_known_good_alignment.step.json",
+        )
+        step_results["check_known_good_alignment"] = {
+            "return_code": code,
+            "output": output,
+        }
+        if code == EXIT_RUNTIME_FAIL:
+            runtime_errors.append("check_known_good_alignment runtime failure")
+        elif code == EXIT_POLICY_FAIL:
+            policy_errors.append("check_known_good_alignment policy failure")
+
     current_metrics = {
         "seed_topic_count": load_seed_count(root),
         "category_count": load_category_count(root),
@@ -533,6 +554,7 @@ def main() -> int:
         "evidence_link_score": 0.0,
         "fls_chapter_coverage": 0.0,
         "guideline_quality_avg": 0.0,
+        "known_good_alignment_avg": 0.0,
     }
 
     if traceability_report_path.exists():
@@ -552,6 +574,12 @@ def main() -> int:
         guideline_quality_report = read_json(guideline_quality_report_path)
         current_metrics["guideline_quality_avg"] = float(
             guideline_quality_report.get("average_score") or 0.0
+        )
+
+    if known_good_alignment_report_path.exists():
+        known_good_alignment_report = read_json(known_good_alignment_report_path)
+        current_metrics["known_good_alignment_avg"] = float(
+            known_good_alignment_report.get("average_alignment_score") or 0.0
         )
 
     scope_payload = read_yaml(root / "data" / "target_scope.yaml") or {}
@@ -670,6 +698,7 @@ def main() -> int:
         f"- coverage_row_count: {current_metrics['coverage_row_count']}",
         f"- fls_chapter_coverage: {current_metrics['fls_chapter_coverage']}",
         f"- guideline_quality_avg: {current_metrics['guideline_quality_avg']}",
+        f"- known_good_alignment_avg: {current_metrics['known_good_alignment_avg']}",
         f"- snapshot_file_count: {len(snapshot_written)}",
         f"- runtime_errors: {len(runtime_errors)}",
         f"- policy_errors: {len(policy_errors)}",

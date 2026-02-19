@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "guideline_id": "gui_kMbiWbn8Z6g5",
+  "title": "Do not divide by 0",
+  "source_path": "src/coding-guidelines/expressions/gui_kMbiWbn8Z6g5.rst",
+  "source_sha": "1c7d6bb9448a25401db3b411d1783cd4e78fc718",
+  "tier": "strict",
+  "metadata": {
+    "id": "gui_kMbiWbn8Z6g5",
+    "category": "required",
+    "status": "draft",
+    "release": "latest",
+    "fls": "fls_Q9dhNiICGIfr",
+    "decidability": "undecidable",
+    "scope": "system",
+    "tags": [
+      "numerics",
+      "defect"
+    ]
+  },
+  "rule_text": "Integer division by zero results in a panic.\nThis includes both division expressions [cite:gui_kMbiWbn8Z6g5:FLS-DIVISION-EXPR] and remainder expressions [cite:gui_kMbiWbn8Z6g5:FLS-REMAINDER-EXPR].\n\nDivision and remainder expressions on signed integers are also susceptible to arithmetic overflow.\nOverflow is covered in full by the guideline `Ensure that integer operations do not result in arithmetic overflow`.\n\nThis rule applies to the following primitive integer types [cite:gui_kMbiWbn8Z6g5:FLS-INTEGER-TYPES]:\n\n * `i8`\n * `i16`\n * `i32`\n * `i64`\n * `i128`\n * `u8`\n * `u16`\n * `u32`\n * `u64`\n * `u128`\n * `usize`\n * `isize`\n\nThis rule does not apply to evaluation of the `core::ops::Div` trait on types other than integer types [cite:gui_kMbiWbn8Z6g5:FLS-INTEGER-TYPES].\n\nThis rule is a less strict version of `Do not use an integer type as a divisor during integer division`.\nAll code that complies with that rule also complies with this rule.",
+  "rationale_text": "Integer division by zero results in a panic; an abnormal program state that may terminate the process and must be avoided.",
+  "non_compliant_examples": [
+    {
+      "example_id": "non_compl_ex_LLs3vY8aGz0F",
+      "status": "",
+      "description": "This non-compliant example panics when the right operand is zero for either the division or remainder operations.",
+      "rust_code": "fn main() {\n    let x = 0;\n    let _y = 5 / x; // Results in a panic.\n    let _z = 5 % x; // Also results in a panic.\n}",
+      "options": {
+        "compile_fail": ""
+      }
+    }
+  ],
+  "compliant_examples": [
+    {
+      "example_id": "compl_ex_Ri9pP5Ch3kcc",
+      "status": "",
+      "description": "Compliant examples from `Do not use an integer type as a divisor during integer division` are also valid for this rule.\nAdditionally, the check for zero can be performed manually, as in this compliant example.\nHowever, as the complexity of the control flow leading to the invariant increases,\nit becomes increasingly harder for both programmers and static analysis tools to reason about it.\n\nNote that the test for arithmetic overflow is not necessary for unsigned integers.",
+      "rust_code": "fn main() {\n    // Checking for zero by hand\n    let x = 0u32;\n    let _y = if x != 0u32 {\n        5u32 / x\n    } else {\n        0u32\n    };\n\n    let _z = if x != 0u32 {\n        5u32 % x\n    } else {\n        0u32\n    };\n}",
+      "options": {}
+    }
+  ],
+  "references": [
+    {
+      "key": "gui_kMbiWbn8Z6g5:FLS-INTEGER-TYPES",
+      "description": "The Rust FLS. \"Types and Traits - Integer Types.\" https://rust-lang.github.io/fls/types-and-traits.html#integer-types"
+    },
+    {
+      "key": "gui_kMbiWbn8Z6g5:FLS-DIVISION-EXPR",
+      "description": "The Rust FLS. \"Expressions - Syntax - DivisionExpression.\" https://rust-lang.github.io/fls/expressions.html#syntax_divisionexpression"
+    },
+    {
+      "key": "gui_kMbiWbn8Z6g5:FLS-REMAINDER-EXPR",
+      "description": "The Rust FLS. \"Expressions - Syntax - RemainderExpression.\" https://rust-lang.github.io/fls/expressions.html#syntax_remainderexpression"
+    }
+  ],
+  "citations": [
+    "gui_kMbiWbn8Z6g5:FLS-DIVISION-EXPR",
+    "gui_kMbiWbn8Z6g5:FLS-INTEGER-TYPES",
+    "gui_kMbiWbn8Z6g5:FLS-REMAINDER-EXPR"
+  ],
+  "std_refs": [
+    "core::ops::Div"
+  ],
+  "content_sha256": "fbd4d3f89d763193c383de1b45dd7883e4cc556fa8a49d424b005bc9c0542925"
+}

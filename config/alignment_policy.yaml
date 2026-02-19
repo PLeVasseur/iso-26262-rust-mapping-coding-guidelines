@@ -1,0 +1,34 @@
+version: 1
+benchmark_paths:
+  manifest_path: benchmarks/known-good/manifest.yaml
+  canonical_dir: benchmarks/known-good/canonical
+  baseline_path: benchmarks/known-good/features/baseline.json
+active_tier: strict
+gate_mode: warn
+thresholds:
+  min_global_alignment: 0.75
+  min_changed_guideline_alignment: 0.8
+  granularity_outliers_allowed: 0
+weights:
+  structure: 0.3
+  specificity: 0.2
+  evidence: 0.2
+  citations: 0.15
+  granularity: 0.15
+advisory_similarity:
+  enabled: true
+  min_similarity: 0.7
+controller_progression:
+  enabled: true
+  start_iteration: 1
+  target_iteration: 12
+  start_thresholds:
+    min_global_alignment: 0.62
+    min_changed_guideline_alignment: 0.68
+    granularity_outliers_allowed: 4
+  target_thresholds:
+    min_global_alignment: 0.75
+    min_changed_guideline_alignment: 0.8
+    granularity_outliers_allowed: 0
+  start_gate_mode: warn
+  target_gate_mode: warn

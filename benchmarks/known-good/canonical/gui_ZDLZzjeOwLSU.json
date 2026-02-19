@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "guideline_id": "gui_ZDLZzjeOwLSU",
+  "title": "Assure visibility of ``unsafe`` keyword in unsafe code",
+  "source_path": "src/coding-guidelines/attributes/gui_ZDLZzjeOwLSU.rst",
+  "source_sha": "1c7d6bb9448a25401db3b411d1783cd4e78fc718",
+  "tier": "strict",
+  "metadata": {
+    "id": "gui_ZDLZzjeOwLSU",
+    "category": "required",
+    "status": "draft",
+    "release": "1.85-latest",
+    "fls": "fls_8kqo952gjhaf",
+    "decidability": "decidable",
+    "scope": "crate",
+    "tags": [
+      "readability",
+      "reduce-human-error"
+    ]
+  },
+  "rule_text": "Mark all code that may violate safety guarantees with a visible `unsafe` keyword\n[cite:gui_ZDLZzjeOwLSU:RUST-REF-UNSAFE-KEYWORD].\n\nThe following constructs require explicit `unsafe` visibility:\n\n* `extern` blocks must be declared as `unsafe extern`\n* The `#[no_mangle]` attribute must be written as `#[unsafe(no_mangle)]`\n* The `#[export_name]` attribute must be written as `#[unsafe(export_name)]`\n* The `#[link_section]` attribute must be written as `#[unsafe(link_section)]`\n\nNote:\n\n   Starting with Rust Edition 2024, the use of `unsafe` is required in these contexts.\n   The `#[link]` and `#[link_ordinal]` attributes are implicitly covered by the\n   `unsafe extern` requirement, as they must appear on `extern` blocks.\n   See rust-lang/rust#82499 for the tracking issue on unsafe attributes.",
+  "rationale_text": "* Auditability and review\n\n  * `unsafe` blocks create clear audit boundaries where reviewers can focus on code\n    that may violate Rust's safety guarantees [cite:gui_ZDLZzjeOwLSU:RUSTNOMICON-MEET-SAFE]\n  * Safety-critical standards like ISO 26262 [cite:gui_ZDLZzjeOwLSU:ISO-26262] and\n    DO-178C [cite:gui_ZDLZzjeOwLSU:DO-178C] require traceability of hazardous operations\n  * Helps enumerate and document all places where safety requirements must be manually upheld\n  * Satisfies ISO 26262 Part 6, Table 1, objective 1c (use of language subsets)\n  * Satisfies DO-178C Section 6.3.4.f (source code traceability)\n\n* Explicit acknowledgment of responsibility\n\n  * The `unsafe` keyword signals that the programmer is taking responsibility for\n    upholding invariants the compiler cannot verify\n  * Prevents accidental use of `unsafe` operations without conscious decision\n  * Aligns with the principle of defense in depth in safety-critical systems\n\n* Static analysis and tooling\n\n  * Tools like `cargo-geiger` [cite:gui_ZDLZzjeOwLSU:CARGO-GEIGER], `unsafe-inspect`,\n    and custom linters can automatically locate and count unsafe blocks\n  * Enables metrics like \"unsafe density\" for safety assessments\n  * Supports qualification evidence required by certification standards\n\n* Traceability for certification\n\n  * Safety-critical certifications require demonstrating that hazardous operations are\n    identified and controlled\n  * Visible `unsafe` tokens provide direct linkage to safety cases and hazard analyses\n  * Facilitates the required documentation that each unsafe operation has been reviewed\n    and justified",
+  "non_compliant_examples": [
+    {
+      "example_id": "non_compl_ex_FdmuPXGZr4EP",
+      "status": "",
+      "description": "The `#[no_mangle]` attribute is unsafe because it can be used to declare a function\nidentifier that conflicts with an existing symbol. This noncompliant example declares an\nunmangled function named `convert` that is missing the required unsafe wrapper in Rust 2024.\n\nThis noncompliant example requires Rust Edition 2021 or earlier to compile.\nIn Rust Edition 2024, missing `unsafe` wrappers cause compilation errors.",
+      "rust_code": "// Undefined behavior by the linker or loader is possible\n// if another 'convert' function is defined.\n#[no_mangle]\nfn convert() {}\n\nfn main() {\n    convert();\n}",
+      "options": {
+        "compile_fail": "",
+        "edition": "2024"
+      }
+    },
+    {
+      "example_id": "non_compl_ex_FdmuPXGZr4EO",
+      "status": "",
+      "description": "This noncompliant example misdeclares the `malloc` function in an `extern \"C\"` block\nby specifying the type of the `size` parameter as `f32` instead of `usize`.\n\nAn `extern` block is unsafe because undefined behavior can occur if types or functions are\nmisdeclared. This is true even if the declarations are not used. This noncompliant example\nrequires Rust Edition 2021 or earlier to compile.",
+      "rust_code": "use std::ffi;\n\nextern \"C\" {\n    // If 'malloc' is otherwise defined with a 'usize' argument, the compiler\n    // may generate code for calls to this function using this incompatible declaration,\n    // resulting in undefined behavior.\n    fn malloc(size: f32) -> *mut ffi::c_void;\n}\n\nfn main() {}",
+      "options": {
+        "compile_fail": "",
+        "edition": "2024"
+      }
+    },
+    {
+      "example_id": "non_compl_ex_Hk3mNp5qRs7t",
+      "status": "",
+      "description": "The `#[export_name]` and `#[link_section]` attributes can cause undefined behavior if\nmisused, as they affect symbol resolution and memory layout at link time. Without the\n`unsafe` keyword, these hazards are not visible to reviewers or tools.\n\nThis noncompliant example has two separate problems. First, it uses an `#[export_name]`\nattribute without an unsafe wrapper. This attribute controls the symbol name used during\nlinking. If another symbol with the same name exists, it causes undefined behavior.\nRust 2024 requires it to be marked `unsafe`.\n\nThe second problem is that this noncompliant example uses a `#[link_section]` attribute\nwithout an unsafe wrapper. This attribute places the item in a specific linker section.\nIncorrect section placement can cause undefined behavior (e.g., placing mutable data in\nread-only sections, or interfering with special sections like `.init`).\n\nThis noncompliant example requires Rust Edition 2021 or earlier to compile.",
+      "rust_code": "// Collides with the C library 'printf' function\n#[export_name = \"printf\"]  // noncompliant\n\n// Missing unsafe marker - noncompliant in Rust 2024\n#[link_section = \".init_array\"] // noncompliant\nstatic DATA: u32 = 42;  // Corrupts initialization table!\n\nfn main() {\n    println!(\"DATA = {DATA}\");\n}",
+      "options": {
+        "compile_fail": "",
+        "edition": "2024"
+      }
+    }
+  ],
+  "compliant_examples": [
+    {
+      "example_id": "compl_ex_wR1FEyLRKmrr",
+      "status": "",
+      "description": "Rust Edition 2024 enforces that the `no_mangle` attribute requires an `unsafe` keyword,\nas shown in this compliant example.\n\nNOTE: This code can still have undefined behavior if the `convert` function symbol is\ndefined more than once.",
+      "rust_code": "#[unsafe(no_mangle)] // compliant\nfn convert() {}\n\nfn main() {\n    convert();\n}",
+      "options": {
+        "edition": "2024",
+        "miri": "skip"
+      }
+    },
+    {
+      "example_id": "compl_ex_wR1FEyLRKmrq",
+      "status": "",
+      "description": "Rust Edition 2024 enforces that `extern \"C\"` blocks require an `unsafe` keyword,\nas shown in this compliant example.\n\nNOTE: This code can still have undefined behavior if the declared `malloc` function is\nincompatible with the actual definition. To eliminate this undefined behavior, the\ndeclaration for `malloc` used in this compliant example accepts one argument of type `usize`.",
+      "rust_code": "use std::ffi;\n\nunsafe extern \"C\" {\n    // Here the assumption is that malloc is the one defined by C's stdlib.h\n    // and that size_of::<usize>() == size_of::<size_t>()\n    fn malloc(size: usize) -> *mut ffi::c_void;\n    fn free(ptr: *mut ffi::c_void);\n}\n\nfn main() {\n    unsafe {\n        let ptr = malloc(1024);\n        if !ptr.is_null() {\n            free(ptr);\n        }\n    }\n}",
+      "options": {
+        "edition": "2024",
+        "miri": "skip"
+      }
+    },
+    {
+      "example_id": "compl_ex_xY2zAb3cDe4f",
+      "status": "",
+      "description": "The `#[export_name]` and `#[link_section]` attributes must use the `unsafe()` wrapper\n   to make their safety implications visible.\n\n**Enforcement**\nThis guideline can be enforced through the following mechanisms:\n\n* **Rust Edition 2024**: Migrating to Rust Edition 2024 makes violations of this guideline\n  compilation errors for `extern` blocks and unsafe attributes.\n\n* **Compiler Lints**: Enable the following lints:\n\n  * `#![deny(unsafe_code)]` - Denies all unsafe code (use `#[allow(unsafe_code)]` for justified exceptions)\n  * `#![deny(unsafe_op_in_unsafe_fn)]` - Requires explicit unsafe blocks within unsafe functions\n  * `#![warn(unsafe_attr_outside_unsafe)]` - Warns about unsafe attributes without the `unsafe()` wrapper (pre-2024)\n\n* **Static Analysis Tools**:\n\n  * `cargo-geiger` - Counts and reports unsafe code usage\n  * `cargo-audit` - Checks for known vulnerabilities in dependencies\n  * Custom Clippy lints for project-specific requirements\n\n* **Code Review**: Manual review of all code containing `unsafe` tokens should be\n  part of the development process, with documented justification for each usage.\n\n**Related guidelines**\n* Minimize the scope of unsafe blocks\n* Document safety invariants for all unsafe code with `// SAFETY:` comments\n* Prefer safe abstractions over raw unsafe code\n* Use `#![forbid(unsafe_code)]` at crate level where possible, with explicit exceptions",
+      "rust_code": "// SAFETY: 'custom_symbol' does not conflict with any other symbol\n#[unsafe(export_name = \"custom_symbol\")]\npub fn my_function() {}\n\n// SAFETY: Placing data in a specific section for embedded systems\n#[unsafe(link_section = \".noinit\")]\nstatic mut PERSISTENT_DATA: [u8; 256] = [0; 256];\n\n// SAFETY: Custom section for shared memory\n#[unsafe(link_section = \".shared\")]\nstatic SHARED_BUFFER: [u8; 4096] = [0; 4096];\n\nfn main() {\n    my_function();\n    println!(\"shared buffer size = {}\", SHARED_BUFFER.len());\n    unsafe { let _ = PERSISTENT_DATA[0]; }\n}",
+      "options": {
+        "edition": "2024",
+        "miri": "skip"
+      }
+    }
+  ],
+  "references": [
+    {
+      "key": "gui_ZDLZzjeOwLSU:RUST-EDITION-GUIDE",
+      "description": "The Rust Edition Guide. \"Rust 2024.\" https://doc.rust-lang.org/edition-guide/rust-2024/index.html."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:RUST-REF-UNSAFE-KEYWORD",
+      "description": "The Rust Reference. \"Unsafe Keyword.\" https://doc.rust-lang.org/reference/unsafe-keyword.html."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:RUST-LINT-UNSAFE",
+      "description": "Rust Compiler Lint Documentation. \"unsafe_code.\" https://doc.rust-lang.org/rustc/lints/listing/allowed-by-default.html#unsafe-code."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:RUSTNOMICON-MEET-SAFE",
+      "description": "The Rustonomicon. \"Meet Safe and Unsafe.\" https://doc.rust-lang.org/nomicon/meet-safe-and-unsafe.html."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:ISO-26262",
+      "description": "International Organization for Standardization. \"ISO 26262 - Road vehicles - Functional safety.\" https://www.iso.org/standard/68383.html."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:DO-178C",
+      "description": "RTCA, Inc. \"DO-178C: Software Considerations in Airborne Systems and Equipment Certification.\" https://store.accuristech.com/standards/rtca-do-178c."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:CARGO-GEIGER",
+      "description": "cargo-geiger contributors. \"cargo-geiger: Detects usage of unsafe Rust.\" https://github.com/geiger-rs/cargo-geiger."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:RUST-REF-EXTERN",
+      "description": "The Rust Reference. \"External blocks.\" https://doc.rust-lang.org/reference/items/external-blocks.html."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:RUST-REF-UNSAFE-ATTR",
+      "description": "The Rust Reference. \"Unsafe attributes.\" https://doc.rust-lang.org/reference/attributes.html#unsafe-attributes."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:FERROCENE-SPEC",
+      "description": "Ferrocene GmbH. \"Ferrocene Language Specification.\" https://spec.ferrocene.dev/."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:RUST-REF-UNION",
+      "description": "The Rust Reference. \"Unions.\" https://doc.rust-lang.org/reference/items/unions.html."
+    },
+    {
+      "key": "gui_ZDLZzjeOwLSU:UCG-VALIDITY",
+      "description": "Rust Unsafe Code Guidelines. \"Validity and Safety Invariant.\" https://rust-lang.github.io/unsafe-code-guidelines/glossary.html#validity-and-safety-invariant."
+    }
+  ],
+  "citations": [
+    "gui_ZDLZzjeOwLSU:CARGO-GEIGER",
+    "gui_ZDLZzjeOwLSU:DO-178C",
+    "gui_ZDLZzjeOwLSU:ISO-26262",
+    "gui_ZDLZzjeOwLSU:RUST-REF-UNSAFE-KEYWORD",
+    "gui_ZDLZzjeOwLSU:RUSTNOMICON-MEET-SAFE"
+  ],
+  "std_refs": [],
+  "content_sha256": "4d258a62adff53db71bff462e898efaaf139dc53218223ebed8046edbd981d23"
+}

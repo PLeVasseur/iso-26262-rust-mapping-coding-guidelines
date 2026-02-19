@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Known Good Harvest Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "source_repo",
+    "source_sha",
+    "tree_path",
+    "default_tier",
+    "pack_id_prefix",
+    "output_root",
+    "tier_rules"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "source_repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{7,40}$"
+    },
+    "tree_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "default_tier": {
+      "type": "string",
+      "enum": ["strict", "extended", "all"]
+    },
+    "pack_id_prefix": {
+      "type": "string",
+      "minLength": 1
+    },
+    "output_root": {
+      "type": "string",
+      "minLength": 1
+    },
+    "max_guidelines": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "tier_rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strict", "extended"],
+      "properties": {
+        "strict": {
+          "$ref": "#/$defs/tierRule"
+        },
+        "extended": {
+          "$ref": "#/$defs/tierRule"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "tierRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "require_rationale",
+        "require_compliant_example",
+        "require_non_compliant_example",
+        "require_citation_signal",
+        "require_bibliography_signal",
+        "disallow_todo_signal"
+      ],
+      "properties": {
+        "require_rationale": {
+          "type": "boolean"
+        },
+        "require_compliant_example": {
+          "type": "boolean"
+        },
+        "require_non_compliant_example": {
+          "type": "boolean"
+        },
+        "require_citation_signal": {
+          "type": "boolean"
+        },
+        "require_bibliography_signal": {
+          "type": "boolean"
+        },
+        "disallow_todo_signal": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

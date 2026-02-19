@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Known Good Canonical Guideline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "guideline_id",
+    "title",
+    "source_path",
+    "source_sha",
+    "tier",
+    "metadata",
+    "rule_text",
+    "rationale_text",
+    "non_compliant_examples",
+    "compliant_examples",
+    "references",
+    "citations",
+    "std_refs",
+    "content_sha256"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "guideline_id": {
+      "type": "string",
+      "pattern": "^gui_[A-Za-z0-9]+$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{7,40}$"
+    },
+    "tier": {
+      "type": "string",
+      "enum": ["strict", "extended"]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "rule_text": {
+      "type": "string"
+    },
+    "rationale_text": {
+      "type": "string"
+    },
+    "non_compliant_examples": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/example"
+      }
+    },
+    "compliant_examples": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/example"
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/reference"
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "std_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "$defs": {
+    "example": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["example_id", "description", "rust_code", "options"],
+      "properties": {
+        "example_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "rust_code": {
+          "type": "string"
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "description"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

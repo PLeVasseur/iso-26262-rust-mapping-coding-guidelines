@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "generated_at": "2026-02-19T01:57:12+00:00",
+  "source_repo": "rustfoundation/safety-critical-rust-coding-guidelines",
+  "source_sha": "1c7d6bb9448a25401db3b411d1783cd4e78fc718",
+  "pack_id": "known-good-1c7d6bb9448a",
+  "tier_filter": "all",
+  "included_count": 12,
+  "excluded_count": 14,
+  "included_by_tier": {
+    "strict": 10,
+    "extended": 2
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "guideline_id": "gui_Bob7x9KmPq2nL",
+  "title": "Example guideline with bibliography (gui_Bob7x9KmPq2nL)",
+  "source_path": "src/coding-guidelines/expressions/gui_Bob7x9KmPq2nL.rst",
+  "source_sha": "1c7d6bb9448a25401db3b411d1783cd4e78fc718",
+  "tier": "strict",
+  "metadata": {
+    "id": "gui_Bob7x9KmPq2nL",
+    "category": "advisory",
+    "status": "draft",
+    "release": "1.0.0-latest",
+    "fls": "fls_69zyas59o8ff",
+    "decidability": "decidable",
+    "scope": "module",
+    "tags": [
+      "safety",
+      "undefined-behavior"
+    ]
+  },
+  "rule_text": "This is an example guideline demonstrating the bibliography feature.\n\nAs documented in [cite:gui_Bob7x9KmPq2nL:RUST-REF-UNION], union types in Rust have specific safety requirements.\nThe CERT C Coding Standard [cite:gui_Bob7x9KmPq2nL:CERT-C-INT34] provides guidance on avoiding undefined behavior\nin shift operations, which applies to Rust as well.",
+  "rationale_text": "This guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nThis guideline demonstrates how to include bibliographic references in coding guidelines.\nReferences help users find authoritative sources for the recommendations made.\n\nRefer to [cite:gui_Bob7x9KmPq2nL:RUST-REF-UNION] for more details.",
+  "non_compliant_examples": [
+    {
+      "example_id": "non_compl_ex_Bob7x9KmPq2nL",
+      "status": "",
+      "description": "This example shows code that violates the guideline.",
+      "rust_code": "fn main() {\n    // Non-compliant code example\n    let x = 42;\n    println!(\"{}\", x);\n}",
+      "options": {}
+    }
+  ],
+  "compliant_examples": [
+    {
+      "example_id": "compl_ex_Bob7x9KmPq2nL",
+      "status": "",
+      "description": "This example shows the correct way to follow the guideline.",
+      "rust_code": "fn main() {\n    // Compliant code example\n    let x: i32 = 42;\n    println!(\"{}\", x);\n}",
+      "options": {}
+    }
+  ],
+  "references": [
+    {
+      "key": "gui_Bob7x9KmPq2nL:RUST-REF-UNION",
+      "description": "The Rust Reference. \"Unions.\" https://doc.rust-lang.org/reference/items/unions.html"
+    },
+    {
+      "key": "gui_Bob7x9KmPq2nL:CERT-C-INT34",
+      "description": "SEI CERT C Coding Standard. \"INT34-C. Do not shift an expression by a negative number of bits.\" https://wiki.sei.cmu.edu/confluence/x/ItcxBQ"
+    }
+  ],
+  "citations": [
+    "gui_Bob7x9KmPq2nL:CERT-C-INT34",
+    "gui_Bob7x9KmPq2nL:RUST-REF-UNION"
+  ],
+  "std_refs": [],
+  "content_sha256": "8916756fcfd54c9628899d0f935603737d5bfb6837d6cd2c33aa286a479662fa"
+}

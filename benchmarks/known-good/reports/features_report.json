@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "generated_at": "2026-02-19T01:57:12+00:00",
+  "manifest": "benchmarks/known-good/manifest.yaml",
+  "active_tier": "strict",
+  "guideline_count": 10,
+  "missing_canonical_count": 0,
+  "baseline_output": "benchmarks/known-good/features/baseline.json",
+  "per_guideline_output": "benchmarks/known-good/features/per_guideline.jsonl"
+}

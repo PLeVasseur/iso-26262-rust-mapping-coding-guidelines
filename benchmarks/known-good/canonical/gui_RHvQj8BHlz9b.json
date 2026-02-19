@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "guideline_id": "gui_RHvQj8BHlz9b",
+  "title": "Do not shift an expression by a negative number of bits or by greater than or equal to the bitwidth of the operand",
+  "source_path": "src/coding-guidelines/expressions/gui_RHvQj8BHlz9b.rst",
+  "source_sha": "1c7d6bb9448a25401db3b411d1783cd4e78fc718",
+  "tier": "strict",
+  "metadata": {
+    "id": "gui_RHvQj8BHlz9b",
+    "category": "advisory",
+    "status": "draft",
+    "release": "1.7.0-latest",
+    "fls": "fls_sru4wi5jomoe",
+    "decidability": "decidable",
+    "scope": "module",
+    "tags": [
+      "numerics",
+      "reduce-human-error",
+      "maintainability",
+      "surprising-behavior",
+      "subset"
+    ]
+  },
+  "rule_text": "Shifting negative positions or a value greater than or equal to the width of the left operand\nin shift left and shift right expressions [cite:gui_RHvQj8BHlz9b:FLS-BIT-EXPRESSIONS]\nare defined by this guideline to be *out-of-range shifts*.\nThe Rust FLS incorrectly describes this behavior as arithmetic overflow [cite:gui_RHvQj8BHlz9b:FLS-ISSUE-632].\n\nIf the types of both operands are integer types,\nthe shift left expression `lhs << rhs` evaluates to the value of the left operand `lhs` whose bits are\nshifted left by the number of positions specified by the right operand `rhs`.\nVacated bits are filled with zeros.\nThe expression `lhs << rhs` evaluates to :math:`\\mathrm{lhs} \\times 2^{\\mathrm{rhs}}`,\ncast to the type of the left operand.\nIf the value of the right operand is negative or greater than or equal to the width of the left operand,\nthen the operation results in an out-of-range shift.\n\nIf the types of both operands are integer types,\nthe shift right expression `lhs >> rhs` evaluates to the value of the left operand `lhs`\nwhose bits are shifted right by the number of positions specified by the right operand `rhs`.\nIf the type of the left operand is any signed integer type and is negative,\nthe vacated bits are filled with ones.\nOtherwise, vacated bits are filled with zeros.\nThe expression `lhs >> rhs` evaluates to :math:`\\mathrm{lhs} / 2^{\\mathrm{rhs}}`,\ncast to the type of the left operand.\nIf the value of the right operand is negative,\ngreater than or equal to the width of the left operand,\nthen the operation results in an out-of-range shift.\n\nThis rule applies to the following primitive types:\n\n* `i8`\n* `i16`\n* `i32`\n* `i64`\n* `i128`\n* `u8`\n* `u16`\n* `u32`\n* `u64`\n* `u128`\n* `usize`\n* `isize`\n\nAny type can support `<<` or `>>` if you implement the trait:\n\n   use core::ops::Shl;\n   #[allow(dead_code)]\n   struct MyType;\n\n   impl Shl<u32> for MyType {\n       type Output = MyType;\n       fn shl(self, _rhs: u32) -> Self::Output { MyType }\n   }\n   #\n   # fn main() {}\n\nYou may choose any type for the right operand (not just integers), because you control the implementation.\n\nThis rule is based on The CERT C Coding Standard Rule [cite:gui_RHvQj8BHlz9b:CERT-C-INT34].",
+  "rationale_text": "Avoid out-of-range shifts in shift left and shift right expressions.\nShifting by a negative value, or by a value greater than or equal to the width of the left operand\nare non-sensical expressions which typically indicate a logic error has occurred.",
+  "non_compliant_examples": [
+    {
+      "example_id": "non_compl_ex_O9FZuazu3Lcn",
+      "status": "",
+      "description": "This noncompliant example shifts by a negative value (-1) and also by greater than or equal to the number of bits that exist in the left operand (40):.",
+      "rust_code": "fn main() {\n    let bits : u32 = 61;\n    let shifts = vec![-1, 4, 40];\n\n    for sh in shifts {\n        println!(\"{bits} << {sh} = {:?}\", bits << sh);\n    }\n}",
+      "options": {
+        "should_panic": ""
+      }
+    },
+    {
+      "example_id": "non_compl_ex_mvkgTL3kulZ5",
+      "status": "",
+      "description": "This noncompliant example tests the value of `sh` to ensure the value of the right operand is negative or greater\nthan or equal to the width of the left operand.",
+      "rust_code": "fn main() {\n    let bits: u32 = 61;\n    let shifts = vec![-1, 0, 4, 40];\n\n    for sh in shifts {\n        if sh >= 0 && sh < 32 {\n            println!(\"{bits} << {sh} = {}\", bits << sh);\n        }\n     }\n}",
+      "options": {}
+    },
+    {
+      "example_id": "non_compl_ex_O9FZuazu3Lcm",
+      "status": "",
+      "description": "The call to `bits.wrapping_shl(sh)` in this noncompliant example yields `bits << mask(sh)`,\nwhere `mask` removes any high-order bits of `sh` that would cause the shift to exceed  the bitwidth of `bits`.\nNote that this is not the same as a rotate-left.\nThe `wrapping_shl` has the same behavior as the `<<` operator in release mode.",
+      "rust_code": "fn main() {\n    let bits : u32 = 61;\n    let shifts = vec![4, 40];\n\n    for sh in shifts {\n        println!(\"{bits} << {sh} = {:?}\", bits.wrapping_shl(sh));\n    }\n}",
+      "options": {}
+    },
+    {
+      "example_id": "non_compl_ex_O9FZuazu3Lcx",
+      "status": "",
+      "description": "This noncompliant example uses `bits.unbounded_shr(sh)`.\nIf `sh` is larger or equal to the width of `bits`,\nthe entire value is shifted out,\nwhich yields 0 for a positive number,\nand -1 for a negative number.\nThe use of this function is noncompliant because it does not detect out-of-range shifts.",
+      "rust_code": "fn main() {\n    let bits : u32 = 61;\n    let shifts = vec![4, 40];\n\n    for sh in shifts {\n        println!(\"{bits} << {sh} = {:?}\", bits.unbounded_shr(sh));\n    }\n}",
+      "options": {
+        "version": "1.87"
+      }
+    },
+    {
+      "example_id": "non_compl_ex_O9FZuazu3Lcp",
+      "status": "",
+      "description": "The call to `bits.overflowing_shl(sh)` in this noncompliant shifts `bits` left by `sh` bits.\nReturns a tuple of the shifted version of self along with a boolean indicating whether the shift value was larger than or equal to the number of bits.\nIf the shift value is too large, then value is masked (N-1) where N is the number of bits, and this value is used to perform the shift.",
+      "rust_code": "fn main() {\n    let bits: u32 = 61;\n    let shifts = vec![4, 40];\n\n    for sh in shifts {\n        let (result, overflowed) = bits.overflowing_shl(sh);\n        if overflowed {\n            println!(\"{bits} << {sh} shift too large\");\n        } else {\n            println!(\"{bits} << {sh} = {result}\");\n        }\n    }\n}",
+      "options": {}
+    }
+  ],
+  "compliant_examples": [
+    {
+      "example_id": "compl_ex_xpPQqYeEPGIo",
+      "status": "",
+      "description": "This compliant example performs left shifts via the `u32::checked_shl`\nfunction and right shifts via the `u32::checked_shr` function.\nBoth of these functions are defined in `core`.\n\n  `<T>::checked_shl(M)` returns a value of type `Option<T>`:\n\n  * If `M < 0`\\ , the output is `None`\n  * If `0 <= M < N` for `T` of size `N` bits, then the output is `Some(T)`\n  * If `N <= M`\\ , the output is `None`\n\n  Checked shift operations make programmer intent explicit and eliminates out-of-range shifts.\n  Shifting by:\n\n  * negative values is impossible because `checked_shl` only accepts unsigned integers as shift lengths, and\n  * greater than or equal to the number of bits that exist in the left operand returns a `None` value.",
+      "rust_code": "fn main() {\n    let bits : u32 = 61;\n    // let shifts = vec![-1, 4, 40];\n    //                    ^--- Compiler rejects negative shifts\n    let shifts = vec![4, 40];\n\n    for sh in shifts {\n        println!(\"{bits} << {sh} = {:?}\", bits.checked_shl(sh));\n    }\n}",
+      "options": {}
+    }
+  ],
+  "references": [
+    {
+      "key": "gui_RHvQj8BHlz9b:CERT-C-INT34",
+      "description": "SEI CERT C Coding Standard. \"INT34-C. Do not shift an expression by a negative number of bits.\" https://wiki.sei.cmu.edu/confluence/x/ItcxBQ"
+    },
+    {
+      "key": "gui_RHvQj8BHlz9b:FLS-BIT-EXPRESSIONS",
+      "description": "The Rust FLS. \"Expressions - Bit Expressions.\" https://rust-lang.github.io/fls/expressions.html#bit-expressions"
+    },
+    {
+      "key": "gui_RHvQj8BHlz9b:FLS-ISSUE-632",
+      "description": "The Rust FLS Repository. \"Issue 632.\" https://github.com/rust-lang/fls/issues/632"
+    }
+  ],
+  "citations": [
+    "gui_RHvQj8BHlz9b:CERT-C-INT34",
+    "gui_RHvQj8BHlz9b:FLS-BIT-EXPRESSIONS",
+    "gui_RHvQj8BHlz9b:FLS-ISSUE-632"
+  ],
+  "std_refs": [
+    "u32::checked_shl",
+    "u32::checked_shr"
+  ],
+  "content_sha256": "dba428f765dd8778166f28b930edf1b7858558e43de34956219c36d4ef69c8f8"
+}

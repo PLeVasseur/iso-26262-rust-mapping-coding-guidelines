@@ -43,6 +43,8 @@ def main() -> int:
         ("schemas/corpus_registry.schema.json", "config/corpus_registry.yaml", True),
         ("schemas/change_growth_policy.schema.json", "config/change_growth_policy.yaml", True),
         ("schemas/completeness_policy.schema.json", "config/completeness_policy.yaml", True),
+        ("schemas/known_good_policy.schema.json", "config/known_good_policy.yaml", True),
+        ("schemas/alignment_policy.schema.json", "config/alignment_policy.yaml", True),
         ("schemas/seed_manifest.schema.json", "seeds/seed_manifest.yaml", True),
         ("schemas/run_registry.schema.json", "data/run_registry.yaml", True),
         ("schemas/clippy_lints_catalog.schema.json", "data/clippy_lints_catalog.yaml", True),
@@ -59,6 +61,21 @@ def main() -> int:
         (
             "schemas/decomposition_report.schema.json",
             "data/decomposition_report.yaml",
+            args.strict_generated,
+        ),
+        (
+            "schemas/known_good_manifest.schema.json",
+            "benchmarks/known-good/manifest.yaml",
+            args.strict_generated,
+        ),
+        (
+            "schemas/known_good_features.schema.json",
+            "benchmarks/known-good/features/baseline.json",
+            args.strict_generated,
+        ),
+        (
+            "schemas/known_good_alignment_report.schema.json",
+            "benchmarks/known-good/reports/alignment_report.json",
             args.strict_generated,
         ),
     ]
@@ -105,6 +122,12 @@ def main() -> int:
         "schemas/diffset_review.schema.json",
         "schemas/fls_inventory.schema.json",
         "schemas/fls_target_candidates.schema.json",
+        "schemas/alignment_policy.schema.json",
+        "schemas/known_good_alignment_report.schema.json",
+        "schemas/known_good_canonical.schema.json",
+        "schemas/known_good_features.schema.json",
+        "schemas/known_good_manifest.schema.json",
+        "schemas/known_good_policy.schema.json",
     ]
     for rel_path in required_schema_files:
         schema_path = root / rel_path
@@ -126,6 +149,32 @@ def main() -> int:
                     )
                 else:
                     validated += 1
+        else:
+            skipped += 1
+
+    canonical_schema_path = root / "schemas" / "known_good_canonical.schema.json"
+    canonical_dir = root / "benchmarks" / "known-good" / "canonical"
+    if canonical_schema_path.exists():
+        canonical_files = sorted(canonical_dir.glob("*.json"))
+        if canonical_files:
+            for canonical_file in canonical_files:
+                errors = validate_pair(canonical_schema_path, canonical_file)
+                if errors:
+                    failures.append(
+                        {
+                            "file": str(canonical_file.relative_to(root)),
+                            "errors": errors,
+                        }
+                    )
+                else:
+                    validated += 1
+        elif args.strict_generated:
+            failures.append(
+                {
+                    "file": "benchmarks/known-good/canonical",
+                    "errors": ["no canonical benchmark files found"],
+                }
+            )
         else:
             skipped += 1
 

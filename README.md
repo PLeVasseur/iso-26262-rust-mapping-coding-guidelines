@@ -18,8 +18,15 @@ This repo hosts the operational workflow for growing Rust coding guideline cover
    - `data/target_scope.yaml`
 6. Scaffold/refresh rule fixture examples under `tests/guidelines/<RULE_ID>/examples/`.
 7. Run schema/completeness/example gates plus traceability, decomposition, FLS proxy, quality, and licensing checks.
-8. Compute before/after deltas for `change` and `growth` modes.
-9. Promote approved outputs into `data/` and update run registry.
+8. Refresh benchmark-quality known-good pack and alignment baseline:
+   - `benchmarks/known-good/manifest.yaml`
+   - `benchmarks/known-good/upstream-rst/`
+   - `benchmarks/known-good/markdown/`
+   - `benchmarks/known-good/canonical/`
+   - `benchmarks/known-good/features/baseline.json`
+   - `benchmarks/known-good/reports/alignment_report.json`
+9. Compute before/after deltas for `change` and `growth` modes.
+10. Promote approved outputs into `data/` and update run registry.
 
 ## Tooling
 
@@ -53,9 +60,19 @@ uv run python scripts/check_guideline_examples.py
 uv run python scripts/check_rule_decomposition.py
 uv run python scripts/check_fls_proxy_coverage.py
 uv run python scripts/check_guideline_quality.py
+uv run python scripts/check_known_good_alignment.py
 uv run python scripts/check_traceability.py
 uv run python scripts/check_licensing_guard.py
 ```
+
+Known-good benchmark refresh pipeline:
+
+```bash
+uv run python scripts/refresh_known_good_pack.py
+```
+
+`config/alignment_policy.yaml` supports progressive controller tightening via
+`controller_progression` (iteration-ramped thresholds and gate mode).
 
 4. After reviewer sign-off, register/refresh accepted run entries in `data/run_registry.yaml`.
 
@@ -133,7 +150,9 @@ uv run python scripts/check_guideline_examples.py
 uv run python scripts/check_rule_decomposition.py
 uv run python scripts/check_fls_proxy_coverage.py
 uv run python scripts/check_guideline_quality.py
+uv run python scripts/check_known_good_alignment.py
 uv run python scripts/review_diffset.py --after-run <run_id>
 uv run python scripts/scaffold_guideline_fixtures.py
 uv run python scripts/autonomous_controller.py --session-id run-001
+uv run python scripts/refresh_known_good_pack.py
 ```

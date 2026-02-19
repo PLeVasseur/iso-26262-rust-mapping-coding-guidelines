@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Known Good Feature Baseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "generated_at",
+    "source_pack_id",
+    "active_tier",
+    "feature_stats",
+    "dimension_weights",
+    "guideline_count"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_pack_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "active_tier": {
+      "type": "string",
+      "enum": ["strict", "extended", "all"]
+    },
+    "guideline_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "feature_stats": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/stats"
+      }
+    },
+    "dimension_weights": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "mean", "median", "p10", "p25", "p50", "p75", "p90"],
+      "properties": {
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "mean": {
+          "type": "number"
+        },
+        "median": {
+          "type": "number"
+        },
+        "p10": {
+          "type": "number"
+        },
+        "p25": {
+          "type": "number"
+        },
+        "p50": {
+          "type": "number"
+        },
+        "p75": {
+          "type": "number"
+        },
+        "p90": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

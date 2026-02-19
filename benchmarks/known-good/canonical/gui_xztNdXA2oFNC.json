@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "guideline_id": "gui_xztNdXA2oFNC",
+  "title": "Use strong types to differentiate between logically distinct values",
+  "source_path": "src/coding-guidelines/types-and-traits/gui_xztNdXA2oFNC.rst",
+  "source_sha": "1c7d6bb9448a25401db3b411d1783cd4e78fc718",
+  "tier": "extended",
+  "metadata": {
+    "id": "gui_xztNdXA2oFNC",
+    "category": "advisory",
+    "status": "draft",
+    "release": "1.85.0;1.85.1",
+    "fls": "fls_cokwseo3nnr",
+    "decidability": "undecidable",
+    "scope": "module",
+    "tags": [
+      "types",
+      "safety",
+      "understandability"
+    ]
+  },
+  "rule_text": "Parameters and variables with logically distinct types must be statically distinguishable by the type system.\n\nUse a newtype (e.g., `struct Meters(u32);`) when:\n\n* Two or more quantities share the same underlying primitive representation but are logically distinct\n* Confusing them would constitute a semantic error\n* You need to improve type safety and encapsulation\n* You need to enable trait-based behavior\n* You need to establish new invariants",
+  "rationale_text": "This rule ensures that parameters and variables convey intent directly through the type system to avoid accidental misuse of values with identical primitives but different semantics.\nIn particular:\n\n* Prevents mixing logically distinct values.\n  Primitive types like `u32` or `u64` can represent lengths, counters, timestamps, durations, IDs, or other values.\n  Different semantic domains can be confused, leading to incorrect computations.\n  The Rust type system prevents such mistakes when semantics are encoded into distinct types.\n* Improves static safety.\n  Statically distinct types allow the compiler to enforce domain distinctions.\n  Accidental swapping of parameters or returning the wrong quantity becomes a compile-time error.\n* Improves readability and discoverability.\n  Intent-revealing names (`Meters`, `Seconds`, `UserId`) make code self-documenting.\n  Type signatures become easier to read and understand.\n* Enables domain-specific trait implementations.\n  Statically distinct types allow you to implement `Add`, `Mul`, or custom traits in ways that match the domain logic.\n  Aliases cannot do this, because they are not distinct types.\n* Supports API evolution.\n  Statically distinct types act as strong API contracts that can evolve independently from their underlying representations.",
+  "non_compliant_examples": [
+    {
+      "example_id": "non_compl_ex_PO5TyFsRTlWw",
+      "status": "",
+      "description": "This noncompliant example uses primitive types directly, leading to potential confusion between `distance` and `time`.\nNothing prevents the caller from passing `time` as `distance` or vice-versa.\nThe units of each type are not clear from the function signature alone.\nMistakes compile cleanly and silently produce wrong results.",
+      "rust_code": "fn travel(distance: u32, time: u32) -> u32 {\n   distance / time\n}\n\nfn main() {\n   let d = 100;\n   let t = 10;\n   let _result = travel(t, d);  // Compiles, but semantically incorrect\n}",
+      "options": {}
+    },
+    {
+      "example_id": "non_compl_ex_PO5TyFsRTlWv",
+      "status": "",
+      "description": "This noncompliant example uses aliases instead of distinct types.\nAliases do not create new types, so the compiler cannot enforce distinctions between `Meters` and `Seconds`.\n\nAliases cannot do this, because they are not distinct types.\nThis noncompliant example uses primitive types directly, leading to potential confusion between `distance` and `time`.\nNothing prevents the caller from passing `time` as `distance` or vice-versa.\nThe units of each type are not clear from the function signature alone.\nMistakes compile cleanly and silently produce wrong results.",
+      "rust_code": "type Meters = u32;\ntype Seconds = u32;\ntype MetersPerSecond = u32;\n\nfn travel(distance: Meters, time: Seconds) -> MetersPerSecond {\n   distance / time\n}\n\nfn main() {\n   let d: Meters = 100;\n   let t: Seconds = 10;\n   let _result = travel(t, d);  // Compiles, but semantically incorrect\n}",
+      "options": {}
+    }
+  ],
+  "compliant_examples": [
+    {
+      "example_id": "compl_ex_WTe7GoPu5Ez1",
+      "status": "",
+      "description": "This compliant example uses newtypes to create distinct types for `Meters`, `Seconds`, and `MetersPerSecond`.\nThe compiler enforces correct usage, preventing accidental swapping of parameters.\nThe function signature clearly conveys the intended semantics of each parameter and return value.",
+      "rust_code": "use std::ops::Div;\n\n#[derive(Debug, Clone, Copy)]\nstruct Meters(u32);\n\n#[derive(Debug, Clone, Copy)]\nstruct Seconds(u32);\n\n#[derive(Debug, Clone, Copy)]\nstruct MetersPerSecond(u32);\n\nimpl Div<Seconds> for Meters {\n    type Output = MetersPerSecond;\n\n    fn div(self, rhs: Seconds) -> Self::Output {\n         MetersPerSecond(self.0 / rhs.0)\n    }\n }\n\n fn main() {\n     let d = Meters(100);\n     let t = Seconds(10);\n     let result = d / t;  // Clean and type-safe!\n     println!(\"Speed: {} m/s\", result.0);  // Access the inner value\n }",
+      "options": {}
+    }
+  ],
+  "references": [],
+  "citations": [],
+  "std_refs": [],
+  "content_sha256": "3d10dec5c3ee860154e10da8bdce31e841b61fe52a62b3e4cfd4bd9aca7d3925"
+}

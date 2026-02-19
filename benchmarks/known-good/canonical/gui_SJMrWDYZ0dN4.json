@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "guideline_id": "gui_SJMrWDYZ0dN4",
+  "title": "Names in a macro definition shall use a fully qualified path",
+  "source_path": "src/coding-guidelines/macros/gui_SJMrWDYZ0dN4.rst",
+  "source_sha": "1c7d6bb9448a25401db3b411d1783cd4e78fc718",
+  "tier": "extended",
+  "metadata": {
+    "id": "gui_SJMrWDYZ0dN4",
+    "category": "required",
+    "status": "draft",
+    "release": "1.85.0;1.85.1",
+    "fls": "fls_7kb6ltajgiou",
+    "decidability": "decidable",
+    "scope": "module",
+    "tags": [
+      "reduce-human-error"
+    ]
+  },
+  "rule_text": "Each name inside of the definition of a macro shall either use a global path or path prefixed with $crate.",
+  "rationale_text": "Using a path that refers to an entity relatively inside of a macro subjects it to path resolution\nresults which may change depending on where the macro is used. The intended path to refer to an entity\ncan be shadowed when using a macro leading to unexpected behaviors. This could lead to developer confusion\nabout why a macro behaves differently in diffenent locations, or confusion about where entity in a macro\nwill resolve to.",
+  "non_compliant_examples": [
+    {
+      "example_id": "non_compl_ex_m2XR1ihTbCQS",
+      "status": "",
+      "description": "The following is a macro which shows referring to a vector entity using a non-global path. Depending on\nwhere the macro is used a different `Vec` could be used than is intended. If scope where this is used\ndefines a struct `Vec` which is not preset at the macro definition, the macro user might be intending to\nuse that in the macro.",
+      "rust_code": "#[macro_export]\nmacro_rules! my_vec {\n    ( $( $x:expr ),* ) => {\n        {\n            let mut temp_vec = Vec::new(); // non-global path\n            $(\n                temp_vec.push($x);\n            )*\n            temp_vec\n        }\n    };\n}\n\nfn main() {\n    let _ = my_vec![1, 2, 3];\n}",
+      "options": {}
+    }
+  ],
+  "compliant_examples": [
+    {
+      "example_id": "compl_ex_xyaShvxL9JAM",
+      "status": "",
+      "description": "The following is a macro refers to Vec using a global path. Even if there is a different struct called\n`Vec` defined in the scope of the macro usage, this macro will unambiguously use the `Vec` from the\nStandard Library.",
+      "rust_code": "#[macro_export]\nmacro_rules! my_vec_global {\n    ( $( $x:expr ),* ) => {\n        {\n            let mut temp_vec = ::std::vec::Vec::new(); // global path\n            $(\n                temp_vec.push($x);\n            )*\n            temp_vec\n        }\n    };\n}\n\nfn main() {\n    let _ = my_vec_global![1, 2, 3];\n}",
+      "options": {}
+    }
+  ],
+  "references": [],
+  "citations": [],
+  "std_refs": [],
+  "content_sha256": "50f35ff23116ec6baed0c2a3bcc761a88c463dd1ec72a1d1e0adb214221efb44"
+}

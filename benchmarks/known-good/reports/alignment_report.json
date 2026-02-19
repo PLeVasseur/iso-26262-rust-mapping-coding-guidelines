@@ -1,0 +1,1410 @@
+{
+  "version": 1,
+  "generated_at": "2026-02-19T02:08:28+00:00",
+  "benchmark_pack_id": "known-good-1c7d6bb9448a",
+  "active_tier": "strict",
+  "gate_mode": "warn",
+  "thresholds": {
+    "min_global_alignment": 0.75,
+    "min_changed_guideline_alignment": 0.8,
+    "granularity_outliers_allowed": 0
+  },
+  "guideline_count": 27,
+  "average_alignment_score": 0.687065,
+  "warning_count": 28,
+  "error_count": 0,
+  "guideline_results": [
+    {
+      "guideline_id": "RG-10299F77BE61",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016393,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 61.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.253722
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.197052
+        },
+        {
+          "guideline_id": "gui_kMbiWbn8Z6g5",
+          "similarity": 0.192066
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-1E3A1235235C",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.330531
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-1E8B8CE3DBF1",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.338262
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-230964AF44D4",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.015873,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 63.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.258928
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.188527
+        },
+        {
+          "guideline_id": "gui_kMbiWbn8Z6g5",
+          "similarity": 0.183756
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-262BBEC1A2A9",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016393,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 61.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.26218
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.197052
+        },
+        {
+          "guideline_id": "gui_kMbiWbn8Z6g5",
+          "similarity": 0.192066
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-34FDD6EFE8ED",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.015873,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 63.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.250837
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.188527
+        },
+        {
+          "guideline_id": "gui_kMbiWbn8Z6g5",
+          "similarity": 0.183756
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-587CE115D9C8",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.330531
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-5B4923F76EEA",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.330531
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-697000BF3263",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016949,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 59.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.245265
+        },
+        {
+          "guideline_id": "gui_Bib7x9KmPq2nL",
+          "similarity": 0.205603
+        },
+        {
+          "guideline_id": "gui_Bob7x9KmPq2nL",
+          "similarity": 0.205603
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-7359C842E4E4",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.330531
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-744267BD9DEC",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016949,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 59.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.26218
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.206218
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.200527
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-75D65B270D75",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.338262
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-7CB86E3EA294",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.330531
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-82B1F0353FD0",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016949,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 59.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.245265
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.206218
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.200527
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-90F9CF8770E1",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.330531
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-956D02940FC5",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.015873,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 63.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.250837
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.197296
+        },
+        {
+          "guideline_id": "gui_RHvQj8BHlz9b",
+          "similarity": 0.188689
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-9B66370DEE3A",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016949,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 59.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.245265
+        },
+        {
+          "guideline_id": "gui_Bib7x9KmPq2nL",
+          "similarity": 0.205603
+        },
+        {
+          "guideline_id": "gui_Bob7x9KmPq2nL",
+          "similarity": 0.205603
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-9BA71FE474B2",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.015873,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 63.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.250837
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.197296
+        },
+        {
+          "guideline_id": "gui_RHvQj8BHlz9b",
+          "similarity": 0.188689
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-9E4C0961E7E2",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016949,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 59.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.245265
+        },
+        {
+          "guideline_id": "gui_Bib7x9KmPq2nL",
+          "similarity": 0.205603
+        },
+        {
+          "guideline_id": "gui_Bob7x9KmPq2nL",
+          "similarity": 0.205603
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-A0B720294566",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016393,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 61.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.270637
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.197052
+        },
+        {
+          "guideline_id": "gui_kMbiWbn8Z6g5",
+          "similarity": 0.192066
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-A313BE9C58CB",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016949,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 59.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.250837
+        },
+        {
+          "guideline_id": "gui_Bib7x9KmPq2nL",
+          "similarity": 0.196708
+        },
+        {
+          "guideline_id": "gui_Bob7x9KmPq2nL",
+          "similarity": 0.196708
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-C5BAB6CA4D74",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016393,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 61.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.270637
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.197052
+        },
+        {
+          "guideline_id": "gui_kMbiWbn8Z6g5",
+          "similarity": 0.192066
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-C86203555EAD",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016949,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 59.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.245265
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.206218
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.200527
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-D2DBBE48588A",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 2.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.015873,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 63.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.250837
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.197296
+        },
+        {
+          "guideline_id": "gui_RHvQj8BHlz9b",
+          "similarity": 0.188689
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-D3EBCE5ABB2A",
+      "alignment_score": 0.719238,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.867022,
+        "citations": 0.5,
+        "granularity": 0.25
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 47.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.0,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.016949,
+        "example_avg_explanation_words": 19.5,
+        "example_code_block_count": 2.0,
+        "example_diversity": 1.0,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 59.0,
+        "rust_term_density": 0.0,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.245265
+        },
+        {
+          "guideline_id": "gui_Bib7x9KmPq2nL",
+          "similarity": 0.205603
+        },
+        {
+          "guideline_id": "gui_Bob7x9KmPq2nL",
+          "similarity": 0.205603
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-DCC941884F0D",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.330531
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.274405
+        },
+        {
+          "guideline_id": "gui_RHvQj8BHlz9b",
+          "similarity": 0.264211
+        }
+      ]
+    },
+    {
+      "guideline_id": "RG-DE2CEFDCD9D7",
+      "alignment_score": 0.632371,
+      "dimension_scores": {
+        "structure": 1.0,
+        "specificity": 0.666667,
+        "evidence": 0.257194,
+        "citations": 0.5,
+        "granularity": 0.48399
+      },
+      "feature_values": {
+        "bibliography_present": 1.0,
+        "citation_count": 3.0,
+        "code_token_total": 23.0,
+        "compliant_examples_count": 1.0,
+        "concept_count": 1.0,
+        "concepts_per_100_words": 0.558659,
+        "conditions_per_100_words": 0.0,
+        "constraint_phrase_density": 0.042857,
+        "example_avg_explanation_words": 32.0,
+        "example_code_block_count": 1.0,
+        "example_diversity": 0.5,
+        "examples_per_concept": 2.0,
+        "examples_total": 2.0,
+        "non_compliant_examples_count": 1.0,
+        "rationale_present": 1.0,
+        "rule_word_count": 70.0,
+        "rust_term_density": 0.005587,
+        "section_count": 5.0
+      },
+      "flags": [
+        "benchmark_similarity_gap",
+        "citation_coverage_low",
+        "example_depth_too_shallow",
+        "known_good_alignment_gap"
+      ],
+      "nearest_neighbors": [
+        {
+          "guideline_id": "gui_ZDLZzjeOwLSU",
+          "similarity": 0.330531
+        },
+        {
+          "guideline_id": "gui_LvmzGKdsAgI5",
+          "similarity": 0.266026
+        },
+        {
+          "guideline_id": "gui_ot2Zt3dd6of1",
+          "similarity": 0.256649
+        }
+      ]
+    }
+  ],
+  "warnings": [
+    "RG-10299F77BE61 alignment score 0.719 < threshold 0.800",
+    "RG-1E3A1235235C alignment score 0.632 < threshold 0.800",
+    "RG-1E8B8CE3DBF1 alignment score 0.632 < threshold 0.800",
+    "RG-230964AF44D4 alignment score 0.719 < threshold 0.800",
+    "RG-262BBEC1A2A9 alignment score 0.719 < threshold 0.800",
+    "RG-34FDD6EFE8ED alignment score 0.719 < threshold 0.800",
+    "RG-587CE115D9C8 alignment score 0.632 < threshold 0.800",
+    "RG-5B4923F76EEA alignment score 0.632 < threshold 0.800",
+    "RG-697000BF3263 alignment score 0.719 < threshold 0.800",
+    "RG-7359C842E4E4 alignment score 0.632 < threshold 0.800",
+    "RG-744267BD9DEC alignment score 0.719 < threshold 0.800",
+    "RG-75D65B270D75 alignment score 0.632 < threshold 0.800",
+    "RG-7CB86E3EA294 alignment score 0.632 < threshold 0.800",
+    "RG-82B1F0353FD0 alignment score 0.719 < threshold 0.800",
+    "RG-90F9CF8770E1 alignment score 0.632 < threshold 0.800",
+    "RG-956D02940FC5 alignment score 0.719 < threshold 0.800",
+    "RG-9B66370DEE3A alignment score 0.719 < threshold 0.800",
+    "RG-9BA71FE474B2 alignment score 0.719 < threshold 0.800",
+    "RG-9E4C0961E7E2 alignment score 0.719 < threshold 0.800",
+    "RG-A0B720294566 alignment score 0.719 < threshold 0.800",
+    "RG-A313BE9C58CB alignment score 0.719 < threshold 0.800",
+    "RG-C5BAB6CA4D74 alignment score 0.719 < threshold 0.800",
+    "RG-C86203555EAD alignment score 0.719 < threshold 0.800",
+    "RG-D2DBBE48588A alignment score 0.719 < threshold 0.800",
+    "RG-D3EBCE5ABB2A alignment score 0.719 < threshold 0.800",
+    "RG-DCC941884F0D alignment score 0.632 < threshold 0.800",
+    "RG-DE2CEFDCD9D7 alignment score 0.632 < threshold 0.800",
+    "global alignment 0.687 < threshold 0.750"
+  ],
+  "errors": [],
+  "ok": true
+}
