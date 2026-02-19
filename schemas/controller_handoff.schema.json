@@ -58,6 +58,23 @@
       "type": "integer",
       "minimum": 1
     },
+    "last_iteration_decision": {
+      "type": "string"
+    },
+    "last_selected_by": {
+      "type": "string",
+      "enum": ["none", "deterministic", "llm", "fallback"]
+    },
+    "last_selection_reason": {
+      "type": "string"
+    },
+    "last_commit_sha": {
+      "type": "string"
+    },
+    "decision_fallback_count": {
+      "type": "integer",
+      "minimum": 0
+    },
     "lane_status": {
       "type": "object"
     },

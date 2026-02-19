@@ -112,6 +112,25 @@ Run iterative autonomous improvements using the controller loop:
 uv run python scripts/autonomous_controller.py --session-id run-001
 ```
 
+By default, accepted iterations create commits for controller-mutated guideline artifacts.
+Disable this only for debugging:
+
+```bash
+uv run python scripts/autonomous_controller.py --session-id run-001 --no-commit-on-accept
+```
+
+Run exactly one iteration (worker mode for supervisor orchestration):
+
+```bash
+uv run python scripts/autonomous_controller.py --resume-session run-001 --single-iteration
+```
+
+Run the fresh-process supervisor loop (spawns one fresh worker per iteration):
+
+```bash
+uv run python scripts/controller_supervisor.py --session-id run-001 --max-loops 20
+```
+
 Controller artifacts are written under:
 
 - `.cache/controller/<session_id>/state.json`
@@ -134,6 +153,9 @@ Tune beam bundle search and full-pass reranking:
 uv run python scripts/autonomous_controller.py --session-id run-001 --beam-width 6 --max-actions-per-bundle 3 --full-eval-top-k 2
 ```
 
+Decisioning policy is configured in `config/controller_decision_policy.yaml`.
+When LLM decisioning is disabled or invalid, controller selection falls back to deterministic ranking.
+
 Guideline v3 field semantics are documented in `docs/guideline-record-spec.md`.
 Clippy status assignment guidance is documented in `docs/clippy-feasibility-guidance.md`.
 
@@ -151,6 +173,7 @@ uv run python scripts/check_rule_decomposition.py
 uv run python scripts/check_fls_proxy_coverage.py
 uv run python scripts/check_guideline_quality.py
 uv run python scripts/check_known_good_alignment.py
+uv run python scripts/controller_supervisor.py --session-id run-001 --max-loops 5
 uv run python scripts/review_diffset.py --after-run <run_id>
 uv run python scripts/scaffold_guideline_fixtures.py
 uv run python scripts/autonomous_controller.py --session-id run-001

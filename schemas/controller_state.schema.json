@@ -72,6 +72,32 @@
     "last_orchestrate_run_id": {
       "type": "string"
     },
+    "last_iteration_decision": {
+      "type": "string",
+      "enum": [
+        "",
+        "accepted",
+        "rejected",
+        "stall",
+        "stop-success",
+        "stop-blocked",
+        "stop-error"
+      ]
+    },
+    "last_selected_by": {
+      "type": "string",
+      "enum": ["none", "deterministic", "llm", "fallback"]
+    },
+    "last_selection_reason": {
+      "type": "string"
+    },
+    "last_commit_sha": {
+      "type": "string"
+    },
+    "decision_fallback_count": {
+      "type": "integer",
+      "minimum": 0
+    },
     "corpus_pack": {
       "type": "string"
     },
@@ -102,6 +128,16 @@
             "minLength": 1
           },
           "note": {
+            "type": "string"
+          },
+          "selected_by": {
+            "type": "string",
+            "enum": ["none", "deterministic", "llm", "fallback"]
+          },
+          "selection_reason": {
+            "type": "string"
+          },
+          "commit_sha": {
             "type": "string"
           }
         }

@@ -27,6 +27,7 @@ from _common import (
     write_yaml,
 )
 from controller_actions import apply_candidate, generate_candidates
+from controller_decision import build_decision_packet, resolve_candidate_selection
 from controller_observe import observe_repo
 from controller_scoring import (
     evaluation_sort_key,
@@ -45,10 +46,20 @@ MUTABLE_PATHS = [
     "tests/guidelines",
 ]
 
+COMMIT_PATHS = [
+    "data/todo_guidelines.yaml",
+    "data/coverage_matrix.csv",
+    "data/guideline_categories.yaml",
+    "data/target_scope.yaml",
+    "data/decomposition_report.yaml",
+    "tests/guidelines",
+]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run autonomous convergence controller")
     parser.add_argument("--session-id", default="autonomous")
+    parser.add_argument("--resume-session")
     parser.add_argument("--mode", choices=["change", "growth"], default="growth")
     parser.add_argument("--profile", choices=["quick", "full"], default="quick")
     parser.add_argument("--max-iterations", type=int, default=30)
@@ -59,12 +70,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--full-eval-top-k", type=int, default=2)
     parser.add_argument("--success-window", type=int, default=3)
     parser.add_argument("--suppress-after-failures", type=int, default=2)
-    parser.add_argument("--commit-each-accept", action="store_true")
+    parser.set_defaults(commit_on_accept=True)
+    parser.add_argument("--commit-each-accept", dest="commit_on_accept", action="store_true")
+    parser.add_argument("--no-commit-on-accept", dest="commit_on_accept", action="store_false")
+    parser.add_argument("--single-iteration", action="store_true")
+    parser.add_argument(
+        "--decision-policy",
+        type=Path,
+        default=Path("config/controller_decision_policy.yaml"),
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--use-orchestrate", action="store_true")
     parser.add_argument("--allow-bootstrap", action="store_true")
     parser.add_argument("--corpus-pack")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.resume_session and str(args.resume_session).strip():
+        args.session_id = str(args.resume_session).strip()
+    return args
 
 
 def controller_paths(root: Path, session_id: str) -> dict[str, Path]:
@@ -96,6 +118,11 @@ def _default_state(args: argparse.Namespace, corpus_pack: str) -> dict[str, Any]
         "bundle_failure_counts": {},
         "candidate_signatures": [],
         "last_orchestrate_run_id": "",
+        "last_iteration_decision": "",
+        "last_selected_by": "none",
+        "last_selection_reason": "",
+        "last_commit_sha": "",
+        "decision_fallback_count": 0,
         "corpus_pack": corpus_pack,
         "handoff_recommendation": "blocked",
         "started_at": utc_now(),
@@ -131,16 +158,22 @@ def append_history(
     decision: str,
     note: str,
     candidate_id: str,
+    selected_by: str = "none",
+    selection_reason: str = "",
+    commit_sha: str = "",
 ) -> None:
-    state["history"].append(
-        {
-            "iteration": iteration,
-            "decision": decision,
-            "candidate_id": candidate_id,
-            "recorded_at": utc_now(),
-            "note": note,
-        }
-    )
+    payload = {
+        "iteration": iteration,
+        "decision": decision,
+        "candidate_id": candidate_id,
+        "recorded_at": utc_now(),
+        "note": note,
+        "selected_by": selected_by,
+        "selection_reason": selection_reason,
+    }
+    if commit_sha:
+        payload["commit_sha"] = commit_sha
+    state["history"].append(payload)
 
 
 def write_dashboard(
@@ -330,32 +363,130 @@ def evaluate_candidate(
         return evaluation
 
 
-def commit_iteration(root: Path, iteration: int, candidate_id: str) -> tuple[bool, str]:
-    add_command = [
-        "git",
-        "add",
-        "data/todo_guidelines.yaml",
-        "data/coverage_matrix.csv",
-        "data/guideline_categories.yaml",
-        "data/target_scope.yaml",
-        "data/decomposition_report.yaml",
-        "tests/guidelines",
-    ]
-    add_result = run_command(add_command, cwd=root)
+def _is_allowed_commit_path(path: str) -> bool:
+    cleaned = path.strip()
+    for allowed in COMMIT_PATHS:
+        if cleaned == allowed:
+            return True
+        if cleaned.startswith(f"{allowed}/"):
+            return True
+    return False
+
+
+def _staged_paths(root: Path) -> tuple[bool, list[str], str]:
+    completed = run_command(["git", "diff", "--cached", "--name-only"], cwd=root)
+    if completed.returncode != 0:
+        return False, [], completed.stderr or completed.stdout
+    values = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    return True, values, ""
+
+
+def commit_iteration(
+    root: Path,
+    session_id: str,
+    iteration: int,
+    candidate_id: str,
+    selected_by: str,
+    selected_profile: str,
+    run_id: str,
+) -> dict[str, Any]:
+    staged_ok, staged_before, staged_error = _staged_paths(root)
+    if not staged_ok:
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "failed reading staged paths",
+            "output": staged_error,
+        }
+
+    unexpected_before = [path for path in staged_before if not _is_allowed_commit_path(path)]
+    if unexpected_before:
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "unexpected pre-staged paths",
+            "output": ", ".join(sorted(unexpected_before)),
+        }
+
+    add_result = run_command(["git", "add", *COMMIT_PATHS], cwd=root)
     if add_result.returncode != 0:
-        return False, add_result.stderr or add_result.stdout
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "git add failed",
+            "output": add_result.stderr or add_result.stdout,
+        }
 
-    status_result = run_command(["git", "status", "--short"], cwd=root)
-    if status_result.returncode != 0:
-        return False, status_result.stderr or status_result.stdout
-    if not status_result.stdout.strip():
-        return True, "no changes to commit"
+    staged_ok, staged_after, staged_error = _staged_paths(root)
+    if not staged_ok:
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "failed reading staged paths",
+            "output": staged_error,
+        }
 
-    commit_message = f"chore(controller): accept iteration {iteration} {candidate_id}"
-    commit_result = run_command(["git", "commit", "-m", commit_message], cwd=root)
+    unexpected_after = [path for path in staged_after if not _is_allowed_commit_path(path)]
+    if unexpected_after:
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "unexpected staged paths",
+            "output": ", ".join(sorted(unexpected_after)),
+        }
+
+    if not staged_after:
+        return {
+            "ok": True,
+            "committed": False,
+            "commit_sha": "",
+            "message": "no relevant changes to commit",
+            "output": "",
+        }
+
+    subject = f"chore(controller-loop): accept {session_id} i{iteration:03d} {candidate_id}"
+    body = "\n".join(
+        [
+            f"Controller-Session: {session_id}",
+            f"Controller-Iteration: {iteration}",
+            f"Controller-Candidate: {candidate_id}",
+            f"Controller-Selected-By: {selected_by}",
+            f"Controller-Profile: {selected_profile}",
+            f"Controller-Run-Id: {run_id or 'none'}",
+        ]
+    )
+    commit_result = run_command(["git", "commit", "-m", subject, "-m", body], cwd=root)
     if commit_result.returncode != 0:
-        return False, commit_result.stderr or commit_result.stdout
-    return True, commit_result.stdout
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "git commit failed",
+            "output": commit_result.stderr or commit_result.stdout,
+        }
+
+    sha_result = run_command(["git", "rev-parse", "HEAD"], cwd=root)
+    if sha_result.returncode != 0:
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "failed resolving commit sha",
+            "output": sha_result.stderr or sha_result.stdout,
+        }
+
+    return {
+        "ok": True,
+        "committed": True,
+        "commit_sha": sha_result.stdout.strip(),
+        "message": subject,
+        "output": commit_result.stdout,
+    }
 
 
 def write_blocker_report(
@@ -391,6 +522,9 @@ def write_iteration_record(
     decision: str,
     selected_candidate_id: str,
     after_observation: dict[str, Any] | None = None,
+    selection_source: str = "none",
+    selection_reason: str = "",
+    commit: dict[str, Any] | None = None,
 ) -> None:
     payload = {
         "version": 1,
@@ -402,8 +536,12 @@ def write_iteration_record(
         "evaluations": evaluations,
         "decision": decision,
         "selected_candidate_id": selected_candidate_id,
+        "selection_source": selection_source,
+        "selection_reason": selection_reason,
         "recorded_at": utc_now(),
     }
+    if commit:
+        payload["commit"] = commit
     write_json(iteration_dir / "iteration.json", payload)
 
 
@@ -563,6 +701,11 @@ def write_handoff_package(
         "run_id": run_id,
         "consecutive_successes": int(state.get("consecutive_successes", 0)),
         "required_success_window": args.success_window,
+        "last_iteration_decision": str(state.get("last_iteration_decision") or ""),
+        "last_selected_by": str(state.get("last_selected_by") or "none"),
+        "last_selection_reason": str(state.get("last_selection_reason") or ""),
+        "last_commit_sha": str(state.get("last_commit_sha") or ""),
+        "decision_fallback_count": int(state.get("decision_fallback_count", 0)),
         "lane_status": lane_status,
         "delta_summary": delta_summary,
         "generated_at": utc_now(),
@@ -598,6 +741,10 @@ def write_handoff_package(
         f"- run_id: {run_id or 'none'}",
         f"- consecutive_successes: {state.get('consecutive_successes', 0)}",
         f"- required_success_window: {args.success_window}",
+        f"- last_iteration_decision: {state.get('last_iteration_decision', '')}",
+        f"- last_selected_by: {state.get('last_selected_by', 'none')}",
+        f"- last_commit_sha: {state.get('last_commit_sha', '') or 'none'}",
+        f"- decision_fallback_count: {state.get('decision_fallback_count', 0)}",
         f"- iso_lane_pass: {lane_status['iso_lane_pass']}",
         f"- decomposition_lane_pass: {lane_status['decomposition_lane_pass']}",
         f"- fls_lane_pass: {lane_status['fls_lane_pass']}",
@@ -665,6 +812,10 @@ def write_final_report(
         f"- no_improvement_count: {state['no_improvement_count']}",
         f"- consecutive_successes: {state['consecutive_successes']}",
         f"- last_orchestrate_run_id: {state.get('last_orchestrate_run_id', '')}",
+        f"- last_iteration_decision: {state.get('last_iteration_decision', '')}",
+        f"- last_selected_by: {state.get('last_selected_by', 'none')}",
+        f"- last_commit_sha: {state.get('last_commit_sha', '') or 'none'}",
+        f"- decision_fallback_count: {state.get('decision_fallback_count', 0)}",
         f"- handoff_recommendation: {handoff_recommendation}",
         f"- iso_obligation_coverage: {observation.get('iso_obligation_coverage', 0.0)}",
         f"- target_fanout_gap_count: {observation.get('target_fanout_gap_count', 0)}",
@@ -809,6 +960,16 @@ def apply_failure_feedback(state: dict[str, Any], evaluations: list[dict[str, An
     state["bundle_failure_counts"] = failure_counts
 
 
+def status_exit_code(status: str) -> int:
+    if status == "success":
+        return EXIT_SUCCESS
+    if status == "blocked":
+        return EXIT_POLICY_FAIL
+    if status == "error":
+        return EXIT_RUNTIME_FAIL
+    return EXIT_SUCCESS
+
+
 def main() -> int:
     args = parse_args()
     root = repo_root()
@@ -818,6 +979,11 @@ def main() -> int:
 
     state = load_or_init_state(paths, args, corpus_pack)
     save_state(paths, state)
+
+    current_status = str(state.get("status") or "running")
+    if current_status in {"success", "blocked", "error"}:
+        print(f"[controller] session already terminal: status={current_status}")
+        return status_exit_code(current_status)
 
     attempted_candidates: list[dict[str, Any]] = []
     handoff_recommendation = str(state.get("handoff_recommendation") or "blocked")
@@ -847,12 +1013,17 @@ def main() -> int:
                 state["last_orchestrate_run_id"] = str(orchestrate_report.get("run_id") or "")
             if not orchestrate_ok:
                 state["status"] = "error"
+                state["last_iteration_decision"] = "stop-error"
+                state["last_selected_by"] = "none"
+                state["last_selection_reason"] = "orchestrate_failure"
                 append_history(
                     state,
                     iteration,
                     "stop-error",
                     "orchestrate failed before observation",
                     "",
+                    selected_by="none",
+                    selection_reason="orchestrate_failure",
                 )
                 save_state(paths, state)
                 best_observation = state.get("best_observation") or {}
@@ -903,7 +1074,18 @@ def main() -> int:
             state["status"] = "success"
             state["iteration"] = iteration
             state["best_observation"] = before_observation
-            append_history(state, iteration, "stop-success", "success window reached", "")
+            state["last_iteration_decision"] = "stop-success"
+            state["last_selected_by"] = "none"
+            state["last_selection_reason"] = "convergence_window"
+            append_history(
+                state,
+                iteration,
+                "stop-success",
+                "success window reached",
+                "",
+                selected_by="none",
+                selection_reason="convergence_window",
+            )
             handoff_recommendation, handoff_validation_errors = write_handoff_package(
                 root,
                 paths,
@@ -944,6 +1126,9 @@ def main() -> int:
         if not candidates:
             state["iteration"] = iteration
             state["no_improvement_count"] = int(state["no_improvement_count"]) + 1
+            state["last_iteration_decision"] = "stall"
+            state["last_selected_by"] = "none"
+            state["last_selection_reason"] = "no_candidates"
             append_history(state, iteration, "stall", "no candidate actions generated", "")
             write_iteration_record(
                 iteration_dir,
@@ -954,11 +1139,14 @@ def main() -> int:
                 [],
                 "stall",
                 "",
+                selection_source="none",
+                selection_reason="no_candidates",
             )
             save_state(paths, state)
 
             if int(state["no_improvement_count"]) >= int(state["stall_window"]):
                 state["status"] = "blocked"
+                state["last_iteration_decision"] = "stop-blocked"
                 handoff_recommendation, handoff_validation_errors = write_handoff_package(
                     root,
                     paths,
@@ -985,14 +1173,68 @@ def main() -> int:
                 )
                 print("[controller] blocked: no candidate actions")
                 return EXIT_POLICY_FAIL
+            if args.single_iteration:
+                print("[controller] single-iteration complete: decision=stall")
+                return EXIT_SUCCESS
             continue
 
         candidate_map = {
             str(candidate.get("candidate_id") or ""): candidate for candidate in candidates
         }
 
+        decision_packet = build_decision_packet(
+            state["session_id"],
+            iteration,
+            before_observation,
+            candidates,
+            suppressed_signatures,
+            historical_signatures,
+            alignment_overrides,
+            {
+                "beam_width": args.beam_width,
+                "full_eval_top_k": args.full_eval_top_k,
+                "profile": args.profile,
+            },
+        )
+        selection_resolution = resolve_candidate_selection(
+            root,
+            decision_packet,
+            iteration_dir,
+            policy_path=args.decision_policy,
+        )
+        write_json(iteration_dir / "selection_resolution.json", selection_resolution)
+
+        selection_source = str(selection_resolution.get("selection_source") or "deterministic")
+        selection_reason = str(
+            selection_resolution.get("resolution_reason") or "deterministic_policy"
+        )
+        state["last_selected_by"] = selection_source
+        state["last_selection_reason"] = selection_reason
+        if selection_source == "fallback":
+            state["decision_fallback_count"] = int(state.get("decision_fallback_count") or 0) + 1
+
+        ordered_candidate_ids = [
+            str(item)
+            for item in (selection_resolution.get("ordered_candidate_ids") or [])
+            if str(item)
+        ]
+        if not ordered_candidate_ids:
+            ordered_candidate_ids = [
+                str(candidate.get("candidate_id") or "")
+                for candidate in candidates
+                if str(candidate.get("candidate_id") or "")
+            ]
+
+        ordered_candidates: list[dict[str, Any]] = []
+        for candidate_id in ordered_candidate_ids:
+            candidate = candidate_map.get(candidate_id)
+            if candidate is not None:
+                ordered_candidates.append(candidate)
+        if not ordered_candidates:
+            ordered_candidates = candidates
+
         quick_evaluations: list[dict[str, Any]] = []
-        for candidate in candidates:
+        for candidate in ordered_candidates:
             if args.dry_run:
                 quick_evaluations.append(
                     {
@@ -1090,7 +1332,16 @@ def main() -> int:
         if not accepted_candidates:
             state["iteration"] = iteration
             state["no_improvement_count"] = int(state["no_improvement_count"]) + 1
-            append_history(state, iteration, "rejected", "no acceptable candidate", "")
+            state["last_iteration_decision"] = "rejected"
+            append_history(
+                state,
+                iteration,
+                "rejected",
+                "no acceptable candidate",
+                "",
+                selected_by=selection_source,
+                selection_reason=selection_reason,
+            )
             write_iteration_record(
                 iteration_dir,
                 state["session_id"],
@@ -1100,11 +1351,14 @@ def main() -> int:
                 final_evaluations,
                 "rejected",
                 "",
+                selection_source=selection_source,
+                selection_reason=selection_reason,
             )
             save_state(paths, state)
 
             if int(state["no_improvement_count"]) >= int(state["stall_window"]):
                 state["status"] = "blocked"
+                state["last_iteration_decision"] = "stop-blocked"
                 handoff_recommendation, handoff_validation_errors = write_handoff_package(
                     root,
                     paths,
@@ -1131,12 +1385,23 @@ def main() -> int:
                 )
                 print("[controller] blocked: no acceptable candidate")
                 return EXIT_POLICY_FAIL
+            if args.single_iteration:
+                print("[controller] single-iteration complete: decision=rejected")
+                return EXIT_SUCCESS
             continue
 
         selected = accepted_candidates[0]
         selected_candidate_id = str(selected.get("candidate_id") or "")
         selected_candidate = candidate_map[selected_candidate_id]
         selected_profile = str(selected.get("evaluation_profile") or "quick")
+        commit_report: dict[str, Any] = {
+            "requested": bool(args.commit_on_accept and not args.dry_run),
+            "ok": True,
+            "committed": False,
+            "commit_sha": "",
+            "message": "commit not requested",
+            "output": "",
+        }
 
         with tempfile.TemporaryDirectory(prefix="controller-accept-") as temp_dir:
             backup_root = Path(temp_dir)
@@ -1169,30 +1434,37 @@ def main() -> int:
             accepted = accepted and improves(before_observation, after_observation)
             accepted = accepted and not regressions
 
-            if accepted and args.commit_each_accept and not args.dry_run:
-                ok, output = commit_iteration(root, iteration, selected_candidate_id)
-                write_json(
-                    iteration_dir / "commit.json",
-                    {
-                        "ok": ok,
-                        "output": output,
-                        "candidate_id": selected_candidate_id,
-                    },
+            if accepted and args.commit_on_accept and not args.dry_run:
+                commit_report = commit_iteration(
+                    root,
+                    state["session_id"],
+                    iteration,
+                    selected_candidate_id,
+                    selection_source,
+                    selected_profile,
+                    str(state.get("last_orchestrate_run_id") or ""),
                 )
-                if not ok:
+                write_json(iteration_dir / "commit.json", commit_report)
+                if not bool(commit_report.get("ok", False)):
                     accepted = False
                     regressions.append("git_commit_failed")
+                elif bool(commit_report.get("committed", False)):
+                    state["last_commit_sha"] = str(commit_report.get("commit_sha") or "")
+            write_json(iteration_dir / "commit.json", commit_report)
 
             if not accepted:
                 restore_workspace(root, backup_root)
                 state["iteration"] = iteration
                 state["no_improvement_count"] = int(state["no_improvement_count"]) + 1
+                state["last_iteration_decision"] = "rejected"
                 append_history(
                     state,
                     iteration,
                     "rejected",
                     "selected candidate failed acceptance check",
                     selected_candidate_id,
+                    selected_by=selection_source,
+                    selection_reason=selection_reason,
                 )
 
                 failure_counts = state.get("bundle_failure_counts") or {}
@@ -1210,11 +1482,15 @@ def main() -> int:
                     final_evaluations,
                     "rejected",
                     selected_candidate_id,
+                    selection_source=selection_source,
+                    selection_reason=selection_reason,
+                    commit=commit_report,
                 )
                 save_state(paths, state)
 
                 if int(state["no_improvement_count"]) >= int(state["stall_window"]):
                     state["status"] = "blocked"
+                    state["last_iteration_decision"] = "stop-blocked"
                     handoff_recommendation, handoff_validation_errors = write_handoff_package(
                         root,
                         paths,
@@ -1241,11 +1517,15 @@ def main() -> int:
                     )
                     print("[controller] blocked: selected candidate failed")
                     return EXIT_POLICY_FAIL
+                if args.single_iteration:
+                    print("[controller] single-iteration complete: decision=rejected")
+                    return EXIT_SUCCESS
                 continue
 
         state["iteration"] = iteration
         state["best_observation"] = after_observation
         state["no_improvement_count"] = 0
+        state["last_iteration_decision"] = "accepted"
         state["consecutive_successes"] = (
             int(state["consecutive_successes"]) + 1 if success_condition(after_observation) else 0
         )
@@ -1255,6 +1535,9 @@ def main() -> int:
             "accepted",
             "candidate accepted",
             selected_candidate_id,
+            selected_by=selection_source,
+            selection_reason=selection_reason,
+            commit_sha=str(commit_report.get("commit_sha") or ""),
         )
         write_iteration_record(
             iteration_dir,
@@ -1266,10 +1549,17 @@ def main() -> int:
             "accepted",
             selected_candidate_id,
             after_observation,
+            selection_source=selection_source,
+            selection_reason=selection_reason,
+            commit=commit_report,
         )
         save_state(paths, state)
+        if args.single_iteration:
+            print("[controller] single-iteration complete: decision=accepted")
+            return EXIT_SUCCESS
 
     state["status"] = "blocked"
+    state["last_iteration_decision"] = "stop-blocked"
     save_state(paths, state)
     observation = state.get("best_observation") or {}
     if not observation:

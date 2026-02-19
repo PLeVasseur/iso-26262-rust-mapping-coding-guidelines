@@ -124,6 +124,38 @@
     "selected_candidate_id": {
       "type": "string"
     },
+    "selection_source": {
+      "type": "string",
+      "enum": ["none", "deterministic", "llm", "fallback"]
+    },
+    "selection_reason": {
+      "type": "string"
+    },
+    "commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "ok", "committed", "commit_sha", "message", "output"],
+      "properties": {
+        "requested": {
+          "type": "boolean"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "committed": {
+          "type": "boolean"
+        },
+        "commit_sha": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        }
+      }
+    },
     "recorded_at": {
       "type": "string",
       "minLength": 1
