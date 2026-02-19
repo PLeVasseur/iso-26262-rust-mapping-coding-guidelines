@@ -13,6 +13,7 @@ seed_topics:
   reference: Annex E
   citation_anchor_id: ISO26262-6-2018:annex_e:clause:annex_e
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:annex_e:clause:annex_e
 - seed_id: SEED-1E3A1235235C
   iso_ref: Part 6 Table 14
   chunk_id: ISO26262-6-2018:table:table_14:001
@@ -25,6 +26,7 @@ seed_topics:
   reference: Table 14
   citation_anchor_id: ISO26262-6-2018:table_14:clause:table_14
   row_key: ISO26262-6-2018:table:table_14:001:1
+  obligation_unit_id: ISO26262-6-2018:table:table_14:001:1
 - seed_id: SEED-1E8B8CE3DBF1
   iso_ref: Part 6 Table 1
   chunk_id: ISO26262-6-2018:table:table_1:001
@@ -37,6 +39,7 @@ seed_topics:
   reference: Table 1
   citation_anchor_id: ISO26262-6-2018:table_1:clause:table_1
   row_key: ISO26262-6-2018:table:table_1:001:1
+  obligation_unit_id: ISO26262-6-2018:table:table_1:001:1
 - seed_id: SEED-230964AF44D4
   iso_ref: Part 6 5.4.3
   chunk_id: ISO26262-6-2018:clause:5_4_3:001
@@ -49,6 +52,7 @@ seed_topics:
   reference: 5.4.3
   citation_anchor_id: ISO26262-6-2018:5_4_3:clause:5_4_3
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:5_4_3:clause:5_4_3
 - seed_id: SEED-262BBEC1A2A9
   iso_ref: Part 6 5.3
   chunk_id: ISO26262-6-2018:clause:5_3:001
@@ -61,6 +65,7 @@ seed_topics:
   reference: '5.3'
   citation_anchor_id: ISO26262-6-2018:5_3:clause:5_3
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:5_3:clause:5_3
 - seed_id: SEED-34FDD6EFE8ED
   iso_ref: Part 6 7.4.12
   chunk_id: ISO26262-6-2018:clause:7_4_12:001
@@ -73,6 +78,7 @@ seed_topics:
   reference: 7.4.12
   citation_anchor_id: ISO26262-6-2018:7_4_12:clause:7_4_12
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:7_4_12:clause:7_4_12
 - seed_id: SEED-587CE115D9C8
   iso_ref: Part 6 Table 11
   chunk_id: ISO26262-6-2018:table:table_11:001
@@ -85,6 +91,7 @@ seed_topics:
   reference: Table 11
   citation_anchor_id: ISO26262-6-2018:table_11:clause:table_11
   row_key: ISO26262-6-2018:table:table_11:001:1
+  obligation_unit_id: ISO26262-6-2018:table:table_11:001:1
 - seed_id: SEED-5B4923F76EEA
   iso_ref: Part 6 Table 12
   chunk_id: ISO26262-6-2018:table:table_12:001
@@ -97,6 +104,7 @@ seed_topics:
   reference: Table 12
   citation_anchor_id: ISO26262-6-2018:table_12:clause:table_12
   row_key: ISO26262-6-2018:table:table_12:001:1
+  obligation_unit_id: ISO26262-6-2018:table:table_12:001:1
 - seed_id: SEED-697000BF3263
   iso_ref: Part 6 Table 7
   chunk_id: ISO26262-6-2018:table:table_7:002
@@ -109,6 +117,7 @@ seed_topics:
   reference: Table 7
   citation_anchor_id: ISO26262-6-2018:table_7:clause:table_7
   row_key: ISO26262-6-2018:table:table_7:002:1
+  obligation_unit_id: ISO26262-6-2018:table:table_7:002:1
 - seed_id: SEED-7359C842E4E4
   iso_ref: Part 6 Table 10
   chunk_id: ISO26262-6-2018:table:table_10:001
@@ -121,6 +130,7 @@ seed_topics:
   reference: Table 10
   citation_anchor_id: ISO26262-6-2018:table_10:clause:table_10
   row_key: ISO26262-6-2018:table:table_10:001:1
+  obligation_unit_id: ISO26262-6-2018:table:table_10:001:1
 - seed_id: SEED-744267BD9DEC
   iso_ref: Part 6 Table 3
   chunk_id: ISO26262-6-2018:table:table_3:001
@@ -133,6 +143,7 @@ seed_topics:
   reference: Table 3
   citation_anchor_id: ISO26262-6-2018:table_3:clause:table_3
   row_key: ISO26262-6-2018:table:table_3:001:3
+  obligation_unit_id: ISO26262-6-2018:table:table_3:001:3
 - seed_id: SEED-75D65B270D75
   iso_ref: Part 6 Table 1
   chunk_id: ISO26262-6-2018:table:table_1:001
@@ -146,6 +157,7 @@ seed_topics:
   reference: Table 1
   citation_anchor_id: ISO26262-6-2018:table_1:clause:table_1
   row_key: ISO26262-6-2018:table:table_1:001:3
+  obligation_unit_id: ISO26262-6-2018:table:table_1:001:3
 - seed_id: SEED-7CB86E3EA294
   iso_ref: Part 6 Table 13
   chunk_id: ISO26262-6-2018:table:table_13:001
@@ -158,6 +170,7 @@ seed_topics:
   reference: Table 13
   citation_anchor_id: ISO26262-6-2018:table_13:clause:table_13
   row_key: ISO26262-6-2018:table:table_13:001:1
+  obligation_unit_id: ISO26262-6-2018:table:table_13:001:1
 - seed_id: SEED-82B1F0353FD0
   iso_ref: Part 6 Annex D
   chunk_id: ISO26262-6-2018:annex:annex_d:005
@@ -170,6 +183,7 @@ seed_topics:
   reference: Annex D
   citation_anchor_id: ISO26262-6-2018:annex_d:clause:annex_d
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:annex_d:clause:annex_d
 - seed_id: SEED-90F9CF8770E1
   iso_ref: Part 6 Table 10
   chunk_id: ISO26262-6-2018:table:table_10:001
@@ -182,6 +196,7 @@ seed_topics:
   reference: Table 10
   citation_anchor_id: ISO26262-6-2018:table_10:clause:table_10
   row_key: ISO26262-6-2018:table:table_10:001:8
+  obligation_unit_id: ISO26262-6-2018:table:table_10:001:8
 - seed_id: SEED-956D02940FC5
   iso_ref: Part 6 9.4.2
   chunk_id: ISO26262-6-2018:clause:9_4_2:001
@@ -194,6 +209,7 @@ seed_topics:
   reference: 9.4.2
   citation_anchor_id: ISO26262-6-2018:9_4_2:clause:9_4_2
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:9_4_2:clause:9_4_2
 - seed_id: SEED-9B66370DEE3A
   iso_ref: Part 6 Table 9
   chunk_id: ISO26262-6-2018:table:table_9:001
@@ -206,6 +222,7 @@ seed_topics:
   reference: Table 9
   citation_anchor_id: ISO26262-6-2018:table_9:clause:table_9
   row_key: ISO26262-6-2018:table:table_9:001:1
+  obligation_unit_id: ISO26262-6-2018:table:table_9:001:1
 - seed_id: SEED-9BA71FE474B2
   iso_ref: Part 6 5.4.2
   chunk_id: ISO26262-6-2018:clause:5_4_2:001
@@ -218,6 +235,7 @@ seed_topics:
   reference: 5.4.2
   citation_anchor_id: ISO26262-6-2018:5_4_2:clause:5_4_2
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:5_4_2:clause:5_4_2
 - seed_id: SEED-9E4C0961E7E2
   iso_ref: Part 6 Table 9
   chunk_id: ISO26262-6-2018:table:table_9:002
@@ -230,6 +248,7 @@ seed_topics:
   reference: Table 9
   citation_anchor_id: ISO26262-6-2018:table_9:clause:table_9
   row_key: ISO26262-6-2018:table:table_9:002:1
+  obligation_unit_id: ISO26262-6-2018:table:table_9:002:1
 - seed_id: SEED-A0B720294566
   iso_ref: Part 6 Table 1
   chunk_id: ISO26262-6-2018:table:table_1:001
@@ -243,6 +262,7 @@ seed_topics:
   reference: Table 1
   citation_anchor_id: ISO26262-6-2018:table_1:clause:table_1
   row_key: ISO26262-6-2018:table:table_1:001:2
+  obligation_unit_id: ISO26262-6-2018:table:table_1:001:2
 - seed_id: SEED-A313BE9C58CB
   iso_ref: Part 6 Table 6
   chunk_id: ISO26262-6-2018:table:table_6:001
@@ -255,6 +275,7 @@ seed_topics:
   reference: Table 6
   citation_anchor_id: ISO26262-6-2018:table_6:clause:table_6
   row_key: ISO26262-6-2018:table:table_6:001:10
+  obligation_unit_id: ISO26262-6-2018:table:table_6:001:10
 - seed_id: SEED-C5BAB6CA4D74
   iso_ref: Part 6 Table 3
   chunk_id: ISO26262-6-2018:table:table_3:001
@@ -267,6 +288,7 @@ seed_topics:
   reference: Table 3
   citation_anchor_id: ISO26262-6-2018:table_3:clause:table_3
   row_key: ISO26262-6-2018:table:table_3:001:9
+  obligation_unit_id: ISO26262-6-2018:table:table_3:001:9
 - seed_id: SEED-C86203555EAD
   iso_ref: Part 6 Annex B
   chunk_id: ISO26262-6-2018:annex:annex_b:001
@@ -279,6 +301,7 @@ seed_topics:
   reference: Annex B
   citation_anchor_id: ISO26262-6-2018:annex_b:clause:annex_b
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:annex_b:clause:annex_b
 - seed_id: SEED-D2DBBE48588A
   iso_ref: Part 6 10.4.2
   chunk_id: ISO26262-6-2018:clause:10_4_2:001
@@ -291,6 +314,7 @@ seed_topics:
   reference: 10.4.2
   citation_anchor_id: ISO26262-6-2018:10_4_2:clause:10_4_2
   row_key: ''
+  obligation_unit_id: ISO26262-6-2018:10_4_2:clause:10_4_2
 - seed_id: SEED-D3EBCE5ABB2A
   iso_ref: Part 6 Table 7
   chunk_id: ISO26262-6-2018:table:table_7:001
@@ -303,6 +327,7 @@ seed_topics:
   reference: Table 7
   citation_anchor_id: ISO26262-6-2018:table_7:clause:table_7
   row_key: ISO26262-6-2018:table:table_7:001:1
+  obligation_unit_id: ISO26262-6-2018:table:table_7:001:1
 - seed_id: SEED-DCC941884F0D
   iso_ref: Part 6 Table 2
   chunk_id: ISO26262-6-2018:table:table_2:001
@@ -316,6 +341,7 @@ seed_topics:
   reference: Table 2
   citation_anchor_id: ISO26262-6-2018:table_2:clause:table_2
   row_key: ISO26262-6-2018:table:table_2:001:18
+  obligation_unit_id: ISO26262-6-2018:table:table_2:001:18
 - seed_id: SEED-DE2CEFDCD9D7
   iso_ref: Part 6 Table 5
   chunk_id: ISO26262-6-2018:table:table_5:001
@@ -329,3 +355,4 @@ seed_topics:
   reference: Table 5
   citation_anchor_id: ISO26262-6-2018:table_5:clause:table_5
   row_key: ISO26262-6-2018:table:table_5:001:4
+  obligation_unit_id: ISO26262-6-2018:table:table_5:001:4

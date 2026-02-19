@@ -43,6 +43,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:annex_e:clause:annex_e
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_exceptions_and_errors_safety
+  rule_family_id: FAM-AF7450564A60
 - id: RG-1E3A1235235C
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -88,6 +94,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-1E3A1235235C%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_14:001:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-9E84590FF569
 - id: RG-1E8B8CE3DBF1
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -133,6 +146,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-1E8B8CE3DBF1%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_1:001:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-27ACDDD92C9C
 - id: RG-230964AF44D4
   category: Required
   technical_topic: Defensive programming & contracts
@@ -176,6 +196,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:5_4_3:clause:5_4_3
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_functions_core
+  rule_family_id: FAM-D8BAF98E2000
 - id: RG-262BBEC1A2A9
   category: Required
   technical_topic: Defensive programming & contracts
@@ -218,6 +244,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:5_3:clause:5_3
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_functions_core
+  rule_family_id: FAM-4A594C2B1736
 - id: RG-34FDD6EFE8ED
   category: Required
   technical_topic: Defensive programming & contracts
@@ -261,6 +293,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:7_4_12:clause:7_4_12
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_exceptions_and_errors_safety
+  rule_family_id: FAM-8690D9E3E61B
 - id: RG-587CE115D9C8
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -306,6 +344,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-587CE115D9C8%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_11:001:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-8705902087C0
 - id: RG-5B4923F76EEA
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -351,6 +396,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-5B4923F76EEA%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_12:001:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-2E75FBEE47E5
 - id: RG-697000BF3263
   category: Required
   technical_topic: Tooling, compliance evidence, and deviations
@@ -394,6 +446,13 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:table:table_7:002:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-C6C97B965FBB
 - id: RG-7359C842E4E4
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -439,6 +498,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7359C842E4E4%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_10:001:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-D52A64874E74
 - id: RG-744267BD9DEC
   category: Required
   technical_topic: Complexity & structure
@@ -482,6 +548,13 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:table:table_3:001:3
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-C3C8D1285BAF
 - id: RG-75D65B270D75
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -527,6 +600,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-75D65B270D75%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_1:001:3
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-27ACDDD92C9C
 - id: RG-7CB86E3EA294
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -572,6 +652,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7CB86E3EA294%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_13:001:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-812C604B0F7E
 - id: RG-82B1F0353FD0
   category: Required
   technical_topic: Complexity & structure
@@ -615,6 +702,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:annex_d:clause:annex_d
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_statements_core
+  rule_family_id: FAM-92015F7B6BD2
 - id: RG-90F9CF8770E1
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -660,6 +753,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-90F9CF8770E1%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_10:001:8
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-D52A64874E74
 - id: RG-956D02940FC5
   category: Required
   technical_topic: Defensive programming & contracts
@@ -703,6 +803,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:9_4_2:clause:9_4_2
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_exceptions_and_errors_safety
+  rule_family_id: FAM-A50004CED5A6
 - id: RG-9B66370DEE3A
   category: Required
   technical_topic: Tooling, compliance evidence, and deviations
@@ -746,6 +852,13 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:table:table_9:001:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-11C992474357
 - id: RG-9BA71FE474B2
   category: Required
   technical_topic: Defensive programming & contracts
@@ -789,6 +902,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:5_4_2:clause:5_4_2
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_functions_core
+  rule_family_id: FAM-53A51AC235AF
 - id: RG-9E4C0961E7E2
   category: Required
   technical_topic: Tooling, compliance evidence, and deviations
@@ -832,6 +951,13 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:table:table_9:002:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-11C992474357
 - id: RG-A0B720294566
   category: Required
   technical_topic: Defensive programming & contracts
@@ -875,6 +1001,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:table:table_1:001:2
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_functions_core
+  rule_family_id: FAM-27ACDDD92C9C
 - id: RG-A313BE9C58CB
   category: Required
   technical_topic: Tooling, compliance evidence, and deviations
@@ -918,6 +1050,13 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:table:table_6:001:10
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-0D57E1180A00
 - id: RG-C5BAB6CA4D74
   category: Required
   technical_topic: Defensive programming & contracts
@@ -961,6 +1100,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:table:table_3:001:9
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_exceptions_and_errors_safety
+  rule_family_id: FAM-C3C8D1285BAF
 - id: RG-C86203555EAD
   category: Required
   technical_topic: Complexity & structure
@@ -1004,6 +1149,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:annex_b:clause:annex_b
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_statements_core
+  rule_family_id: FAM-F7B1928A72C6
 - id: RG-D2DBBE48588A
   category: Required
   technical_topic: Defensive programming & contracts
@@ -1047,6 +1198,12 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:10_4_2:clause:10_4_2
+  fls_refs:
+  - fls_exceptions_and_errors_core
+  - fls_exceptions_and_errors_safety
+  rule_family_id: FAM-50C7E46533FE
 - id: RG-D3EBCE5ABB2A
   category: Required
   technical_topic: Tooling, compliance evidence, and deviations
@@ -1090,6 +1247,13 @@ guidelines:
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
       compile_expectation: documented-only
+  obligation_units:
+  - ISO26262-6-2018:table:table_7:001:1
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-C6C97B965FBB
 - id: RG-DCC941884F0D
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -1135,6 +1299,13 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-DCC941884F0D%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_2:001:18
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-EF413140EDF2
 - id: RG-DE2CEFDCD9D7
   category: Required
   technical_topic: Language subset / forbidden constructs
@@ -1180,3 +1351,10 @@ guidelines:
       compile_expectation: no_run
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-DE2CEFDCD9D7%20candidate%20lint
+  obligation_units:
+  - ISO26262-6-2018:table:table_5:001:4
+  fls_refs:
+  - fls_program_structure_and_compilation_core
+  - fls_types_and_traits_core
+  - fls_unsafety_core
+  rule_family_id: FAM-0D7687FCD2C9
