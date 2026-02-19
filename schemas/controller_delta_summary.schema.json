@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Controller Delta Summary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "corpus_pack",
+    "mode",
+    "baseline_run_id",
+    "current_run_id",
+    "current_metrics",
+    "baseline_metrics",
+    "deltas",
+    "generated_at"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "corpus_pack": {
+      "type": "string"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["change", "growth"]
+    },
+    "baseline_run_id": {
+      "type": "string"
+    },
+    "current_run_id": {
+      "type": "string"
+    },
+    "current_metrics": {
+      "type": "object"
+    },
+    "baseline_metrics": {
+      "type": "object"
+    },
+    "deltas": {
+      "type": "object"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

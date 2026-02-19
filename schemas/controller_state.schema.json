@@ -53,6 +53,32 @@
     "best_observation": {
       "type": "object"
     },
+    "last_observation": {
+      "type": "object"
+    },
+    "bundle_failure_counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "candidate_signatures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "last_orchestrate_run_id": {
+      "type": "string"
+    },
+    "corpus_pack": {
+      "type": "string"
+    },
+    "handoff_recommendation": {
+      "type": "string",
+      "enum": ["ready", "needs_review", "blocked"]
+    },
     "history": {
       "type": "array",
       "items": {

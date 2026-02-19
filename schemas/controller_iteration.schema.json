@@ -51,6 +51,16 @@
           },
           "rationale": {
             "type": "string"
+          },
+          "bundle_signature": {
+            "type": "string"
+          },
+          "pre_score": {
+            "type": "number"
+          },
+          "mutation_footprint_estimate": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
@@ -79,6 +89,29 @@
             }
           },
           "note": {
+            "type": "string"
+          },
+          "weighted_score": {
+            "type": "number"
+          },
+          "metric_vector": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "evaluation_profile": {
+            "type": "string",
+            "enum": ["quick", "full"]
+          },
+          "bundle_signature": {
+            "type": "string"
+          },
+          "mutation_footprint_estimate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "orchestrate_run_id": {
             "type": "string"
           }
         }

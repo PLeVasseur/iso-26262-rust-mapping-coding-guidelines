@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Controller Lane Status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "hard_gate_pass",
+    "iso_lane_pass",
+    "decomposition_lane_pass",
+    "fls_lane_pass",
+    "quality_lane_pass",
+    "runtime_failures",
+    "policy_failures",
+    "iso_obligation_coverage",
+    "target_fanout_gap_count",
+    "fls_span_gap_count",
+    "fls_chapter_gap_count",
+    "quality_gap_count",
+    "placeholder_gap_count",
+    "example_gap_count"
+  ],
+  "properties": {
+    "hard_gate_pass": {
+      "type": "boolean"
+    },
+    "iso_lane_pass": {
+      "type": "boolean"
+    },
+    "decomposition_lane_pass": {
+      "type": "boolean"
+    },
+    "fls_lane_pass": {
+      "type": "boolean"
+    },
+    "quality_lane_pass": {
+      "type": "boolean"
+    },
+    "runtime_failures": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "policy_failures": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "iso_obligation_coverage": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "target_fanout_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fls_span_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fls_chapter_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "quality_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "placeholder_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "example_gap_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
