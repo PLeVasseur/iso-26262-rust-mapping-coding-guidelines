@@ -42,6 +42,7 @@ def main() -> int:
         ("schemas/extractor_paths.schema.json", "config/extractor_paths.yaml", True),
         ("schemas/corpus_registry.schema.json", "config/corpus_registry.yaml", True),
         ("schemas/change_growth_policy.schema.json", "config/change_growth_policy.yaml", True),
+        ("schemas/completeness_policy.schema.json", "config/completeness_policy.yaml", True),
         ("schemas/seed_manifest.schema.json", "seeds/seed_manifest.yaml", True),
         ("schemas/run_registry.schema.json", "data/run_registry.yaml", True),
         ("schemas/clippy_lints_catalog.schema.json", "data/clippy_lints_catalog.yaml", True),
@@ -49,6 +50,17 @@ def main() -> int:
         ("schemas/extractor_findings.schema.json", "feedback/extractor_findings.yaml", True),
         ("schemas/seed_topics.schema.json", "data/seed_topics.yaml", args.strict_generated),
         ("schemas/todo_guidelines.schema.json", "data/todo_guidelines.yaml", args.strict_generated),
+        ("schemas/fls_inventory.schema.json", "data/fls_inventory.yaml", args.strict_generated),
+        (
+            "schemas/fls_target_candidates.schema.json",
+            "data/fls_target_candidates.yaml",
+            args.strict_generated,
+        ),
+        (
+            "schemas/decomposition_report.schema.json",
+            "data/decomposition_report.yaml",
+            args.strict_generated,
+        ),
     ]
 
     failures: list[dict[str, object]] = []
@@ -78,10 +90,14 @@ def main() -> int:
 
     review_schema_path = root / "schemas" / "diffset_review.schema.json"
     required_schema_files = [
+        "schemas/completeness_policy.schema.json",
         "schemas/clippy_lints_catalog.schema.json",
+        "schemas/decomposition_report.schema.json",
         "schemas/diffset_manifest.schema.json",
         "schemas/diffset_item.schema.json",
         "schemas/diffset_review.schema.json",
+        "schemas/fls_inventory.schema.json",
+        "schemas/fls_target_candidates.schema.json",
     ]
     for rel_path in required_schema_files:
         schema_path = root / rel_path

@@ -26,7 +26,8 @@
           "topic_phrase",
           "context_summary",
           "category_candidate",
-          "enforceability_hint"
+          "enforceability_hint",
+          "obligation_unit_id"
         ],
         "properties": {
           "seed_id": {"type": "string", "minLength": 1},
@@ -43,7 +44,8 @@
           "part": {"type": "integer", "minimum": 1},
           "reference": {"type": "string"},
           "citation_anchor_id": {"type": "string"},
-          "row_key": {"type": "string"}
+          "row_key": {"type": "string"},
+          "obligation_unit_id": {"type": "string", "minLength": 1}
         }
       }
     }

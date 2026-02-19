@@ -1,0 +1,25 @@
+version: 1
+iso_obligation_coverage_required: 1.0
+fls_chapter_coverage_min: 0.9
+fls_span_min_by_target_class:
+  clause: 0.7
+  table: 0.85
+  annex: 0.85
+target_fanout_min_by_target_class:
+  clause: 1
+  table: 4
+  annex: 4
+obligation_fanout_min_default: 1
+decomposition:
+  apply_scaffolds: false
+gate_modes:
+  decomposition: warn
+  fls_proxy: warn
+  guideline_quality: warn
+quality:
+  min_score: 70
+  placeholder_terms:
+  - initial generic guideline derived
+  - placeholder
+  - pending
+  - todo

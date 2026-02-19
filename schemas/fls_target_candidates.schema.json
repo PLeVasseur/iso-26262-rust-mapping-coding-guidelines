@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FLS Target Candidates",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "generated_at", "source_run_id", "target_candidates"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_id",
+          "obligation_unit_id",
+          "target_class",
+          "seed_ids",
+          "candidate_fls_refs"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "obligation_unit_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target_class": {
+            "type": "string",
+            "enum": ["clause", "table", "annex"]
+          },
+          "seed_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "candidate_fls_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["fls_ref", "chapter_id", "confidence", "rationale"],
+              "properties": {
+                "fls_ref": {
+                  "type": "string",
+                  "pattern": "^fls_[a-z0-9_]+$"
+                },
+                "chapter_id": {
+                  "type": "string",
+                  "pattern": "^fls_ch_[a-z0-9_]+$"
+                },
+                "confidence": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "rationale": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

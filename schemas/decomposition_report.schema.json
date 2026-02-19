@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rule Decomposition Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "generated_at",
+    "policy_mode",
+    "target_metrics",
+    "scaffold_requests"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy_mode": {
+      "type": "string",
+      "enum": ["warn", "error"]
+    },
+    "target_metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_id",
+          "target_class",
+          "guideline_count",
+          "required_guideline_count",
+          "ok"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target_class": {
+            "type": "string",
+            "enum": ["clause", "table", "annex"]
+          },
+          "guideline_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "required_guideline_count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "scaffold_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "target_id",
+          "seed_id",
+          "obligation_unit_id",
+          "ordinal"
+        ],
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "seed_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "obligation_unit_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
+  }
+}

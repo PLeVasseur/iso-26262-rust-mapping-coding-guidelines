@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Completeness Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "iso_obligation_coverage_required",
+    "fls_chapter_coverage_min",
+    "fls_span_min_by_target_class",
+    "target_fanout_min_by_target_class",
+    "obligation_fanout_min_default",
+    "decomposition",
+    "gate_modes",
+    "quality"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "iso_obligation_coverage_required": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "fls_chapter_coverage_min": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "fls_span_min_by_target_class": {
+      "$ref": "#/$defs/targetClassFloats"
+    },
+    "target_fanout_min_by_target_class": {
+      "$ref": "#/$defs/targetClassIntegers"
+    },
+    "obligation_fanout_min_default": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "decomposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apply_scaffolds"],
+      "properties": {
+        "apply_scaffolds": {
+          "type": "boolean"
+        }
+      }
+    },
+    "gate_modes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decomposition", "fls_proxy", "guideline_quality"],
+      "properties": {
+        "decomposition": {
+          "$ref": "#/$defs/gateMode"
+        },
+        "fls_proxy": {
+          "$ref": "#/$defs/gateMode"
+        },
+        "guideline_quality": {
+          "$ref": "#/$defs/gateMode"
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_score", "placeholder_terms"],
+      "properties": {
+        "min_score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "placeholder_terms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "targetClassFloats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clause", "table", "annex"],
+      "properties": {
+        "clause": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "table": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "annex": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "targetClassIntegers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clause", "table", "annex"],
+      "properties": {
+        "clause": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "table": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "annex": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "gateMode": {
+      "type": "string",
+      "enum": ["warn", "error"]
+    }
+  }
+}
