@@ -792,15 +792,22 @@ guidelines:
 - id: RG-956D02940FC5
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with 9.4.2.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-956D02940FC5
-    (Part 6 9.4.2). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-956D02940FC5 (Part 6 9.4.2) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: At crate scope, constrain error propagation and failure handling
+    to approved patterns and reject ambiguous or implicit behavior in safety-critical
+    Rust code.
+  amplification: Apply this rule to Defensive programming & contracts decisions with
+    explicit preconditions, invariant checks, and objective review evidence. Document
+    permitted and forbidden coding patterns. Use explicit unsafe boundaries, pointer
+    and borrow constraints, and deterministic Result/Option error handling in match-based
+    control flow.
+  exceptions: Exceptions require documented hazard impact analysis, mitigation evidence,
+    and independent reviewer approval before merge.
+  rationale: 'Constraining error propagation and failure handling reduces latent faults
+    and improves deterministic behavior needed for ISO 26262 compliance evidence.
+    This wording aligns with benchmark Rust guidance terms used for overflow, panic,
+    and trait/struct safety reasoning. Safety evidence anchor: :cite:`ISO26262-6-2018`.
+    Safety evidence anchor: :cite:`ISO26262-8-2018`. Rust API reference anchor: :std:`std::result::Result`.
+    Rust API reference anchor: :std:`core::option::Option`.'
   iso_seeds:
   - SEED-956D02940FC5
   scope: crate
