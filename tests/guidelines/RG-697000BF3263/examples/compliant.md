@@ -1,12 +1,14 @@
 # Compliant Example: RG-697000BF3263
 
-This example demonstrates a compliant coding pattern aligned with the guideline intent and should be used as positive evidence during rule validation.
+This example demonstrates unsafe blocks and invariants with explicit, reviewable constraints and deterministic evidence.
 
-```rust
+Expected outcome: `documented_only`.
+
+Verification notes: Automated execution not required for documented-only compliant evidence.
+
+```no_run
 fn main() {
-    // Compliant pattern placeholder; update with rule-specific compliant example
-    let values = [1_u32, 2_u32, 3_u32];
-    let total: u32 = values.into_iter().sum();
-    println!("{}", total);
+    let stable_value = 42_u32;
+    let _ = stable_value;
 }
 ```

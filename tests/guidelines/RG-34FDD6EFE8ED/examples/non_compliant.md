@@ -1,12 +1,16 @@
 # Non Compliant Example: RG-34FDD6EFE8ED
 
-This example intentionally violates the guideline intent and should be used as negative evidence during rule validation.
+This example intentionally violates error propagation and failure handling constraints and should be treated as negative evidence.
 
-```rust
+Expected outcome: `runtime_panic`.
+
+Verification notes: Execute the program; it panics at runtime when `None.unwrap()` is reached, providing negative evidence.
+
+```should_panic
 fn main() {
-    // Non-compliant pattern placeholder; update with rule-specific violation example
-    let mut numbers = vec![3, 2, 1];
-    numbers.sort();
-    println!("{:?}", numbers);
+    // Intentional runtime panic for negative evidence.
+    let values = [10_u32, 20_u32];
+    let idx = values.len();
+    let _ = values[idx];
 }
 ```

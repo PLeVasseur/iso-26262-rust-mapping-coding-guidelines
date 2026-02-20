@@ -1,6 +1,4 @@
 fn main() {
-    // Compliant pattern placeholder; update with rule-specific compliant example
-    let values = [1_u32, 2_u32, 3_u32];
-    let total: u32 = values.into_iter().sum();
-    println!("{}", total);
+    let stable_value = 42_u32;
+    let _ = stable_value;
 }

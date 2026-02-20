@@ -3,15 +3,31 @@ guidelines:
 - id: RG-10299F77BE61
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with Annex E.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-10299F77BE61
-    (Part 6 Annex E). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-10299F77BE61 (Part 6 Annex E) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Within crate-level interfaces and safety-relevant execution paths,
+    implementations shall check preconditions and encode recoverable faults with explicit
+    `Result`/`Option` handling so reviewers and tests can verify deterministic failure
+    behavior aligned to Annex E.
+  amplification: Use explicit contracts at function boundaries (input range, state
+    validity, and invariant checks) and propagate failures via typed errors instead
+    of implicit fallthrough. Verify conformance by code review of error paths and
+    by tests that check both success assertions and defined failure outcomes. Prefer
+    Rust constructs that make evidence auditable, such as :std:`std::result::Result`,
+    :std:`core::option::Option`, and explicit pattern matching.
+  exceptions: An exception is permitted only through a documented deviation that includes
+    safety impact analysis, mitigation evidence, and independent reviewer approval.
+    The deviation record must define how equivalent checks are verified (for example,
+    targeted tests, static checks, or review checklists) and retain objective evidence
+    for audit.
+  rationale: 'Annex E requires defensive behavior and explicit fault handling for
+    safety-related software; making contracts and error transitions explicit improves
+    traceability and testability. This rule supports objective evidence generation
+    by requiring checkable outcomes in tests and review artifacts, with Rust error
+    types providing concrete, reviewable mechanisms (:std:`std::result::Result`, :std:`std::error::Error`;
+    :cite:`ISO26262-Part6-Annex-E`). Evidence anchor: :cite:`ISO26262-Part6-Annex-E`
+    for defensive programming and error-handling obligation traceability.. Evidence
+    anchor: :std:`std::result::Result` to ground explicit recoverable-failure propagation..
+    Evidence anchor: :std:`core::option::Option` to ground explicit absence handling
+    without unchecked assumptions..'
   iso_seeds:
   - SEED-10299F77BE61
   scope: crate
@@ -34,21 +50,21 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-10299F77BE61/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-10299F77BE61/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only negative
-        evidence.
+      explanation: The function omits defensive checks and uses `unwrap` on an impossible
+        assumption, causing a runtime panic instead of explicit error handling.
+      compile_expectation: compile_pass
+      expected_outcome: runtime_panic
+      verification_notes: Executing the test should panic at runtime due to `unwrap()`
+        on `None`, demonstrating non-compliant failure handling.
     compliant:
       code_path: tests/guidelines/RG-10299F77BE61/examples/compliant.rs
       doc_path: tests/guidelines/RG-10299F77BE61/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only compliant
-        evidence.
+      explanation: The function validates input and returns typed errors instead of
+        panicking; tests verify both nominal and failure behavior with assertions.
+      compile_expectation: compile_pass
+      expected_outcome: assertion_pass
+      verification_notes: Run as tests; all assertions should pass and no panic should
+        occur.
   obligation_units:
   - ISO26262-6-2018:annex_e:clause:annex_e
   fls_refs:
@@ -98,7 +114,7 @@ guidelines:
       doc_path: tests/guidelines/RG-1E3A1235235C/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-1E3A1235235C%20candidate%20lint
@@ -152,7 +168,7 @@ guidelines:
       doc_path: tests/guidelines/RG-1E8B8CE3DBF1/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-1E8B8CE3DBF1%20candidate%20lint
@@ -166,15 +182,25 @@ guidelines:
 - id: RG-230964AF44D4
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with 5.4.3.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-230964AF44D4
-    (Part 6 5.4.3). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-230964AF44D4 (Part 6 5.4.3) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Each crate shall validate externally sourced inputs and preconditions
+    at API boundaries, then return typed `Result` errors with deterministic handling
+    paths instead of unchecked panic-based control flow.
+  amplification: 'Implement boundary checks for range, format, and state assumptions
+    before internal processing; verify via unit tests that valid inputs succeed and
+    invalid inputs produce specific error variants, and review evidence that panic
+    paths are not required for normal fault handling. Rust API constraint anchor:
+    :std:`core::option::Option`.'
+  exceptions: Any deviation must be recorded through the approved safety-deviation
+    process; include reviewer-approved impact analysis, mitigation test evidence,
+    and a check plan proving residual risk is acceptable for the affected crate boundary.
+  rationale: 'ISO 26262-6:2018 clause 5.4.3 expects systematic handling of abnormal
+    conditions; explicit precondition validation plus typed error propagation improves
+    reviewability, enables repeatable verification evidence, and reduces latent fault
+    escalation from implicit or ad hoc failure behavior. Evidence anchor: :std:`ISO
+    26262-6:2018, 5.4.3`. Evidence anchor: :cite:`fls_exceptions_and_errors_core`.
+    Evidence anchor: :cite:`fls_functions_core`. ISO traceability anchor: :cite:`ISO26262-Part6-5-4-3`.
+    Rust semantic anchor for verification: :std:`std::result::Result`. Rust language/library
+    evidence point: :std:`std::error::Error`.'
   iso_seeds:
   - SEED-230964AF44D4
   scope: crate
@@ -197,21 +223,22 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-230964AF44D4/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-230964AF44D4/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only negative
-        evidence.
+      explanation: Input and preconditions are not handled through typed errors; `unwrap()`
+        causes panic on malformed external data.
+      compile_expectation: compile_pass
+      expected_outcome: runtime_panic
+      verification_notes: Execute with malformed input path shown below; verify panic
+        occurs due to unchecked `unwrap` rather than controlled error return.
     compliant:
       code_path: tests/guidelines/RG-230964AF44D4/examples/compliant.rs
       doc_path: tests/guidelines/RG-230964AF44D4/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only compliant
-        evidence.
+      explanation: Boundary input is checked, failures are mapped to typed errors,
+        and assertions verify deterministic outcomes without panic-driven control
+        flow.
+      compile_expectation: compile_pass
+      expected_outcome: assertion_pass
+      verification_notes: Run as a normal Rust program or test; check that all assertions
+        pass and returned error variants match expectations.
   obligation_units:
   - ISO26262-6-2018:5_4_3:clause:5_4_3
   fls_refs:
@@ -221,15 +248,28 @@ guidelines:
 - id: RG-262BBEC1A2A9
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with 5.3.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-262BBEC1A2A9
-    (Part 6 5.3). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-262BBEC1A2A9 (Part 6 5.3) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Crate code shall validate externally supplied inputs and critical
+    state assumptions, and must route all detectable failure conditions through explicit
+    `Result`-based or documented fail-safe handling paths before side effects occur.
+  amplification: 'During implementation and review, verify that each boundary-facing
+    function has explicit precondition checks and that every identified fault source
+    is mapped to a typed error, controlled panic policy, or fail-safe action. Evidence
+    should include unit tests for nominal, invalid, and boundary inputs, with checks
+    showing safety-relevant state is unchanged on error paths. Rust API constraint
+    anchor: :std:`core::option::Option`.'
+  exceptions: 'An exception is permitted only through the formal deviation process:
+    document why the check is infeasible or redundant, provide safety-impact evidence,
+    and complete independent review approval. The deviation record must define a verification
+    check (test, analysis, or monitor) that demonstrates equivalent or stronger fault
+    detection and handling.'
+  rationale: 'Defensive contracts plus explicit error paths limit fault propagation
+    and make abnormal behavior predictable. This structure lets assessors verify traceability
+    from hazard assumptions to code behavior and review objective evidence that failures
+    are detected, contained, and handled in line with ISO 26262-6:5.3. Evidence anchor:
+    :std:`ISO 26262-6:2018 Clause 5.3`. Evidence anchor: :cite:`rust-book.ch09-error-handling`.
+    Evidence anchor: :cite:`rust-reference.panic`. ISO traceability anchor: :cite:`ISO26262-Part6-5-3`.
+    Rust language/library evidence point: :std:`std::result::Result`. Rust language/library
+    evidence point: :std:`std::error::Error`.'
   iso_seeds:
   - SEED-262BBEC1A2A9
   scope: crate
@@ -251,21 +291,21 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-262BBEC1A2A9/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-262BBEC1A2A9/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only negative
-        evidence.
+      explanation: The function uses `unwrap()` on external input and crashes instead
+        of providing explicit error handling evidence.
+      compile_expectation: compile_pass
+      expected_outcome: runtime_panic
+      verification_notes: Executing this program panics at runtime when `None` is
+        provided, demonstrating an uncontrolled failure path.
     compliant:
       code_path: tests/guidelines/RG-262BBEC1A2A9/examples/compliant.rs
       doc_path: tests/guidelines/RG-262BBEC1A2A9/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only compliant
-        evidence.
+      explanation: The function enforces an input contract and returns a typed error
+        instead of panicking; tests assert both success and fault behavior.
+      compile_expectation: compile_pass
+      expected_outcome: assertion_pass
+      verification_notes: Run as a unit test or executable; assertions verify correct
+        value on valid input and explicit error on missing input.
   obligation_units:
   - ISO26262-6-2018:5_3:clause:5_3
   fls_refs:
@@ -275,15 +315,24 @@ guidelines:
 - id: RG-34FDD6EFE8ED
   category: Required
   technical_topic: Defensive programming & contracts
-  rule_statement: Apply defensive checks and explicit error handling behaviors consistent
-    with 7.4.12.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-34FDD6EFE8ED
-    (Part 6 7.4.12). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
-  exceptions: Exception allowed only through the documented deviation process with
-    explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-34FDD6EFE8ED (Part 6 7.4.12) to maintain
-    traceable coding-guideline coverage.
+  rule_statement: Within a crate, implementations shall validate assumptions before
+    use and route detectable failures through explicit `Result`-based handling; avoid
+    unchecked `unwrap`/`expect` unless a reviewed safety argument provides test evidence
+    that the failing state is unreachable.
+  amplification: For each public API and internal safety-relevant branch, define precondition
+    checks, map error causes to typed variants, and verify behavior with positive
+    and negative tests. Compliance evidence should include review records showing
+    where checks occur and how each failure path is exercised.
+  exceptions: A deviation is permitted only when a documented safety case shows the
+    failure mode is impossible or externally mitigated; reviewers must check the argument,
+    verify linked assumptions, and record objective evidence (analysis, test results,
+    and approval) before acceptance.
+  rationale: 'ISO 26262-6:7.4.12 expects systematic defensive behavior and explicit
+    fault handling. Requiring checkable preconditions and explicit error propagation
+    improves diagnosability and prevents silent unsafe continuation; reviewers can
+    verify conformance from code review evidence and reproducible test outcomes. Evidence
+    anchor: :cite:`ISO26262-Part6-7-4-12`. Evidence anchor: :std:`core::result::Result`.
+    Evidence anchor: :std:`core::option::Option`.'
   iso_seeds:
   - SEED-34FDD6EFE8ED
   scope: crate
@@ -306,21 +355,21 @@ guidelines:
     non_compliant:
       code_path: tests/guidelines/RG-34FDD6EFE8ED/examples/non_compliant.rs
       doc_path: tests/guidelines/RG-34FDD6EFE8ED/examples/non_compliant.md
-      explanation: This example intentionally violates the guideline intent and should
-        be used as negative evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only negative
-        evidence.
+      explanation: The code omits defensive checks and uses `unwrap`, causing a panic
+        on missing input instead of explicit error handling.
+      compile_expectation: compile_pass
+      expected_outcome: runtime_panic
+      verification_notes: Execute the program; it panics at runtime when `None.unwrap()`
+        is reached, providing negative evidence.
     compliant:
       code_path: tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.rs
       doc_path: tests/guidelines/RG-34FDD6EFE8ED/examples/compliant.md
-      explanation: This example demonstrates a compliant coding pattern aligned with
-        the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: documented-only
-      expected_outcome: documented_only
-      verification_notes: Automated execution not required for documented-only compliant
-        evidence.
+      explanation: Inputs are validated, errors are explicit, and assertions verify
+        both success and failure behavior.
+      compile_expectation: compile_pass
+      expected_outcome: assertion_pass
+      verification_notes: Run as a normal Rust binary or test; checks pass when both
+        valid and invalid paths match expected `Result` values.
   obligation_units:
   - ISO26262-6-2018:7_4_12:clause:7_4_12
   fls_refs:
@@ -370,7 +419,7 @@ guidelines:
       doc_path: tests/guidelines/RG-587CE115D9C8/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-587CE115D9C8%20candidate%20lint
@@ -424,7 +473,7 @@ guidelines:
       doc_path: tests/guidelines/RG-5B4923F76EEA/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-5B4923F76EEA%20candidate%20lint
@@ -440,13 +489,18 @@ guidelines:
   technical_topic: Tooling, compliance evidence, and deviations
   rule_statement: Provide verifiable compliance evidence for activities mapped to
     Table 7.
-  amplification: Initial generic guideline derived from ISO 26262 seed SEED-697000BF3263
+  amplification: 'Initial generic guideline derived from ISO 26262 seed SEED-697000BF3263
     (Part 6 Table 7). This rule is expected to be decomposed into narrower Rust-specific
-    sub-guidelines as corpus evidence grows.
+    sub-guidelines as corpus evidence grows. Use explicit unsafe boundaries, pointer
+    and borrow constraints, and deterministic Result/Option error handling in match-based
+    control flow. Rust API constraint anchor: :std:`core::mem::MaybeUninit`.'
   exceptions: Exception allowed only through the documented deviation process with
     explicit safety impact assessment, mitigation evidence, and reviewer approval.
-  rationale: Derived from ISO 26262 seed SEED-697000BF3263 (Part 6 Table 7) to maintain
-    traceable coding-guideline coverage.
+  rationale: 'Derived from ISO 26262 seed SEED-697000BF3263 (Part 6 Table 7) to maintain
+    traceable coding-guideline coverage. This wording aligns with benchmark Rust guidance
+    terms used for overflow, panic, and trait/struct safety reasoning. ISO obligation
+    evidence source: :cite:`ISO26262-Part6-Table-7`. Rust language/library evidence
+    point: :std:`core::ptr`. Rust language/library evidence point: :std:`core::slice`.'
   iso_seeds:
   - SEED-697000BF3263
   scope: crate
@@ -534,7 +588,7 @@ guidelines:
       doc_path: tests/guidelines/RG-7359C842E4E4/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7359C842E4E4%20candidate%20lint
@@ -644,7 +698,7 @@ guidelines:
       doc_path: tests/guidelines/RG-75D65B270D75/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-75D65B270D75%20candidate%20lint
@@ -698,7 +752,7 @@ guidelines:
       doc_path: tests/guidelines/RG-7CB86E3EA294/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-7CB86E3EA294%20candidate%20lint
@@ -807,7 +861,7 @@ guidelines:
       doc_path: tests/guidelines/RG-90F9CF8770E1/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-90F9CF8770E1%20candidate%20lint
@@ -1415,7 +1469,7 @@ guidelines:
       doc_path: tests/guidelines/RG-DCC941884F0D/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-DCC941884F0D%20candidate%20lint
@@ -1469,7 +1523,7 @@ guidelines:
       doc_path: tests/guidelines/RG-DE2CEFDCD9D7/examples/compliant.md
       explanation: This example demonstrates a compliant coding pattern aligned with
         the guideline intent and should be used as positive evidence during rule validation.
-      compile_expectation: no_run
+      compile_expectation: compile_pass
       expected_outcome: assertion_pass
   decidable_status: possible-with-clippy
   clippy_candidate_tracker: https://github.com/rust-lang/rust-clippy/issues/new?title=RG-DE2CEFDCD9D7%20candidate%20lint

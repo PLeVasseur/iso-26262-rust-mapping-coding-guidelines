@@ -1,6 +1,6 @@
 fn main() {
-    // Non-compliant pattern placeholder; update with rule-specific violation example
-    let mut numbers = vec![3, 2, 1];
-    numbers.sort();
-    println!("{:?}", numbers);
+    // Intentional runtime panic for negative evidence.
+    let values = [10_u32, 20_u32];
+    let idx = values.len();
+    let _ = values[idx];
 }

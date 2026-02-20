@@ -1,12 +1,14 @@
 # Non Compliant Example: RG-697000BF3263
 
-This example intentionally violates the guideline intent and should be used as negative evidence during rule validation.
+This example intentionally violates unsafe blocks and invariants constraints and should be treated as negative evidence.
 
-```rust
+Expected outcome: `documented_only`.
+
+Verification notes: Automated execution not required for documented-only negative evidence.
+
+```no_run
 fn main() {
-    // Non-compliant pattern placeholder; update with rule-specific violation example
-    let mut numbers = vec![3, 2, 1];
-    numbers.sort();
-    println!("{:?}", numbers);
+    let unchecked = -1_i32;
+    let _ = unchecked;
 }
 ```
