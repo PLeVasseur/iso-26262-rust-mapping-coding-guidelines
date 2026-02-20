@@ -32,6 +32,10 @@
           "items": {
             "type": "string"
           }
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "minimum": 0
         }
       }
     }

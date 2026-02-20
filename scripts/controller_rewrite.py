@@ -14,6 +14,7 @@ from _common import (
     EXIT_POLICY_FAIL,
     EXIT_RUNTIME_FAIL,
     EXIT_SUCCESS,
+    RUN_COMMAND_TIMEOUT_RETURN_CODE,
     extract_json_blob,
     load_guidelines_payload,
     read_json,
@@ -273,6 +274,17 @@ def substitute_placeholders(token: str, values: dict[str, str]) -> str:
     return output
 
 
+def _rewrite_timeout_seconds(llm_cfg: dict[str, Any], default_seconds: float = 180.0) -> float:
+    raw_value = llm_cfg.get("timeout_seconds", default_seconds)
+    try:
+        timeout_seconds = float(raw_value)
+    except (TypeError, ValueError):
+        timeout_seconds = default_seconds
+    if timeout_seconds < 0:
+        timeout_seconds = default_seconds
+    return timeout_seconds
+
+
 def resolve_guideline_rewrite(
     root: Path,
     guideline_id: str,
@@ -368,7 +380,12 @@ def resolve_guideline_rewrite(
     if not any("{rewrite_packet}" in token for token in command_tokens):
         command.append(str(packet_path))
 
-    completed = run_command(command, cwd=root)
+    timeout_seconds = _rewrite_timeout_seconds(llm_cfg)
+    completed = run_command(
+        command,
+        cwd=root,
+        timeout_seconds=timeout_seconds if timeout_seconds > 0 else None,
+    )
     write_json(
         raw_path,
         {
@@ -382,19 +399,20 @@ def resolve_guideline_rewrite(
 
     fallback_to_deterministic = bool(llm_cfg.get("fallback_to_deterministic", True))
     if completed.returncode != 0:
+        timeout_hit = completed.returncode == RUN_COMMAND_TIMEOUT_RETURN_CODE
         if fallback_to_deterministic:
             return {
                 "ok": True,
                 "source": "fallback",
                 "applied": False,
-                "reason": "rewrite_command_failed",
+                "reason": "rewrite_command_timeout" if timeout_hit else "rewrite_command_failed",
                 "error": completed.stderr or completed.stdout,
             }
         return {
             "ok": False,
             "source": "llm",
             "applied": False,
-            "reason": "rewrite_command_failed",
+            "reason": "rewrite_command_timeout" if timeout_hit else "rewrite_command_failed",
             "error": completed.stderr or completed.stdout,
         }
 

@@ -37,6 +37,10 @@
         "max_neighbors": {
           "type": "integer",
           "minimum": 1
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "minimum": 0
         }
       }
     },

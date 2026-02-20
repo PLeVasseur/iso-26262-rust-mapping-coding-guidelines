@@ -101,6 +101,13 @@
           },
           "iteration_decision": {
             "type": "string"
+          },
+          "timed_out": {
+            "type": "boolean"
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "minimum": 0
           }
         }
       }

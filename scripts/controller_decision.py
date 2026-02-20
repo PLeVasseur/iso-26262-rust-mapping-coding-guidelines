@@ -14,6 +14,7 @@ from _common import (
     EXIT_POLICY_FAIL,
     EXIT_RUNTIME_FAIL,
     EXIT_SUCCESS,
+    RUN_COMMAND_TIMEOUT_RETURN_CODE,
     extract_json_blob,
     read_json,
     read_yaml,
@@ -31,6 +32,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "enabled": False,
         "fallback_to_deterministic": True,
         "command": [],
+        "timeout_seconds": 120,
     },
 }
 
@@ -80,6 +82,14 @@ def _normalize_policy(raw_policy: dict[str, Any]) -> dict[str, Any]:
     else:
         command = []
 
+    timeout_raw = llm_raw.get("timeout_seconds", DEFAULT_POLICY["llm"]["timeout_seconds"])
+    try:
+        timeout_seconds = float(timeout_raw)
+    except (TypeError, ValueError):
+        timeout_seconds = float(DEFAULT_POLICY["llm"]["timeout_seconds"])
+    if timeout_seconds < 0:
+        timeout_seconds = float(DEFAULT_POLICY["llm"]["timeout_seconds"])
+
     policy["llm"] = {
         "enabled": bool(llm_raw.get("enabled", DEFAULT_POLICY["llm"]["enabled"])),
         "fallback_to_deterministic": bool(
@@ -89,6 +99,7 @@ def _normalize_policy(raw_policy: dict[str, Any]) -> dict[str, Any]:
             )
         ),
         "command": command,
+        "timeout_seconds": timeout_seconds,
     }
     return policy
 
@@ -420,7 +431,12 @@ def resolve_candidate_selection(
     if not has_packet_placeholder:
         rendered.append(str(packet_path))
 
-    completed = run_command(rendered, cwd=root)
+    llm_timeout_seconds = float(llm_cfg.get("timeout_seconds") or 0.0)
+    completed = run_command(
+        rendered,
+        cwd=root,
+        timeout_seconds=llm_timeout_seconds if llm_timeout_seconds > 0 else None,
+    )
     raw_payload = {
         "command": rendered,
         "return_code": completed.returncode,
@@ -435,10 +451,15 @@ def resolve_candidate_selection(
     fallback_to_deterministic = bool(llm_cfg.get("fallback_to_deterministic", True))
 
     if completed.returncode != 0:
+        timeout_hit = completed.returncode == RUN_COMMAND_TIMEOUT_RETURN_CODE
         return _apply_fallback(
             resolution,
-            "llm_command_failed",
-            "llm command failed; fallback to deterministic order",
+            "llm_command_timeout" if timeout_hit else "llm_command_failed",
+            (
+                "llm command timed out; fallback to deterministic order"
+                if timeout_hit
+                else "llm command failed; fallback to deterministic order"
+            ),
             completed.stderr or completed.stdout,
             fallback_to_deterministic,
         )

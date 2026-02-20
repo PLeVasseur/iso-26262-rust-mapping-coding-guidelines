@@ -15,6 +15,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from controller_decision import build_decision_packet, resolve_candidate_selection  # noqa: E402
+from _common import RUN_COMMAND_TIMEOUT_RETURN_CODE  # noqa: E402
 
 
 def write_yaml(path: Path, payload: dict) -> None:
@@ -298,6 +299,37 @@ class ControllerDecisionTests(unittest.TestCase):
                 "fallback_disallowed:llm_selected_unknown_candidates",
             )
             self.assertEqual(result["ordered_candidate_ids"], [])
+
+    def test_resolve_selection_falls_back_on_llm_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            policy_path = temp_root / "policy.yaml"
+            write_yaml(
+                policy_path,
+                {
+                    "version": 1,
+                    "enabled": True,
+                    "max_selected_candidates": 2,
+                    "llm": {
+                        "enabled": True,
+                        "fallback_to_deterministic": True,
+                        "command": [sys.executable, "-c", "import time; time.sleep(5)"],
+                        "timeout_seconds": 0.1,
+                    },
+                },
+            )
+            iteration_dir = temp_root / "iteration"
+            result = resolve_candidate_selection(
+                ROOT,
+                self._packet(),
+                iteration_dir,
+                policy_path=policy_path,
+            )
+            self.assertEqual(result["selection_source"], "fallback")
+            self.assertEqual(result["resolution_reason"], "llm_command_timeout")
+
+            raw = json.loads((iteration_dir / "llm_decision.raw.json").read_text(encoding="utf-8"))
+            self.assertEqual(raw["return_code"], RUN_COMMAND_TIMEOUT_RETURN_CODE)
 
 
 if __name__ == "__main__":

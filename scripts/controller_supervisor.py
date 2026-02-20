@@ -16,6 +16,7 @@ from _common import (
     EXIT_POLICY_FAIL,
     EXIT_RUNTIME_FAIL,
     EXIT_SUCCESS,
+    RUN_COMMAND_TIMEOUT_RETURN_CODE,
     read_json,
     read_yaml,
     repo_root,
@@ -40,6 +41,12 @@ def parse_args() -> argparse.Namespace:
         help="Additional arg passed to autonomous_controller worker",
     )
     parser.add_argument("--poll-interval-seconds", type=float, default=0.0)
+    parser.add_argument("--worker-timeout-seconds", type=float, default=900.0)
+    parser.add_argument(
+        "--continue-on-worker-timeout",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--force-recover-lock", action="store_true")
     return parser.parse_args()
 
@@ -199,6 +206,11 @@ def main() -> int:
             print(f"[controller-supervisor][error] {exc}")
             return EXIT_RUNTIME_FAIL
 
+        worker_timeout_seconds = float(args.worker_timeout_seconds)
+        if worker_timeout_seconds < 0:
+            worker_timeout_seconds = 900.0
+        effective_worker_timeout = worker_timeout_seconds if worker_timeout_seconds > 0 else None
+
         state = {
             "version": 1,
             "session_id": args.session_id,
@@ -237,13 +249,18 @@ def main() -> int:
                 controller_args,
             )
             started_at = utc_now()
-            completed = run_command(command, cwd=root)
+            completed = run_command(
+                command,
+                cwd=root,
+                timeout_seconds=effective_worker_timeout,
+            )
             completed_at = utc_now()
 
             controller_state = load_controller_state(root, args.session_id)
             controller_status = str(controller_state.get("status") or "running")
             iteration = int(controller_state.get("iteration") or 0)
             iteration_decision = str(controller_state.get("last_iteration_decision") or "")
+            worker_timed_out = completed.returncode == RUN_COMMAND_TIMEOUT_RETURN_CODE
 
             run_record = {
                 "loop_index": loop_index,
@@ -256,6 +273,8 @@ def main() -> int:
                 "controller_status": controller_status,
                 "iteration": iteration,
                 "iteration_decision": iteration_decision,
+                "timed_out": worker_timed_out,
+                "timeout_seconds": float(effective_worker_timeout or 0),
             }
             state_runs = state.get("runs") or []
             state_runs.append(run_record)
@@ -264,6 +283,18 @@ def main() -> int:
             state["last_exit_code"] = completed.returncode
             state["last_iteration_decision"] = iteration_decision
             state["controller_status"] = controller_status
+
+            if worker_timed_out and controller_status == "running" and args.continue_on_worker_timeout:
+                state["status"] = "running"
+                save_supervisor_state(state_path, state)
+                print(
+                    "[controller-supervisor][warn] "
+                    f"worker timed out after {float(effective_worker_timeout or 0):.1f}s; "
+                    "continuing"
+                )
+                if args.poll_interval_seconds > 0:
+                    time.sleep(args.poll_interval_seconds)
+                continue
 
             if completed.returncode != 0 and controller_status == "running":
                 state["status"] = "error"

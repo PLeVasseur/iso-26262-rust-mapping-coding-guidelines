@@ -14,6 +14,7 @@ import yaml
 EXIT_SUCCESS = 0
 EXIT_POLICY_FAIL = 2
 EXIT_RUNTIME_FAIL = 3
+RUN_COMMAND_TIMEOUT_RETURN_CODE = 124
 
 LEGACY_GUIDELINE_FIELD_ALIASES = {
     "decideable": "decidable",
@@ -68,14 +69,48 @@ def write_json(path: Path, payload: Any) -> None:
         handle.write("\n")
 
 
-def run_command(command: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        command,
-        cwd=str(cwd) if cwd else None,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+def _coerce_subprocess_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def run_command(
+    command: list[str],
+    cwd: Path | None = None,
+    timeout_seconds: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    effective_timeout: float | None = None
+    if timeout_seconds is not None and timeout_seconds > 0:
+        effective_timeout = float(timeout_seconds)
+
+    try:
+        return subprocess.run(
+            command,
+            cwd=str(cwd) if cwd else None,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=effective_timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = _coerce_subprocess_output(exc.stdout)
+        stderr = _coerce_subprocess_output(exc.stderr)
+        timeout_label = f"{effective_timeout:.1f}s" if effective_timeout is not None else "unknown"
+        timeout_message = f"[run_command] timeout after {timeout_label}"
+        if stderr:
+            stderr = f"{stderr.rstrip()}\n{timeout_message}\n"
+        else:
+            stderr = f"{timeout_message}\n"
+
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=RUN_COMMAND_TIMEOUT_RETURN_CODE,
+            stdout=stdout,
+            stderr=stderr,
+        )
 
 
 def resolve_path(value: str, root: Path) -> Path:

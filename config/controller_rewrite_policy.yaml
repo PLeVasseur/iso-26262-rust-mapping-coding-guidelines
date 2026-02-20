@@ -5,6 +5,7 @@ llm:
   fallback_to_deterministic: true
   command: []
   max_neighbors: 5
+  timeout_seconds: 180
 constraints:
   min_rule_words: 10
   max_rule_words: 52

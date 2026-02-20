@@ -5,3 +5,4 @@ llm:
   enabled: false
   fallback_to_deterministic: true
   command: []
+  timeout_seconds: 120
