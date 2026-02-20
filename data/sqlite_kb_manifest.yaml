@@ -1,0 +1,19 @@
+version: 1
+updated_at: '2026-02-20T17:19:31+00:00'
+databases:
+  rust_reference:
+    db_name: rust_reference.sqlite
+    current_path: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/current/rust_reference.sqlite
+    snapshot_id: rust-reference-20260220T171931Z
+    snapshot_path: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/snapshots/rust_reference/rust-reference-20260220T171931Z.sqlite
+    source:
+      kind: rust-reference
+      ref: https://doc.rust-lang.org/reference/
+      commit_sha: 38b7384f73950f2a35df99bc74419b3ced6d5212
+      fetched_at: '2026-02-20T17:19:30+00:00'
+    query_contract: config/sqlite_query_contracts/rust_reference.yaml
+    validation_report: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260220T171931Z.json
+    table1_queryability:
+      rows_total: 9
+      applicable: 9
+      not_applicable: 0

@@ -1,0 +1,153 @@
+version: 1
+database: rust_reference
+defaults:
+  row_limit: 200
+
+queries:
+  snapshot_metadata:
+    description: Active snapshot metadata for rust_reference
+    requires_order: true
+    row_limit: 5
+    params: []
+    sql: |
+      SELECT
+        snapshot_id,
+        commit_sha,
+        source_url,
+        fetched_at,
+        sha256
+      FROM snapshots
+      ORDER BY fetched_at DESC
+
+  chapter_overview:
+    description: Chapter hierarchy overview for reference ingest
+    requires_order: true
+    row_limit: 200
+    params: []
+    sql: |
+      SELECT
+        c.chapter_id,
+        c.title,
+        c.order_index,
+        COUNT(DISTINCT d.document_id) AS document_count,
+        COUNT(DISTINCT s.section_id) AS section_count
+      FROM chapters AS c
+      LEFT JOIN source_documents AS d
+        ON d.chapter_id = c.chapter_id
+      LEFT JOIN sections AS s
+        ON s.chapter_id = c.chapter_id
+      GROUP BY c.chapter_id, c.title, c.order_index
+      ORDER BY c.order_index ASC
+
+  document_timestamp_coverage:
+    description: Coverage of document-level source timestamps
+    requires_order: true
+    row_limit: 10
+    params: []
+    sql: |
+      SELECT
+        COUNT(*) AS document_count,
+        SUM(CASE WHEN TRIM(source_fetched_at) = '' THEN 1 ELSE 0 END) AS missing_fetched_at,
+        SUM(CASE WHEN TRIM(source_commit_sha) = '' THEN 1 ELSE 0 END) AS missing_commit_sha
+      FROM source_documents
+      ORDER BY document_count DESC
+
+  row_verdicts_for_table1:
+    description: Row-level verdicts for ISO 26262 Part 6 Table 1
+    requires_order: true
+    row_limit: 20
+    params: []
+    sql: |
+      SELECT
+        r.row_node_id,
+        r.row_marker,
+        rv.verdict,
+        rv.rationale,
+        rv.rationale_anchor AS source_anchor,
+        rv.rationale_timestamp
+      FROM table1_rows AS r
+      JOIN row_verdicts AS rv
+        ON rv.row_node_id = r.row_node_id
+      ORDER BY r.row_marker ASC
+
+  mechanisms_for_row:
+    description: Ranked mechanisms for one Table 1 row
+    requires_order: true
+    row_limit: 50
+    params:
+      - row_node_id
+    sql: |
+      SELECT
+        rm.row_node_id,
+        rm.mechanism_id,
+        m.canonical_symbol,
+        m.mechanism_family,
+        m.enforcement_kind,
+        m.stability,
+        rm.relevance_score,
+        rm.evidence_anchor AS source_anchor,
+        rm.evidence_section_id,
+        rm.evidence_statement_id,
+        rm.source_fetched_at
+      FROM row_mechanisms AS rm
+      JOIN mechanisms AS m
+        ON m.mechanism_id = rm.mechanism_id
+      WHERE rm.row_node_id = :row_node_id
+      ORDER BY rm.relevance_score DESC, rm.mechanism_id ASC
+
+  lexical_statement_hits_for_row:
+    description: Lexical statement hits for row-scoped mechanisms
+    requires_order: true
+    row_limit: 100
+    params:
+      - row_node_id
+      - term_a
+      - term_b
+      - term_c
+    sql: |
+      SELECT
+        rm.row_node_id,
+        rm.mechanism_id,
+        s.statement_id,
+        s.text AS statement_text,
+        s.confidence,
+        rm.source_fetched_at,
+        (
+          CASE WHEN LOWER(s.text) LIKE '%' || LOWER(:term_a) || '%' THEN 1 ELSE 0 END +
+          CASE WHEN LOWER(s.text) LIKE '%' || LOWER(:term_b) || '%' THEN 1 ELSE 0 END +
+          CASE WHEN LOWER(s.text) LIKE '%' || LOWER(:term_c) || '%' THEN 1 ELSE 0 END
+        ) AS lexical_score
+      FROM row_mechanisms AS rm
+      JOIN mechanism_evidence AS me
+        ON me.mechanism_id = rm.mechanism_id
+       AND me.section_id = rm.evidence_section_id
+      JOIN statements AS s
+        ON s.statement_id = me.statement_id
+      WHERE rm.row_node_id = :row_node_id
+        AND (
+          LOWER(s.text) LIKE '%' || LOWER(:term_a) || '%' OR
+          LOWER(s.text) LIKE '%' || LOWER(:term_b) || '%' OR
+          LOWER(s.text) LIKE '%' || LOWER(:term_c) || '%'
+        )
+      ORDER BY lexical_score DESC, s.confidence DESC, s.statement_id ASC
+
+  evidence_for_mechanism:
+    description: Evidence anchors for one mechanism
+    requires_order: true
+    row_limit: 50
+    params:
+      - mechanism_id
+    sql: |
+      SELECT
+        evidence_id,
+        mechanism_id,
+        section_id,
+        statement_id,
+        source_anchor,
+        evidence_kind,
+        text_excerpt,
+        confidence,
+        source_fetched_at
+      FROM mechanism_evidence
+      WHERE mechanism_id = :mechanism_id
+      ORDER BY evidence_id ASC
