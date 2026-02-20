@@ -74,10 +74,27 @@ def known_good_override_args(overrides: dict[str, Any] | None) -> list[str]:
     return args
 
 
+def strict_gate_args(gate_name: str) -> list[str]:
+    if gate_name in {
+        "check_rule_decomposition",
+        "check_fls_proxy_coverage",
+        "check_guideline_quality",
+    }:
+        return ["--enforce"]
+    if gate_name in {
+        "check_guideline_examples",
+        "check_guideline_diversity",
+        "check_known_good_alignment",
+    }:
+        return ["--gate-mode", "error"]
+    return []
+
+
 def run_gates(
     root: Path,
     output_dir: Path,
     known_good_alignment_overrides: dict[str, Any] | None = None,
+    strict_gate_mode: bool = False,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     reports: dict[str, Any] = {}
@@ -89,6 +106,8 @@ def run_gates(
         command = [sys.executable, *script_args, "--json-output", str(report_path)]
         if gate_name == "check_known_good_alignment":
             command.extend(known_good_override_args(known_good_alignment_overrides))
+        if strict_gate_mode:
+            command.extend(strict_gate_args(gate_name))
         completed = run_command(command, cwd=root)
 
         if completed.returncode == 3:
@@ -668,8 +687,14 @@ def observe_repo(
     root: Path,
     output_dir: Path,
     known_good_alignment_overrides: dict[str, Any] | None = None,
+    strict_gate_mode: bool = False,
 ) -> dict[str, Any]:
-    reports = run_gates(root, output_dir, known_good_alignment_overrides)
+    reports = run_gates(
+        root,
+        output_dir,
+        known_good_alignment_overrides,
+        strict_gate_mode=strict_gate_mode,
+    )
 
     traceability_report = reports.get("check_traceability", {}).get("report", {})
     decomposition_report = reports.get("check_rule_decomposition", {}).get("report", {})

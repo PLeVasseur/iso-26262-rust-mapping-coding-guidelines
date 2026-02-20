@@ -97,6 +97,19 @@ def main() -> int:
             score -= 40
             findings.append("missing fls_refs")
 
+        metadata_path = root / "tests" / "guidelines" / guideline_id / "metadata.yaml"
+        if metadata_path.exists():
+            metadata = read_yaml(metadata_path) or {}
+            if isinstance(metadata, dict):
+                fixture_origin = str(metadata.get("fixture_origin") or "").strip().lower()
+                promotion_ready = metadata.get("promotion_ready")
+                if promotion_ready is False:
+                    score -= 40
+                    findings.append("fixture metadata marks promotion_ready=false")
+                elif fixture_origin == "scaffold" and promotion_ready is not True:
+                    score -= 20
+                    findings.append("scaffold fixture metadata not promotion-ready")
+
         examples = guideline.get("examples") or {}
         for side in ["compliant", "non_compliant"]:
             doc_rel = str((examples.get(side) or {}).get("doc_path") or "").strip()

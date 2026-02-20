@@ -159,6 +159,11 @@ def build_metadata_payload(guideline: dict, rule_id: str, mode: str) -> dict:
         "decidable": guideline.get("decidable"),
         "state": guideline.get("state", "DRAFT"),
         "iso_seeds": guideline.get("iso_seeds") or [],
+        "fixture_origin": "scaffold",
+        "promotion_ready": False,
+        "promotion_blocker": (
+            "Scaffold fixture requires rule-specific examples and evidence before promotion."
+        ),
         "pass_criteria": "Compliant example meets expected compile/lint behavior.",
         "fail_criteria": "Non-compliant example triggers expected compile/lint behavior.",
     }

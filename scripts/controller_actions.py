@@ -29,7 +29,7 @@ LANE_IMPACT_WEIGHTS = {
     "alignment": 2,
     "diversity": 2,
     "rust": 2,
-    "examples": 1,
+    "examples": 3,
 }
 
 DEFAULT_MAX_MUTATED_GUIDELINES = 5
@@ -212,7 +212,7 @@ def _proposal_from_deficit(deficit: dict[str, Any]) -> dict[str, Any] | None:
             "guideline_id": guideline_id,
         }
         expected_delta = {"quality": 1}
-        risk_penalty = 0.1
+        risk_penalty = 0.22
     elif deficit_type == "example_gap" and guideline_id:
         action = {
             "type": "upgrade_examples_non_placeholder",
@@ -225,36 +225,36 @@ def _proposal_from_deficit(deficit: dict[str, Any]) -> dict[str, Any] | None:
             "type": "align_example_with_decidable_status",
             "guideline_id": guideline_id,
         }
-        expected_delta = {"examples": 2, "quality": 1}
-        risk_penalty = 0.12
+        expected_delta = {"examples": 3, "quality": 2}
+        risk_penalty = 0.06
     elif deficit_type == "example_assertion_gap" and guideline_id:
         action = {
             "type": "strengthen_example_assertions",
             "guideline_id": guideline_id,
         }
-        expected_delta = {"examples": 2, "quality": 1}
-        risk_penalty = 0.1
+        expected_delta = {"examples": 2, "quality": 2}
+        risk_penalty = 0.07
     elif deficit_type == "example_negative_evidence_gap" and guideline_id:
         action = {
             "type": "convert_non_compliant_to_compile_fail_or_panic",
             "guideline_id": guideline_id,
         }
-        expected_delta = {"examples": 2, "quality": 1}
-        risk_penalty = 0.12
+        expected_delta = {"examples": 3, "quality": 2}
+        risk_penalty = 0.06
     elif deficit_type == "example_diversity_gap" and guideline_id:
         action = {
             "type": "upgrade_examples_non_placeholder",
             "guideline_id": guideline_id,
         }
-        expected_delta = {"examples": 2, "quality": 1, "diversity": 1}
-        risk_penalty = 0.1
+        expected_delta = {"examples": 3, "quality": 2, "diversity": 2}
+        risk_penalty = 0.08
     elif deficit_type in {"duplication_gap", "duplication_exception_missing"} and guideline_id:
         action = {
             "type": "diversify_rule_wording",
             "guideline_id": guideline_id,
         }
         expected_delta = {"quality": 1, "diversity": 2}
-        risk_penalty = 0.08
+        risk_penalty = 0.22
     elif deficit_type == "rust_signal_gap" and guideline_id:
         action = {
             "type": "add_alignment_citation_signals",
@@ -276,8 +276,8 @@ def _proposal_from_deficit(deficit: dict[str, Any]) -> dict[str, Any] | None:
                 "type": "upgrade_examples_non_placeholder",
                 "guideline_id": guideline_id,
             }
-            expected_delta = {"examples": 1, "quality": 1, "alignment": 1}
-            risk_penalty = 0.2
+            expected_delta = {"examples": 2, "quality": 2, "alignment": 2}
+            risk_penalty = 0.1
         elif "granularity_too_coarse" in details:
             action = {
                 "type": "rebalance_alignment_granularity",
@@ -300,14 +300,14 @@ def _proposal_from_deficit(deficit: dict[str, Any]) -> dict[str, Any] | None:
                 "guideline_id": guideline_id,
             }
             expected_delta = {"quality": 1, "alignment": 2}
-            risk_penalty = 0.2
+            risk_penalty = 0.28
         else:
             action = {
                 "type": "rewrite_rule_statement_specific",
                 "guideline_id": guideline_id,
             }
             expected_delta = {"quality": 1, "alignment": 1}
-            risk_penalty = 0.15
+            risk_penalty = 0.22
 
     if action is None:
         return None
@@ -384,7 +384,15 @@ def _bundle_repetition_penalty(actions: list[dict[str, Any]]) -> float:
         "add_alignment_citation_signals",
     }
     if action_types == repetitive_triplet:
-        penalty += 0.35
+        penalty += 0.55
+
+    if (
+        "rewrite_rule_statement_specific" in action_types
+        and "upgrade_examples_non_placeholder" not in action_types
+    ):
+        penalty += 0.2
+    if "raise_benchmark_similarity" in action_types and "upgrade_examples_non_placeholder" not in action_types:
+        penalty += 0.15
 
     if "upgrade_examples_non_placeholder" in action_types:
         penalty -= 0.05
@@ -393,7 +401,7 @@ def _bundle_repetition_penalty(actions: list[dict[str, Any]]) -> float:
     if "convert_non_compliant_to_compile_fail_or_panic" in action_types:
         penalty -= 0.06
     if "diversify_rule_wording" in action_types:
-        penalty -= 0.2
+        penalty -= 0.05
 
     return max(-0.3, round(penalty, 3))
 

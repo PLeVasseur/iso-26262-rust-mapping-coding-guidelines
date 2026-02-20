@@ -17,7 +17,14 @@ weights:
   granularity: 0.15
 advisory_similarity:
   enabled: true
-  min_similarity: 0.7
+  min_similarity: 0.72
+dimension_floors:
+  apply_to_changed_guidelines: true
+  structure: 0.55
+  specificity: 0.45
+  evidence: 0.55
+  citations: 0.45
+  granularity: 0.4
 controller_progression:
   enabled: true
   start_iteration: 1

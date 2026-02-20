@@ -53,6 +53,7 @@ def parse_args() -> argparse.Namespace:
         help="Temporary harness root for extracted example code",
     )
     parser.add_argument("--json-output", type=Path)
+    parser.add_argument("--gate-mode", choices=["warn", "error"])
     return parser.parse_args()
 
 
@@ -230,7 +231,7 @@ def main() -> int:
         shutil.rmtree(work_root)
     work_root.mkdir(parents=True, exist_ok=True)
 
-    gate_mode = str(policy.get("gate_mode") or "warn").strip().lower()
+    gate_mode = str(args.gate_mode or policy.get("gate_mode") or "warn").strip().lower()
     if gate_mode not in {"warn", "error"}:
         gate_mode = "warn"
 

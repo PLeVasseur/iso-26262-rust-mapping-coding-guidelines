@@ -170,13 +170,82 @@ def average(values: list[float]) -> float:
     return float(sum(values) / len(values))
 
 
+TOPIC_BUCKET_KEYWORDS: dict[str, set[str]] = {
+    "defensive": {
+        "defensive",
+        "error",
+        "errors",
+        "result",
+        "option",
+        "panic",
+        "unwrap",
+        "expect",
+    },
+    "subset": {
+        "subset",
+        "unsafe",
+        "forbidden",
+        "forbid",
+        "pointer",
+        "raw",
+        "language",
+        "construct",
+    },
+    "complexity": {
+        "complexity",
+        "traceable",
+        "reviewable",
+        "structure",
+        "bounded",
+    },
+    "type": {
+        "type",
+        "types",
+        "conversion",
+        "tryfrom",
+        "trait",
+        "traits",
+    },
+    "concurrency": {
+        "concurrency",
+        "thread",
+        "atomic",
+        "mutex",
+        "lock",
+        "shared",
+        "race",
+    },
+}
+
+
+def infer_topic_bucket(text: str) -> str:
+    lowered = text.lower()
+    tokens = set(re.findall(r"[a-z0-9_]+", lowered))
+    best_bucket = "misc"
+    best_score = 0
+    for bucket, keywords in TOPIC_BUCKET_KEYWORDS.items():
+        score = len(tokens & keywords)
+        if score > best_score:
+            best_score = score
+            best_bucket = bucket
+    return best_bucket
+
+
 def nearest_neighbors(
     local_text: str,
     benchmark_records: list[dict[str, Any]],
+    local_topic_bucket: str,
     top_k: int = 3,
 ) -> list[dict[str, Any]]:
+    topic_matched = [
+        record
+        for record in benchmark_records
+        if str(record.get("_topic_bucket") or "") == local_topic_bucket
+    ]
+    candidate_pool = topic_matched if len(topic_matched) >= max(1, top_k) else benchmark_records
+
     scored = []
-    for record in benchmark_records:
+    for record in candidate_pool:
         bench_text = str(record.get("rule_text") or "") + "\n" + str(
             record.get("rationale_text") or ""
         )
@@ -300,6 +369,14 @@ def main() -> int:
         if not canonical_path.exists():
             continue
         canonical = read_json(canonical_path)
+        benchmark_topic_source = "\n".join(
+            [
+                str(canonical.get("rule_text") or ""),
+                str(canonical.get("rationale_text") or ""),
+                " ".join(str(item) for item in (canonical.get("metadata") or {}).get("tags", [])),
+            ]
+        )
+        canonical["_topic_bucket"] = infer_topic_bucket(benchmark_topic_source)
         benchmark_records.append(canonical)
 
     if not benchmark_records:
@@ -318,6 +395,13 @@ def main() -> int:
     advisory_similarity = policy.get("advisory_similarity") or {}
     use_similarity = bool(advisory_similarity.get("enabled", True))
     min_similarity = float(advisory_similarity.get("min_similarity", 0.70))
+    dimension_floors = policy.get("dimension_floors") or {}
+    floor_dimensions = ["structure", "specificity", "evidence", "citations", "granularity"]
+    apply_floors_to_changed = bool(dimension_floors.get("apply_to_changed_guidelines", True))
+    floor_by_dimension = {
+        dimension: float(dimension_floors.get(dimension, 0.0) or 0.0)
+        for dimension in floor_dimensions
+    }
 
     dimension_features = {
         "structure": [
@@ -357,6 +441,15 @@ def main() -> int:
 
         local_canonical = build_local_canonical(guideline, root)
         feature_values = extract_feature_vector(local_canonical)
+        local_topic_bucket = infer_topic_bucket(
+            "\n".join(
+                [
+                    str(guideline.get("technical_topic") or ""),
+                    str(local_canonical.get("rule_text") or ""),
+                    str(local_canonical.get("rationale_text") or ""),
+                ]
+            )
+        )
 
         dimension_scores: dict[str, float] = {}
         for dimension, feature_names in dimension_features.items():
@@ -375,10 +468,27 @@ def main() -> int:
             alignment_score += value * dimension_weight
         alignment_score = round(alignment_score / weight_total, 6)
 
+        is_changed_guideline = (not changed_set) or guideline_id in changed_set
+        apply_dimension_floors = True
+        if apply_floors_to_changed:
+            apply_dimension_floors = is_changed_guideline
+
         flags = []
         min_changed = float(thresholds.get("min_changed_guideline_alignment", 0.80))
         if alignment_score < min_changed:
             flags.append("known_good_alignment_gap")
+
+        if apply_dimension_floors:
+            floor_violated = False
+            for dimension, floor in floor_by_dimension.items():
+                if floor <= 0:
+                    continue
+                value = float(dimension_scores.get(dimension, 0.0))
+                if value + 1e-9 < floor:
+                    flags.append(f"dimension_floor_{dimension}")
+                    floor_violated = True
+            if floor_violated:
+                flags.append("known_good_alignment_gap")
 
         concept_stats = feature_stats.get("concept_count") or {}
         conditions_stats = feature_stats.get("conditions_per_100_words") or {}
@@ -413,7 +523,12 @@ def main() -> int:
         nearest = []
         if use_similarity:
             local_text = local_canonical["rule_text"] + "\n" + local_canonical["rationale_text"]
-            nearest = nearest_neighbors(local_text, benchmark_records, top_k=3)
+            nearest = nearest_neighbors(
+                local_text,
+                benchmark_records,
+                local_topic_bucket=local_topic_bucket,
+                top_k=3,
+            )
             if nearest and nearest[0]["similarity"] < min_similarity:
                 flags.append("benchmark_similarity_gap")
 

@@ -70,9 +70,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--full-eval-top-k", type=int, default=2)
     parser.add_argument("--success-window", type=int, default=3)
     parser.add_argument("--suppress-after-failures", type=int, default=2)
-    parser.set_defaults(commit_on_accept=True)
+    parser.set_defaults(commit_on_accept=False, strict_promotion=True)
     parser.add_argument("--commit-each-accept", dest="commit_on_accept", action="store_true")
     parser.add_argument("--no-commit-on-accept", dest="commit_on_accept", action="store_false")
+    parser.add_argument("--strict-promotion", dest="strict_promotion", action="store_true")
+    parser.add_argument("--no-strict-promotion", dest="strict_promotion", action="store_false")
+    parser.add_argument(
+        "--allow-main-branch-commits",
+        action="store_true",
+        help="Allow commit-on-accept while on main/master",
+    )
     parser.add_argument("--single-iteration", action="store_true")
     parser.add_argument(
         "--decision-policy",
@@ -224,6 +231,52 @@ def success_condition(observation: dict[str, Any]) -> bool:
         "quality_lane_pass",
     ]
     return all(bool(observation.get(key, False)) for key in lane_keys)
+
+
+QUALITY_PROGRESS_DEFICIT_TYPES = {
+    "quality_gap",
+    "placeholder_gap",
+    "example_gap",
+    "example_outcome_gap",
+    "example_assertion_gap",
+    "example_negative_evidence_gap",
+    "example_diversity_gap",
+}
+
+
+def touched_guideline_ids(candidate: dict[str, Any]) -> set[str]:
+    touched: set[str] = set()
+    for action in candidate.get("actions") or []:
+        guideline_id = str((action or {}).get("guideline_id") or "").strip()
+        if guideline_id:
+            touched.add(guideline_id)
+    return touched
+
+
+def quality_deficit_count(observation: dict[str, Any], guideline_id: str) -> int:
+    deficits = observation.get("deficits") or []
+    return sum(
+        1
+        for deficit in deficits
+        if str(deficit.get("guideline_id") or "").strip() == guideline_id
+        and str(deficit.get("type") or "") in QUALITY_PROGRESS_DEFICIT_TYPES
+    )
+
+
+def stagnant_quality_guidelines(
+    before_observation: dict[str, Any],
+    after_observation: dict[str, Any],
+    guideline_ids: set[str],
+) -> list[str]:
+    stagnant: list[str] = []
+    for guideline_id in sorted(guideline_ids):
+        before_count = quality_deficit_count(before_observation, guideline_id)
+        if before_count <= 0:
+            continue
+        after_count = quality_deficit_count(after_observation, guideline_id)
+        if after_count >= before_count:
+            stagnant.append(guideline_id)
+    return stagnant
 
 
 def snapshot_workspace(root: Path, backup_root: Path) -> None:
@@ -403,7 +456,31 @@ def commit_iteration(
     selected_by: str,
     selected_profile: str,
     run_id: str,
+    allow_main_branch_commits: bool,
 ) -> dict[str, Any]:
+    branch_result = run_command(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
+    if branch_result.returncode != 0:
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "failed determining git branch",
+            "output": branch_result.stderr or branch_result.stdout,
+        }
+
+    branch_name = branch_result.stdout.strip()
+    if not allow_main_branch_commits and branch_name in {"main", "master"}:
+        return {
+            "ok": False,
+            "committed": False,
+            "commit_sha": "",
+            "message": "branch guard rejected commit on protected branch",
+            "output": (
+                f"current branch is `{branch_name}`; switch to a feature branch or "
+                "pass --allow-main-branch-commits"
+            ),
+        }
+
     staged_ok, staged_before, staged_error = _staged_paths(root)
     if not staged_ok:
         return {
@@ -1471,6 +1548,7 @@ def main() -> int:
         selected = accepted_candidates[0]
         selected_candidate_id = str(selected.get("candidate_id") or "")
         selected_candidate = candidate_map[selected_candidate_id]
+        selected_touched_guidelines = touched_guideline_ids(selected_candidate)
         selected_profile = str(selected.get("evaluation_profile") or "quick")
         commit_report: dict[str, Any] = {
             "requested": bool(args.commit_on_accept and not args.dry_run),
@@ -1512,7 +1590,45 @@ def main() -> int:
             accepted = accepted and improves(before_observation, after_observation)
             accepted = accepted and not regressions
 
-            if accepted and args.commit_on_accept and not args.dry_run:
+            if accepted and selected_touched_guidelines:
+                stagnant = stagnant_quality_guidelines(
+                    before_observation,
+                    after_observation,
+                    selected_touched_guidelines,
+                )
+                if stagnant:
+                    accepted = False
+                    regressions.append(
+                        "touched_guideline_quality_progress_missing:"
+                        + ",".join(sorted(stagnant))
+                    )
+
+            promotion_ready_for_commit = True
+            if (
+                accepted
+                and args.commit_on_accept
+                and not args.dry_run
+                and args.strict_promotion
+            ):
+                promotion_observation = observe_repo(
+                    root,
+                    iteration_dir / "promotion",
+                    known_good_alignment_overrides=alignment_overrides,
+                    strict_gate_mode=True,
+                )
+                promotion_ready_for_commit = success_condition(promotion_observation)
+                if not promotion_ready_for_commit:
+                    commit_report["message"] = "strict promotion gate failed; commit deferred"
+                    commit_report["output"] = (
+                        "strict promotion requires hard/iso/decomposition/fls/quality lanes to pass"
+                    )
+
+            if (
+                accepted
+                and args.commit_on_accept
+                and not args.dry_run
+                and promotion_ready_for_commit
+            ):
                 commit_report = commit_iteration(
                     root,
                     state["session_id"],
@@ -1521,6 +1637,7 @@ def main() -> int:
                     selection_source,
                     selected_profile,
                     str(state.get("last_orchestrate_run_id") or ""),
+                    allow_main_branch_commits=bool(args.allow_main_branch_commits),
                 )
                 write_json(iteration_dir / "commit.json", commit_report)
                 if not bool(commit_report.get("ok", False)):

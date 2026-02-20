@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--todo-guidelines", type=Path, default=Path("data/todo_guidelines.yaml"))
     parser.add_argument("--policy", type=Path, default=Path("config/diversity_policy.yaml"))
     parser.add_argument("--json-output", type=Path)
+    parser.add_argument("--gate-mode", choices=["warn", "error"])
     return parser.parse_args()
 
 
@@ -193,7 +194,7 @@ def main() -> int:
     root = repo_root()
 
     policy = read_yaml(root / args.policy) or {}
-    gate_mode = str(policy.get("gate_mode") or "warn").strip().lower()
+    gate_mode = str(args.gate_mode or policy.get("gate_mode") or "warn").strip().lower()
     if gate_mode not in {"warn", "error"}:
         gate_mode = "warn"
     hard_fail = gate_mode == "error"

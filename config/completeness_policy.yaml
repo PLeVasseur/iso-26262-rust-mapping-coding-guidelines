@@ -23,3 +23,6 @@ quality:
   - placeholder
   - pending
   - todo
+  - scaffold
+  - this example intentionally violates the guideline intent
+  - this example demonstrates a compliant coding pattern aligned with the guideline intent
