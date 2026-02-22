@@ -127,6 +127,10 @@ SCORE_FIELDS = {
     "row_marker_scores",
 }
 
+LEXICAL_WEIGHT = 0.30
+SEMANTIC_WEIGHT = 0.25
+RERANK_WEIGHT = 0.45
+
 CHUNK_REQUIRED_QUERY_IDS = {
     "chunk_corpus_v1_all",
     "lexical_chunk_search_v1",
@@ -367,6 +371,32 @@ def _tokenize_raw(text: str) -> set[str]:
         for token in (match.group(0) for match in TOKEN_RE.finditer(text.lower()))
         if len(token) >= 3
     }
+
+
+def _row_identity(row: dict[str, Any]) -> str:
+    candidate = str(row.get("chunk_uid", "")).strip()
+    if candidate:
+        return candidate
+    return str(row.get("statement_id", "")).strip()
+
+
+def _apply_component_scores(
+    row: dict[str, Any],
+    *,
+    lexical_score: float,
+    semantic_score: float,
+    reranker_score: float,
+) -> None:
+    final_score = (
+        (LEXICAL_WEIGHT * float(lexical_score))
+        + (SEMANTIC_WEIGHT * float(semantic_score))
+        + (RERANK_WEIGHT * float(reranker_score))
+    )
+    row["lexical_score"] = float(lexical_score)
+    row["semantic_score"] = float(semantic_score)
+    row["reranker_score"] = float(reranker_score)
+    row["final_score"] = float(final_score)
+    row["relevance_score"] = float(final_score)
 
 
 def _to_fts_query(query_text: str) -> str:
@@ -708,7 +738,7 @@ def _run_lexical_query(
         key=lambda row: (
             -float(row["lexical_score"]),
             float(row["bm25_raw"]),
-            str(row["statement_id"]),
+            _row_identity(row),
         )
     )
     _annotate_rows_with_row_markers(rows, row_profiles)
@@ -1278,8 +1308,25 @@ def execute_retrieval_query(
             row_limit=candidate_limit,
         )
 
+    score_definitions = {
+        "lexical_score": "Normalized lexical relevance from FTS and token overlap",
+        "semantic_score": "Normalized embedding cosine similarity to query",
+        "reranker_score": "Normalized cross-encoder reranker relevance",
+        "final_score": (
+            f"Weighted score ({LEXICAL_WEIGHT:.2f}*lexical + "
+            f"{SEMANTIC_WEIGHT:.2f}*semantic + {RERANK_WEIGHT:.2f}*reranker)"
+        ),
+    }
+
     if mode == "lexical":
         lexical_rows = _run_lexical()
+        for row in lexical_rows:
+            _apply_component_scores(
+                row,
+                lexical_score=float(row.get("lexical_score", 0.0)),
+                semantic_score=0.0,
+                reranker_score=0.0,
+            )
         rows = lexical_rows[:top_k]
         row_projection = _build_row_projection(rows)
         duration_ms = (time.perf_counter() - started) * 1000.0
@@ -1288,6 +1335,12 @@ def execute_retrieval_query(
             "executed_mode": mode,
             "degraded": False,
             "semantic_retry_events": semantic_retry_events,
+            "score_definitions": score_definitions,
+            "candidate_generation": {
+                "lexical_pool_size": len(lexical_rows),
+                "semantic_pool_size": 0,
+                "union_pool_size": len(lexical_rows),
+            },
             "query_text": query_text,
             "row_marker": row_marker,
             "row_count": len(rows),
@@ -1310,6 +1363,13 @@ def execute_retrieval_query(
             )
 
         lexical_rows = _run_lexical()
+        for row in lexical_rows:
+            _apply_component_scores(
+                row,
+                lexical_score=float(row.get("lexical_score", 0.0)),
+                semantic_score=0.0,
+                reranker_score=0.0,
+            )
         rows = lexical_rows[:top_k]
         row_projection = _build_row_projection(rows)
         duration_ms = (time.perf_counter() - started) * 1000.0
@@ -1319,6 +1379,12 @@ def execute_retrieval_query(
             "degraded": True,
             "degraded_reason": error_code,
             "semantic_retry_events": semantic_retry_events,
+            "score_definitions": score_definitions,
+            "candidate_generation": {
+                "lexical_pool_size": len(lexical_rows),
+                "semantic_pool_size": 0,
+                "union_pool_size": len(lexical_rows),
+            },
             "preflight": preflight,
             "query_text": query_text,
             "row_marker": row_marker,
@@ -1356,6 +1422,13 @@ def execute_retrieval_query(
             raise ModeExecutionError(code=mapped_code, message=str(exc)) from exc
 
         lexical_rows = _run_lexical()
+        for row in lexical_rows:
+            _apply_component_scores(
+                row,
+                lexical_score=float(row.get("lexical_score", 0.0)),
+                semantic_score=0.0,
+                reranker_score=0.0,
+            )
         rows = lexical_rows[:top_k]
         row_projection = _build_row_projection(rows)
         duration_ms = (time.perf_counter() - started) * 1000.0
@@ -1365,6 +1438,12 @@ def execute_retrieval_query(
             "degraded": True,
             "degraded_reason": mapped_code,
             "semantic_retry_events": semantic_retry_events,
+            "score_definitions": score_definitions,
+            "candidate_generation": {
+                "lexical_pool_size": len(lexical_rows),
+                "semantic_pool_size": 0,
+                "union_pool_size": len(lexical_rows),
+            },
             "preflight": preflight,
             "query_text": query_text,
             "row_marker": row_marker,
@@ -1378,6 +1457,20 @@ def execute_retrieval_query(
     semantic_rows = _filter_rows_by_row_marker(semantic_rows, row_marker)
 
     if mode == "semantic":
+        for row in semantic_rows:
+            _apply_component_scores(
+                row,
+                lexical_score=0.0,
+                semantic_score=float(row.get("semantic_score", 0.0)),
+                reranker_score=float(row.get("reranker_score", 0.0)),
+            )
+        semantic_rows.sort(
+            key=lambda row: (
+                -float(row.get("final_score", 0.0)),
+                -float(row.get("reranker_score", 0.0)),
+                _row_identity(row),
+            )
+        )
         rows = semantic_rows[:top_k]
         row_projection = _build_row_projection(rows)
         duration_ms = (time.perf_counter() - started) * 1000.0
@@ -1386,6 +1479,12 @@ def execute_retrieval_query(
             "executed_mode": mode,
             "degraded": False,
             "semantic_retry_events": semantic_retry_events,
+            "score_definitions": score_definitions,
+            "candidate_generation": {
+                "lexical_pool_size": 0,
+                "semantic_pool_size": len(semantic_rows),
+                "union_pool_size": len(semantic_rows),
+            },
             "preflight": preflight,
             "query_text": query_text,
             "row_marker": row_marker,
@@ -1396,40 +1495,43 @@ def execute_retrieval_query(
         }
 
     lexical_rows = _run_lexical()
-    lexical_ids = [str(row["statement_id"]) for row in lexical_rows]
+    lexical_rows = lexical_rows[:candidate_limit]
+    semantic_rows = semantic_rows[:candidate_limit]
+
+    lexical_ids = [_row_identity(row) for row in lexical_rows]
     lexical_values = [float(row.get("lexical_score", 0.0)) for row in lexical_rows]
     lexical_norm = _min_max_normalize(lexical_values)
     lexical_score_by_id = dict(zip(lexical_ids, lexical_norm, strict=False))
 
     merged: dict[str, dict[str, Any]] = {}
     for row in semantic_rows:
-        statement_id = str(row["statement_id"])
-        merged[statement_id] = dict(row)
-        merged[statement_id]["lexical_score"] = lexical_score_by_id.get(statement_id, 0.0)
+        row_id = _row_identity(row)
+        merged[row_id] = dict(row)
+        merged[row_id]["lexical_score"] = lexical_score_by_id.get(row_id, 0.0)
 
     for row in lexical_rows:
-        statement_id = str(row["statement_id"])
-        if statement_id not in merged:
-            merged[statement_id] = dict(row)
-            merged[statement_id]["semantic_score"] = 0.0
-            merged[statement_id]["reranker_score"] = 0.0
-        merged[statement_id]["lexical_score"] = lexical_score_by_id.get(statement_id, 0.0)
+        row_id = _row_identity(row)
+        if row_id not in merged:
+            merged[row_id] = dict(row)
+            merged[row_id]["semantic_score"] = 0.0
+            merged[row_id]["reranker_score"] = 0.0
+        merged[row_id]["lexical_score"] = lexical_score_by_id.get(row_id, 0.0)
 
     hybrid_rows: list[dict[str, Any]] = []
     for row in merged.values():
-        lexical_score = float(row.get("lexical_score", 0.0))
-        semantic_score = float(row.get("semantic_score", 0.0))
-        reranker_score = float(row.get("reranker_score", 0.0))
-        row["relevance_score"] = (
-            (0.30 * lexical_score) + (0.25 * semantic_score) + (0.45 * reranker_score)
+        _apply_component_scores(
+            row,
+            lexical_score=float(row.get("lexical_score", 0.0)),
+            semantic_score=float(row.get("semantic_score", 0.0)),
+            reranker_score=float(row.get("reranker_score", 0.0)),
         )
         hybrid_rows.append(row)
 
     hybrid_rows.sort(
         key=lambda row: (
-            -float(row["relevance_score"]),
+            -float(row.get("final_score", 0.0)),
             -float(row.get("reranker_score", 0.0)),
-            str(row["statement_id"]),
+            _row_identity(row),
         )
     )
     rows = hybrid_rows[:top_k]
@@ -1440,6 +1542,12 @@ def execute_retrieval_query(
         "executed_mode": mode,
         "degraded": False,
         "semantic_retry_events": semantic_retry_events,
+        "score_definitions": score_definitions,
+        "candidate_generation": {
+            "lexical_pool_size": len(lexical_rows),
+            "semantic_pool_size": len(semantic_rows),
+            "union_pool_size": len(merged),
+        },
         "preflight": preflight,
         "query_text": query_text,
         "row_marker": row_marker,

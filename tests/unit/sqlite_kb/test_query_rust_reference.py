@@ -596,6 +596,71 @@ class QueryRustReferenceTests(unittest.TestCase):
 
             self.assertEqual(cached, statement_count)
 
+    def test_hybrid_returns_final_score_and_candidate_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = temp_root / "current" / "rust_reference.sqlite"
+            snapshot_root = temp_root / "snapshots"
+            manifest_path = temp_root / "manifest.yaml"
+            query_log_root = temp_root / "query_logs"
+            contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference_chunk.yaml"
+            reference_source_dir = create_reference_fixture(temp_root)
+
+            build_rust_reference_db(
+                db_path=db_path,
+                snapshot_root=snapshot_root,
+                manifest_path=manifest_path,
+                extractor_db=DEFAULT_EXTRACTOR_DB,
+                table_node_id=DEFAULT_TABLE_NODE_ID,
+                reference_source_dir=reference_source_dir,
+                reference_revision="fixture-001",
+                min_sections=4,
+                min_statements=8,
+                min_mechanisms=4,
+                retrieval_corpus="chunk",
+            )
+
+            server, thread, base_url = self._start_mock_backend()
+            try:
+                result = execute_retrieval_query(
+                    mode="hybrid",
+                    db_path=db_path,
+                    contract_path=contract_path,
+                    query_log_root=query_log_root,
+                    query_text="defensive error result option",
+                    row_marker="",
+                    top_k=5,
+                    candidate_limit=200,
+                    allow_degraded=False,
+                    semantic_config=SemanticBackendConfig(
+                        base_url=base_url,
+                        embed_model_id="Qwen/Qwen3-Embedding-4B",
+                        reranker_model_id="BAAI/bge-reranker-v2-m3",
+                        timeout_sec=1.0,
+                    ),
+                    semantic_retries=0,
+                    persist_semantic_cache=True,
+                    allow_online_corpus_embedding=True,
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=2.0)
+                server.server_close()
+
+            self.assertEqual(result["executed_mode"], "hybrid")
+            self.assertIn("score_definitions", result)
+            self.assertIn("candidate_generation", result)
+            self.assertGreaterEqual(int(result.get("row_count", 0)), 1)
+
+            rows = list(result.get("rows", []))
+            self.assertTrue(all("final_score" in row for row in rows))
+            self.assertTrue(all("lexical_score" in row for row in rows))
+            self.assertTrue(all("semantic_score" in row for row in rows))
+            self.assertTrue(all("reranker_score" in row for row in rows))
+
+            final_scores = [float(row.get("final_score", 0.0)) for row in rows]
+            self.assertEqual(final_scores, sorted(final_scores, reverse=True))
+
     def test_guardrails_reject_forbidden_write_sql(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
