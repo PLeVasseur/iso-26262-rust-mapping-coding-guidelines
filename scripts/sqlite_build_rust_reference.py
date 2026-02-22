@@ -757,74 +757,188 @@ def _clean_chunk_text(raw_text: str) -> str:
     return " ".join(value.split())
 
 
-def _build_statement_mirror_chunks(
+def _split_oversized_chunk(text: str, max_tokens: int) -> list[str]:
+    cleaned = _clean_chunk_text(text)
+    if not cleaned:
+        return []
+
+    sentences = [value.strip() for value in SENTENCE_SPLIT_RE.split(cleaned) if value.strip()]
+    if not sentences:
+        return [cleaned]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    token_count = 0
+    for sentence in sentences:
+        sentence_tokens = len(_semantic_tokens(sentence))
+        if current and token_count + sentence_tokens > max_tokens:
+            chunks.append(" ".join(current).strip())
+            current = [sentence]
+            token_count = sentence_tokens
+            continue
+        current.append(sentence)
+        token_count += sentence_tokens
+    if current:
+        chunks.append(" ".join(current).strip())
+    return [chunk for chunk in chunks if chunk]
+
+
+def _build_concept_chunks_from_sections(
     *,
     sections: list[SectionRecord],
-    statements: list[StatementRecord],
+    target_min_tokens: int = 150,
+    target_max_tokens: int = 500,
 ) -> tuple[list[ChunkRecord], list[ChunkSpanRecord]]:
-    section_by_id = {section.section_id: section for section in sections}
     chunks: list[ChunkRecord] = []
     spans: list[ChunkSpanRecord] = []
 
-    search_cursor_by_section: dict[str, int] = {}
-    for statement in sorted(statements, key=lambda row: (row.section_id, row.sentence_index)):
-        section = section_by_id.get(statement.section_id)
-        if section is None:
-            continue
+    target_min = max(40, int(target_min_tokens))
+    target_max = max(target_min, int(target_max_tokens))
 
-        raw_text = str(statement.text).strip()
-        clean_text = _clean_chunk_text(raw_text)
-        if not clean_text:
-            continue
-
+    for section in sorted(sections, key=lambda row: (row.document_id, row.order_index)):
         source_anchor = _anchor_url_for_section(section)
-        chunk_fingerprint = _sha256_text(
-            "|".join(
-                [
-                    str(section.document_id),
-                    str(source_anchor),
-                    str(statement.sentence_index),
-                    clean_text.lower(),
-                ]
-            )
-        )
-        chunk_uid = f"chunk::{chunk_fingerprint}"
-
         section_text = str(section.text)
         section_text_lower = section_text.lower()
-        statement_lower = raw_text.lower()
-        start_hint = int(search_cursor_by_section.get(section.section_id, 0))
-        start_offset = section_text_lower.find(statement_lower, start_hint)
-        if start_offset < 0 and start_hint > 0:
-            start_offset = section_text_lower.find(statement_lower)
-        if start_offset < 0:
-            start_offset = max(0, min(start_hint, len(section_text)))
-        end_offset = min(len(section_text), start_offset + len(raw_text))
-        search_cursor_by_section[section.section_id] = max(start_offset, end_offset)
+        section_blocks = _split_section_blocks(section_text) or [section_text]
 
-        chunks.append(
-            ChunkRecord(
-                chunk_uid=chunk_uid,
-                section_id=statement.section_id,
-                raw_text=raw_text,
-                clean_text=clean_text,
-                char_len=len(raw_text),
-                token_len=len(_semantic_tokens(clean_text)),
-                source_sha256=statement.source_sha256,
-                source_fetched_at=statement.source_fetched_at,
-                source_commit_sha=statement.source_commit_sha,
-                order_index=int(statement.sentence_index),
+        offset_hint = 0
+        block_payloads: list[dict[str, Any]] = []
+        for raw_block in section_blocks:
+            cleaned = _clean_chunk_text(raw_block)
+            if not cleaned:
+                continue
+            token_len = len(_semantic_tokens(cleaned))
+            if token_len <= 0:
+                continue
+            block_lower = raw_block.lower()
+            start_offset = section_text_lower.find(block_lower, offset_hint)
+            if start_offset < 0 and offset_hint > 0:
+                start_offset = section_text_lower.find(block_lower)
+            if start_offset < 0:
+                start_offset = max(0, min(offset_hint, len(section_text)))
+            end_offset = min(len(section_text), start_offset + len(raw_block))
+            offset_hint = max(start_offset, end_offset)
+            block_payloads.append(
+                {
+                    "raw": raw_block.strip(),
+                    "clean": cleaned,
+                    "tokens": token_len,
+                    "start": int(start_offset),
+                    "end": int(end_offset),
+                }
             )
-        )
-        spans.append(
-            ChunkSpanRecord(
-                chunk_uid=chunk_uid,
-                source_anchor=source_anchor,
-                start_offset=int(start_offset),
-                end_offset=int(end_offset),
-                span_order=1,
+
+        if not block_payloads:
+            continue
+
+        staged_chunks: list[dict[str, Any]] = []
+        current_raw: list[str] = []
+        current_clean: list[str] = []
+        current_tokens = 0
+        current_start = int(block_payloads[0]["start"])
+        current_end = int(block_payloads[0]["end"])
+
+        def _flush_current() -> None:
+            nonlocal current_raw, current_clean, current_tokens, current_start, current_end
+            if not current_clean:
+                return
+            staged_chunks.append(
+                {
+                    "raw": "\n\n".join(current_raw).strip(),
+                    "clean": " ".join(current_clean).strip(),
+                    "tokens": int(current_tokens),
+                    "start": int(current_start),
+                    "end": int(current_end),
+                }
             )
-        )
+            current_raw = []
+            current_clean = []
+            current_tokens = 0
+
+        for block in block_payloads:
+            block_tokens = int(block["tokens"])
+            if current_clean and (current_tokens + block_tokens) > target_max:
+                _flush_current()
+                current_start = int(block["start"])
+                current_end = int(block["end"])
+
+            if not current_clean:
+                current_start = int(block["start"])
+            current_end = int(block["end"])
+            current_raw.append(str(block["raw"]))
+            current_clean.append(str(block["clean"]))
+            current_tokens += block_tokens
+
+            if current_tokens >= target_min:
+                _flush_current()
+
+        _flush_current()
+
+        exploded_chunks: list[dict[str, Any]] = []
+        for staged in staged_chunks:
+            token_len = int(staged["tokens"])
+            if token_len <= target_max:
+                exploded_chunks.append(staged)
+                continue
+
+            split_clean_chunks = _split_oversized_chunk(str(staged["clean"]), target_max)
+            if not split_clean_chunks:
+                continue
+            for split_clean in split_clean_chunks:
+                exploded_chunks.append(
+                    {
+                        "raw": split_clean,
+                        "clean": split_clean,
+                        "tokens": len(_semantic_tokens(split_clean)),
+                        "start": int(staged["start"]),
+                        "end": int(staged["end"]),
+                    }
+                )
+
+        for order_index, chunk_payload in enumerate(exploded_chunks, start=1):
+            clean_text = str(chunk_payload["clean"]).strip()
+            raw_text = str(chunk_payload["raw"]).strip()
+            if not clean_text:
+                continue
+
+            start_offset = int(chunk_payload["start"])
+            end_offset = int(chunk_payload["end"])
+            chunk_fingerprint = _sha256_text(
+                "|".join(
+                    [
+                        str(section.document_id),
+                        str(source_anchor),
+                        str(start_offset),
+                        str(end_offset),
+                        clean_text.lower(),
+                    ]
+                )
+            )
+            chunk_uid = f"chunk::{chunk_fingerprint}"
+
+            chunks.append(
+                ChunkRecord(
+                    chunk_uid=chunk_uid,
+                    section_id=section.section_id,
+                    raw_text=raw_text,
+                    clean_text=clean_text,
+                    char_len=len(raw_text),
+                    token_len=len(_semantic_tokens(clean_text)),
+                    source_sha256=section.source_sha256,
+                    source_fetched_at=section.source_fetched_at,
+                    source_commit_sha=section.source_commit_sha,
+                    order_index=int(order_index),
+                )
+            )
+            spans.append(
+                ChunkSpanRecord(
+                    chunk_uid=chunk_uid,
+                    source_anchor=source_anchor,
+                    start_offset=start_offset,
+                    end_offset=end_offset,
+                    span_order=1,
+                )
+            )
 
     return chunks, spans
 
@@ -2424,7 +2538,7 @@ def build_rust_reference_db(
     sections, statements = _extract_sections_and_statements(
         snapshot_id=snapshot_id, documents=documents
     )
-    chunks, chunk_spans = _build_statement_mirror_chunks(sections=sections, statements=statements)
+    chunks, chunk_spans = _build_concept_chunks_from_sections(sections=sections)
     mechanisms, mechanism_evidence, evidence_count_by_mechanism, best_anchor_by_mechanism = (
         _extract_mechanisms_and_evidence(
             sections=sections,

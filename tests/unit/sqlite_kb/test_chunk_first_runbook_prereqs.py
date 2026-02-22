@@ -195,6 +195,55 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
             self.assertGreaterEqual(span_count, chunk_count)
             self.assertGreaterEqual(docs_count, 1)
 
+    def test_chunk_uids_are_stable_for_same_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_a = self._build_fixture_db(temp_root / "run_a")
+            db_b = self._build_fixture_db(temp_root / "run_b")
+
+            def _read_chunk_ids(path: Path) -> list[str]:
+                connection = sqlite3.connect(path)
+                try:
+                    return [
+                        str(row[0])
+                        for row in connection.execute(
+                            "SELECT chunk_uid FROM chunks ORDER BY chunk_uid ASC"
+                        ).fetchall()
+                    ]
+                finally:
+                    connection.close()
+
+            self.assertEqual(_read_chunk_ids(db_a), _read_chunk_ids(db_b))
+
+    def test_chunks_stay_within_section_and_token_window(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = self._build_fixture_db(temp_root)
+
+            connection = sqlite3.connect(db_path)
+            try:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        c.chunk_uid,
+                        c.section_id,
+                        c.token_len,
+                        COUNT(DISTINCT sp.source_anchor) AS anchor_count
+                    FROM chunks AS c
+                    LEFT JOIN chunk_spans AS sp ON sp.chunk_uid = c.chunk_uid
+                    GROUP BY c.chunk_uid, c.section_id, c.token_len
+                    ORDER BY c.chunk_uid ASC
+                    """
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertGreaterEqual(len(rows), 1)
+            for _, _, token_len, anchor_count in rows:
+                self.assertGreater(int(token_len), 0)
+                self.assertLessEqual(int(token_len), 500)
+                self.assertEqual(int(anchor_count), 1)
+
     def test_query_path_uses_chunk_query_ids_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
