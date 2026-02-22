@@ -373,6 +373,96 @@ class RetrievalEvalVerifierTests(unittest.TestCase):
         gate_blob = " ".join(report["gate_failures"])
         self.assertIn("prompt_override.P-OVERRIDE.lexical.precision_at_k", gate_blob)
 
+    def test_projection_and_skew_metrics_are_reported(self) -> None:
+        prompts = [
+            {
+                "prompt_id": "P-PROJ-1",
+                "slice": "issue_identification",
+                "query_text": "defensive",
+                "modes": ["hybrid"],
+                "expected_row_markers": ["1d"],
+                "relevant_statement_ids": ["stmt-1"],
+                "relevant_anchor_prefixes": [],
+                "relevant_terms": [],
+                "hard_negative_statement_ids": [],
+                "semantic_focus": False,
+                "expect_abstain": False,
+                "min_metrics": {},
+            },
+            {
+                "prompt_id": "P-PROJ-2",
+                "slice": "resolution_identification",
+                "query_text": "nonsense",
+                "modes": ["hybrid"],
+                "expected_row_markers": [],
+                "relevant_statement_ids": [],
+                "relevant_anchor_prefixes": [],
+                "relevant_terms": ["nonsense"],
+                "hard_negative_statement_ids": [],
+                "semantic_focus": False,
+                "expect_abstain": True,
+                "min_metrics": {},
+            },
+        ]
+
+        def _fake_execute_retrieval_query(*, query_text: str, **_: object) -> dict[str, object]:
+            if query_text == "defensive":
+                return {
+                    "requested_mode": "hybrid",
+                    "executed_mode": "hybrid",
+                    "degraded": False,
+                    "rows": [
+                        {
+                            "statement_id": "stmt-1",
+                            "statement_text": "defensive",
+                            "row_markers": ["1d"],
+                            "source_anchor": "doc::defensive",
+                        }
+                    ],
+                    "row_projection": [{"row_marker": "1d"}],
+                    "abstain": {"active": False, "reason_code": "NONE"},
+                    "semantic_retry_events": [],
+                }
+            return {
+                "requested_mode": "hybrid",
+                "executed_mode": "hybrid",
+                "degraded": False,
+                "rows": [],
+                "row_projection": [],
+                "abstain": {"active": True, "reason_code": "NO_ROW_SIGNAL"},
+                "semantic_retry_events": [],
+            }
+
+        with patch(
+            "sqlite_eval_rust_reference_retrieval.execute_retrieval_query",
+            side_effect=_fake_execute_retrieval_query,
+        ):
+            report = evaluate_retrieval_prompts(
+                db_path=Path("unused.sqlite"),
+                contract_path=Path("unused.yaml"),
+                query_log_root=Path("unused"),
+                prompts=prompts,
+                top_k=1,
+                candidate_limit=10,
+                allow_degraded=False,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.1,
+                ),
+                semantic_retries=0,
+                enforce_gates=False,
+            )
+
+        projection_summary = report["summary"]["projection"]["hybrid"]
+        self.assertGreaterEqual(float(projection_summary["macro_f1"]), 0.9)
+        self.assertEqual(float(projection_summary["abstain_rate"]), 0.5)
+        self.assertEqual(float(projection_summary["abstain_precision"]), 1.0)
+        self.assertEqual(float(projection_summary["abstain_recall"]), 1.0)
+        self.assertIn("skew_alarms", report["summary"])
+        self.assertIn("max_row_share", report["summary"]["skew_alarms"]["hybrid"])
+
 
 if __name__ == "__main__":
     unittest.main()

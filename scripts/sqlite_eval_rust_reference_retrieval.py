@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -28,11 +29,17 @@ DEFAULT_TOP_K = 10
 DEFAULT_CANDIDATE_LIMIT = 5000
 SLICES = {"issue_identification", "resolution_identification"}
 MODES = {"lexical", "semantic", "hybrid"}
+ROW_MARKERS = tuple(f"1{chr(ord('a') + idx)}" for idx in range(9))
 OVERRIDABLE_MIN_METRICS = {
     "precision_at_k",
     "mrr_at_k",
     "ndcg_at_k",
     "row_hit_rate",
+}
+SKEW_THRESHOLDS = {
+    "max_row_share": 0.75,
+    "min_row_entropy": 0.35,
+    "min_abstain_rate_with_expected": 0.20,
 }
 THRESHOLDS = {
     "lexical": {
@@ -173,6 +180,7 @@ def load_eval_prompts(path: Path) -> list[dict[str, Any]]:
                 "hard_negative_statement_ids": hard_negative_statement_ids,
                 "min_metrics": min_metrics,
                 "semantic_focus": bool(raw_prompt.get("semantic_focus", False)),
+                "expect_abstain": bool(raw_prompt.get("expect_abstain", False)),
             }
         )
 
@@ -250,6 +258,31 @@ def _row_hit(rows: list[dict[str, Any]], expected_row_markers: list[str], k: int
     return 0.0
 
 
+def _anchor_hit(rows: list[dict[str, Any]], anchor_prefixes: list[str], k: int) -> float:
+    prefixes = [prefix for prefix in anchor_prefixes if prefix]
+    if not prefixes:
+        return 1.0
+    for row in rows[:k]:
+        source_anchor = str(row.get("source_anchor", ""))
+        if any(source_anchor.startswith(prefix) for prefix in prefixes):
+            return 1.0
+    return 0.0
+
+
+def _projection_f1(expected: set[str], predicted: set[str]) -> tuple[float, float, float]:
+    if not expected and not predicted:
+        return 1.0, 1.0, 1.0
+    if not predicted:
+        return 0.0, 0.0, 0.0
+
+    overlap = expected.intersection(predicted)
+    precision = float(len(overlap)) / float(len(predicted))
+    recall = 0.0 if not expected else float(len(overlap)) / float(len(expected))
+    if precision + recall <= 0.0:
+        return precision, recall, 0.0
+    return precision, recall, (2.0 * precision * recall) / (precision + recall)
+
+
 def _aggregate_mode_metrics(case_rows: list[dict[str, Any]]) -> dict[str, float]:
     if not case_rows:
         return {
@@ -257,7 +290,9 @@ def _aggregate_mode_metrics(case_rows: list[dict[str, Any]]) -> dict[str, float]
             "mrr_at_k": 0.0,
             "ndcg_at_k": 0.0,
             "row_hit_rate": 0.0,
+            "anchor_hit_rate": 0.0,
             "hard_negative_rate": 0.0,
+            "projection_macro_f1": 0.0,
         }
 
     metric_names = [
@@ -265,11 +300,153 @@ def _aggregate_mode_metrics(case_rows: list[dict[str, Any]]) -> dict[str, float]
         "mrr_at_k",
         "ndcg_at_k",
         "row_hit_rate",
+        "anchor_hit_rate",
         "hard_negative_rate",
+        "projection_macro_f1",
     ]
     return {
         name: round(sum(float(case[name]) for case in case_rows) / float(len(case_rows)), 6)
         for name in metric_names
+    }
+
+
+def _aggregate_projection_metrics(case_rows: list[dict[str, Any]]) -> dict[str, float]:
+    if not case_rows:
+        return {
+            "macro_f1": 0.0,
+            "macro_precision": 0.0,
+            "macro_recall": 0.0,
+            "abstain_rate": 0.0,
+            "abstain_precision": 0.0,
+            "abstain_recall": 0.0,
+        }
+
+    macro_f1 = sum(float(case.get("projection_f1", 0.0)) for case in case_rows) / float(len(case_rows))
+    macro_precision = sum(float(case.get("projection_precision", 0.0)) for case in case_rows) / float(
+        len(case_rows)
+    )
+    macro_recall = sum(float(case.get("projection_recall", 0.0)) for case in case_rows) / float(
+        len(case_rows)
+    )
+
+    abstain_pred_count = sum(1 for case in case_rows if bool(case.get("abstain_active", False)))
+    abstain_expected_count = sum(1 for case in case_rows if bool(case.get("expect_abstain", False)))
+    abstain_tp = sum(
+        1
+        for case in case_rows
+        if bool(case.get("abstain_active", False)) and bool(case.get("expect_abstain", False))
+    )
+
+    return {
+        "macro_f1": round(float(macro_f1), 6),
+        "macro_precision": round(float(macro_precision), 6),
+        "macro_recall": round(float(macro_recall), 6),
+        "abstain_rate": round(float(abstain_pred_count) / float(len(case_rows)), 6),
+        "abstain_precision": round(
+            float(abstain_tp) / float(abstain_pred_count) if abstain_pred_count > 0 else 0.0,
+            6,
+        ),
+        "abstain_recall": round(
+            float(abstain_tp) / float(abstain_expected_count) if abstain_expected_count > 0 else 1.0,
+            6,
+        ),
+    }
+
+
+def _mode_skew_alarm(case_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    predicted_markers = [
+        str(case.get("top_projected_row_marker", "")).strip().lower()
+        for case in case_rows
+        if str(case.get("top_projected_row_marker", "")).strip()
+    ]
+    total = len(predicted_markers)
+    distribution = {
+        marker: predicted_markers.count(marker)
+        for marker in sorted(set(predicted_markers))
+    }
+
+    max_row_share = 0.0
+    row_entropy = 0.0
+    row_gini = 0.0
+    if total > 0:
+        probabilities = [float(count) / float(total) for count in distribution.values()]
+        max_row_share = max(probabilities)
+        row_entropy = -sum(p * math.log2(p) for p in probabilities if p > 0.0)
+        max_entropy = math.log2(float(len(ROW_MARKERS)))
+        if max_entropy > 0.0:
+            row_entropy = row_entropy / max_entropy
+        row_gini = 1.0 - sum(p * p for p in probabilities)
+
+    abstain_rate = (
+        float(sum(1 for case in case_rows if bool(case.get("abstain_active", False))))
+        / float(max(1, len(case_rows)))
+    )
+    expected_abstain_count = sum(1 for case in case_rows if bool(case.get("expect_abstain", False)))
+
+    alerts: list[str] = []
+    if max_row_share > float(SKEW_THRESHOLDS["max_row_share"]):
+        alerts.append(
+            f"max_row_share>{SKEW_THRESHOLDS['max_row_share']}: {max_row_share:.4f}"
+        )
+    if total > 1 and row_entropy < float(SKEW_THRESHOLDS["min_row_entropy"]):
+        alerts.append(
+            f"row_entropy<{SKEW_THRESHOLDS['min_row_entropy']}: {row_entropy:.4f}"
+        )
+    if expected_abstain_count > 0 and abstain_rate < float(SKEW_THRESHOLDS["min_abstain_rate_with_expected"]):
+        alerts.append(
+            "abstain_rate_collapse: "
+            f"{abstain_rate:.4f} < {SKEW_THRESHOLDS['min_abstain_rate_with_expected']}"
+        )
+
+    return {
+        "max_row_share": round(float(max_row_share), 6),
+        "row_entropy": round(float(row_entropy), 6),
+        "row_gini": round(float(row_gini), 6),
+        "abstain_rate": round(float(abstain_rate), 6),
+        "expected_abstain_count": int(expected_abstain_count),
+        "predicted_distribution": distribution,
+        "alerts": alerts,
+    }
+
+
+def _load_build_provenance(db_path: Path) -> dict[str, Any]:
+    try:
+        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    except sqlite3.Error:
+        return {
+            "kb_metadata": {},
+            "snapshot": {},
+            "counts": {"chunks": 0, "statements": 0, "docs": 0},
+        }
+
+    try:
+        connection.row_factory = sqlite3.Row
+        kb_metadata = connection.execute(
+            "SELECT kb_id, source_name, source_revision, extractor_version, built_at, notes FROM kb_metadata LIMIT 1"
+        ).fetchone()
+        snapshot = connection.execute(
+            "SELECT snapshot_id, commit_sha, source_url, fetched_at, sha256 FROM snapshots LIMIT 1"
+        ).fetchone()
+        counts = connection.execute(
+            "SELECT (SELECT COUNT(*) FROM chunks) AS chunk_count, (SELECT COUNT(*) FROM statements) AS statement_count, (SELECT COUNT(*) FROM docs) AS doc_count"
+        ).fetchone()
+    except sqlite3.Error:
+        return {
+            "kb_metadata": {},
+            "snapshot": {},
+            "counts": {"chunks": 0, "statements": 0, "docs": 0},
+        }
+    finally:
+        connection.close()
+
+    return {
+        "kb_metadata": dict(kb_metadata) if kb_metadata is not None else {},
+        "snapshot": dict(snapshot) if snapshot is not None else {},
+        "counts": {
+            "chunks": int(counts["chunk_count"]) if counts is not None else 0,
+            "statements": int(counts["statement_count"]) if counts is not None else 0,
+            "docs": int(counts["doc_count"]) if counts is not None else 0,
+        },
     }
 
 
@@ -337,6 +514,7 @@ def evaluate_retrieval_prompts(
                 "slice": prompt["slice"],
                 "mode": mode,
                 "semantic_focus": bool(prompt.get("semantic_focus", False)),
+                "expect_abstain": bool(prompt.get("expect_abstain", False)),
                 "status": status,
                 "reason": reason,
                 "requested_mode": query_result.get("requested_mode", mode),
@@ -350,18 +528,66 @@ def evaluate_retrieval_prompts(
                     _row_hit(rows, prompt["expected_row_markers"], top_k),
                     6,
                 ),
+                "anchor_hit_rate": round(
+                    _anchor_hit(rows, prompt["relevant_anchor_prefixes"], top_k),
+                    6,
+                ),
                 "hard_negative_rate": round(float(hard_negative_hits) / float(max(1, top_k)), 6),
                 "top_statement_ids": [str(row.get("statement_id", "")) for row in rows[:top_k]],
                 "semantic_retry_events": list(query_result.get("semantic_retry_events", [])),
                 "min_metric_overrides": dict(prompt.get("min_metrics", {}).get(mode, {})),
             }
+
+            row_projection = [
+                row
+                for row in list(query_result.get("row_projection", []))
+                if isinstance(row, dict)
+            ]
+            predicted_markers = {
+                str(row.get("row_marker", "")).strip().lower()
+                for row in row_projection
+                if str(row.get("row_marker", "")).strip()
+            }
+            expected_markers = set(prompt["expected_row_markers"])
+            projection_precision, projection_recall, projection_f1 = _projection_f1(
+                expected_markers,
+                predicted_markers,
+            )
+
+            abstain_active = bool((query_result.get("abstain") or {}).get("active", False))
+            if bool(prompt.get("expect_abstain", False)):
+                projection_precision = 1.0 if abstain_active else 0.0
+                projection_recall = projection_precision
+                projection_f1 = projection_precision
+
+            case_result["abstain_active"] = abstain_active
+            case_result["abstain_reason_code"] = str(
+                (query_result.get("abstain") or {}).get("reason_code", "")
+            )
+            case_result["projection_precision"] = round(float(projection_precision), 6)
+            case_result["projection_recall"] = round(float(projection_recall), 6)
+            case_result["projection_f1"] = round(float(projection_f1), 6)
+            case_result["projection_macro_f1"] = case_result["projection_f1"]
+            case_result["projected_row_markers"] = sorted(predicted_markers)
+            case_result["top_projected_row_marker"] = (
+                str(row_projection[0].get("row_marker", "")).strip().lower()
+                if row_projection
+                else ""
+            )
             case_results.append(case_result)
 
     by_mode: dict[str, list[dict[str, Any]]] = {mode: [] for mode in sorted(MODES)}
+    by_mode_retrieval: dict[str, list[dict[str, Any]]] = {mode: [] for mode in sorted(MODES)}
     by_slice_mode: dict[str, dict[str, list[dict[str, Any]]]] = {
         slice_name: {mode: [] for mode in sorted(MODES)} for slice_name in sorted(SLICES)
     }
+    by_slice_mode_retrieval: dict[str, dict[str, list[dict[str, Any]]]] = {
+        slice_name: {mode: [] for mode in sorted(MODES)} for slice_name in sorted(SLICES)
+    }
     semantic_focus_by_mode: dict[str, list[dict[str, Any]]] = {
+        mode: [] for mode in sorted(MODES)
+    }
+    semantic_focus_by_mode_retrieval: dict[str, list[dict[str, Any]]] = {
         mode: [] for mode in sorted(MODES)
     }
     failures = 0
@@ -369,22 +595,34 @@ def evaluate_retrieval_prompts(
     for case in case_results:
         by_mode[case["mode"]].append(case)
         by_slice_mode[case["slice"]][case["mode"]].append(case)
+        if not bool(case.get("expect_abstain", False)):
+            by_mode_retrieval[case["mode"]].append(case)
+            by_slice_mode_retrieval[case["slice"]][case["mode"]].append(case)
         if bool(case.get("semantic_focus", False)):
             semantic_focus_by_mode[case["mode"]].append(case)
+            if not bool(case.get("expect_abstain", False)):
+                semantic_focus_by_mode_retrieval[case["mode"]].append(case)
         if case["status"] == "fail":
             failures += 1
 
-    summary_modes = {mode: _aggregate_mode_metrics(rows) for mode, rows in by_mode.items()}
+    summary_modes = {mode: _aggregate_mode_metrics(rows) for mode, rows in by_mode_retrieval.items()}
     summary_slices = {
         slice_name: {
             mode: _aggregate_mode_metrics(rows)
             for mode, rows in per_mode.items()
         }
-        for slice_name, per_mode in by_slice_mode.items()
+        for slice_name, per_mode in by_slice_mode_retrieval.items()
     }
 
     summary_semantic_focus = {
-        mode: _aggregate_mode_metrics(rows) for mode, rows in semantic_focus_by_mode.items()
+        mode: _aggregate_mode_metrics(rows)
+        for mode, rows in semantic_focus_by_mode_retrieval.items()
+    }
+    summary_projection = {
+        mode: _aggregate_projection_metrics(rows) for mode, rows in by_mode.items()
+    }
+    skew_alarms = {
+        mode: _mode_skew_alarm(rows) for mode, rows in by_mode.items()
     }
 
     degraded_counts = {
@@ -410,7 +648,7 @@ def evaluate_retrieval_prompts(
 
     gate_failures: list[str] = []
     if enforce_gates:
-        if by_mode.get("lexical"):
+        if by_mode_retrieval.get("lexical"):
             lexical_metrics = summary_modes.get("lexical", {})
             for metric, threshold in THRESHOLDS["lexical"].items():
                 if float(lexical_metrics.get(metric, 0.0)) < float(threshold):
@@ -420,7 +658,7 @@ def evaluate_retrieval_prompts(
                         f"{lexical_metrics.get(metric, 0.0)} < {threshold}"
                     )
 
-        if semantic_focus_by_mode.get("semantic"):
+        if semantic_focus_by_mode_retrieval.get("semantic"):
             semantic_focus_metrics = summary_semantic_focus.get("semantic", {})
             for metric, threshold in THRESHOLDS["semantic_focus"].items():
                 if float(semantic_focus_metrics.get(metric, 0.0)) < float(threshold):
@@ -430,7 +668,7 @@ def evaluate_retrieval_prompts(
                         f"{semantic_focus_metrics.get(metric, 0.0)} < {threshold}"
                     )
 
-        if by_mode.get("hybrid"):
+        if by_mode_retrieval.get("hybrid"):
             hybrid_metrics = summary_modes.get("hybrid", {})
             for metric, threshold in THRESHOLDS["hybrid"].items():
                 if float(hybrid_metrics.get(metric, 0.0)) < float(threshold):
@@ -440,7 +678,9 @@ def evaluate_retrieval_prompts(
                         f"{hybrid_metrics.get(metric, 0.0)} < {threshold}"
                     )
 
-        if by_mode.get("hybrid") and (by_mode.get("lexical") or by_mode.get("semantic")):
+        if by_mode_retrieval.get("hybrid") and (
+            by_mode_retrieval.get("lexical") or by_mode_retrieval.get("semantic")
+        ):
             hybrid_mrr = float(summary_modes["hybrid"].get("mrr_at_k", 0.0))
             best_single_mrr = max(
                 float(summary_modes.get("lexical", {}).get("mrr_at_k", 0.0)),
@@ -453,8 +693,8 @@ def evaluate_retrieval_prompts(
                     f"{hybrid_mrr} + {tolerance} < {best_single_mrr}"
                 )
 
-        semantic_focus_semantic_cases = semantic_focus_by_mode.get("semantic", [])
-        semantic_focus_lexical_cases = semantic_focus_by_mode.get("lexical", [])
+        semantic_focus_semantic_cases = semantic_focus_by_mode_retrieval.get("semantic", [])
+        semantic_focus_lexical_cases = semantic_focus_by_mode_retrieval.get("lexical", [])
         semantic_focus_semantic_degraded = any(
             bool(case.get("degraded", False)) for case in semantic_focus_semantic_cases
         )
@@ -473,7 +713,7 @@ def evaluate_retrieval_prompts(
                     f"{semantic_mrr} < {lexical_mrr} + {required_delta}"
                 )
 
-        for slice_name, per_mode in by_slice_mode.items():
+        for slice_name, per_mode in by_slice_mode_retrieval.items():
             if not any(per_mode.get(mode) for mode in MODES):
                 continue
 
@@ -519,9 +759,17 @@ def evaluate_retrieval_prompts(
 
     total_failures = failures + len(gate_failures)
 
+    provenance = _load_build_provenance(db_path)
+
     report = {
         "suite_id": "rust_reference_table1_retrieval_eval_v1",
         "checked_at": _utc_now(),
+        "inputs": {
+            "db_path": str(db_path),
+            "contract_path": str(contract_path),
+            "top_k": int(top_k),
+            "candidate_limit": int(candidate_limit),
+        },
         "backend": {
             "profile": str(backend_profile).strip(),
             "base_url": str(semantic_config.base_url),
@@ -540,7 +788,10 @@ def evaluate_retrieval_prompts(
             "modes": summary_modes,
             "slices": summary_slices,
             "semantic_focus": summary_semantic_focus,
+            "projection": summary_projection,
+            "skew_alarms": skew_alarms,
         },
+        "provenance": provenance,
         "gate_failures": gate_failures,
         "cases": case_results,
     }
@@ -563,7 +814,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--contract-path",
-        default="config/sqlite_query_contracts/rust_reference.yaml",
+        default="config/sqlite_query_contracts/rust_reference_chunk.yaml",
         help="Path to query contract file",
     )
     parser.add_argument(

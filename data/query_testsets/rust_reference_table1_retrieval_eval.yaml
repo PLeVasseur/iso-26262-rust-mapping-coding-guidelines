@@ -165,3 +165,21 @@ prompts:
     modes: [lexical, semantic, hybrid]
     expected_row_markers: [1h]
     relevant_terms: [concurrency, thread, send, sync, verify]
+
+  - prompt_id: RET-NEG-001
+    slice: issue_identification
+    query_text: zzzxxyyqqq qqqzzz nohits
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [zzzxxyyqqq]
+    expect_abstain: true
+
+  - prompt_id: RET-NEG-002
+    slice: resolution_identification
+    query_text: loremzz ipsumqq safetyvoid tokenabsent
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [safetyvoid]
+    expect_abstain: true
