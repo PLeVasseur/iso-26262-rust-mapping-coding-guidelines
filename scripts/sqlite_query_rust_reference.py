@@ -91,6 +91,23 @@ CREATE INDEX IF NOT EXISTS idx_statement_embeddings_model
     ON statement_embeddings(model_id, statement_id);
 """
 
+CHUNK_EMBEDDING_CACHE_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+    chunk_uid TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    embed_version TEXT NOT NULL,
+    text_sha256 TEXT NOT NULL,
+    vector_json TEXT NOT NULL,
+    vector_norm REAL NOT NULL,
+    embedded_at TEXT NOT NULL,
+    source_fetched_at TEXT NOT NULL,
+    PRIMARY KEY(chunk_uid, model_id, embed_version),
+    FOREIGN KEY(chunk_uid) REFERENCES chunks(chunk_uid)
+);
+CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model
+    ON chunk_embeddings(model_id, chunk_uid, embed_version);
+"""
+
 
 class ModeExecutionError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
@@ -129,6 +146,9 @@ class RetrievalContractProfile:
     lexical_query_id: str
     lexical_id_column: str
     row_requirements_query_id: str
+    embedding_table: str
+    embedding_id_column: str
+    embed_version: str
 
 
 def _load_contract_query_ids(contract_path: Path) -> set[str]:
@@ -159,6 +179,9 @@ def _resolve_retrieval_contract_profile(contract_path: Path) -> RetrievalContrac
             lexical_query_id="lexical_chunk_search_v1",
             lexical_id_column="chunk_uid",
             row_requirements_query_id="table1_row_requirements_v2",
+            embedding_table="chunk_embeddings",
+            embedding_id_column="chunk_uid",
+            embed_version="chunk-v1",
         )
 
     missing_legacy = sorted(LEGACY_REQUIRED_QUERY_IDS.difference(query_ids))
@@ -174,6 +197,9 @@ def _resolve_retrieval_contract_profile(contract_path: Path) -> RetrievalContrac
         lexical_query_id="lexical_statement_search_v2",
         lexical_id_column="statement_id",
         row_requirements_query_id="table1_row_requirements_v1",
+        embedding_table="statement_embeddings",
+        embedding_id_column="statement_id",
+        embed_version="statement-v1",
     )
 
 
@@ -470,10 +496,13 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _ensure_embedding_cache_table(db_path: Path) -> None:
+def _ensure_embedding_cache_table(db_path: Path, retrieval_contract: RetrievalContractProfile) -> None:
     connection = sqlite3.connect(db_path)
     try:
-        connection.executescript(EMBEDDING_CACHE_TABLE_DDL)
+        if retrieval_contract.embedding_table == "chunk_embeddings":
+            connection.executescript(CHUNK_EMBEDDING_CACHE_TABLE_DDL)
+        else:
+            connection.executescript(EMBEDDING_CACHE_TABLE_DDL)
         connection.commit()
     finally:
         connection.close()
@@ -836,6 +865,7 @@ def _filter_rows_by_row_marker(rows: list[dict[str, Any]], row_marker: str) -> l
 def _load_embedding_cache(
     *,
     db_path: Path,
+    retrieval_contract: RetrievalContractProfile,
     model_id: str,
     corpus_rows: list[dict[str, Any]],
 ) -> dict[str, list[float]]:
@@ -855,16 +885,29 @@ def _load_embedding_cache(
         for offset in range(0, len(statement_ids), chunk_size):
             chunk = statement_ids[offset : offset + chunk_size]
             placeholders = ",".join("?" for _ in chunk)
-            sql = (
-                "SELECT statement_id, text_sha256, vector_json "
-                "FROM statement_embeddings "
-                "WHERE model_id = ? AND statement_id IN ("
-                + placeholders
-                + ")"
-            )
-            rows = connection.execute(sql, [model_id, *chunk]).fetchall()
+            if retrieval_contract.embedding_table == "chunk_embeddings":
+                sql = (
+                    "SELECT chunk_uid AS cache_id, text_sha256, vector_json "
+                    "FROM chunk_embeddings "
+                    "WHERE model_id = ? AND embed_version = ? AND chunk_uid IN ("
+                    + placeholders
+                    + ")"
+                )
+                rows = connection.execute(
+                    sql,
+                    [model_id, retrieval_contract.embed_version, *chunk],
+                ).fetchall()
+            else:
+                sql = (
+                    "SELECT statement_id AS cache_id, text_sha256, vector_json "
+                    "FROM statement_embeddings "
+                    "WHERE model_id = ? AND statement_id IN ("
+                    + placeholders
+                    + ")"
+                )
+                rows = connection.execute(sql, [model_id, *chunk]).fetchall()
             for row in rows:
-                statement_id = str(row["statement_id"])
+                statement_id = str(row["cache_id"])
                 if str(row["text_sha256"]) != expected_hash_by_id.get(statement_id, ""):
                     continue
                 vector_payload = json.loads(str(row["vector_json"]))
@@ -879,48 +922,85 @@ def _load_embedding_cache(
 def _persist_embedding_cache(
     *,
     db_path: Path,
+    retrieval_contract: RetrievalContractProfile,
     model_id: str,
     rows: list[dict[str, Any]],
 ) -> None:
     if not rows:
         return
 
-    _ensure_embedding_cache_table(db_path)
+    _ensure_embedding_cache_table(db_path, retrieval_contract)
     connection = sqlite3.connect(db_path)
     try:
         connection.execute("PRAGMA busy_timeout = 1500")
-        connection.executemany(
-            """
-            INSERT INTO statement_embeddings(
-                statement_id,
-                model_id,
-                text_sha256,
-                vector_json,
-                vector_norm,
-                embedded_at,
-                source_fetched_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(statement_id, model_id)
-            DO UPDATE SET
-                text_sha256 = excluded.text_sha256,
-                vector_json = excluded.vector_json,
-                vector_norm = excluded.vector_norm,
-                embedded_at = excluded.embedded_at,
-                source_fetched_at = excluded.source_fetched_at
-            """,
-            [
-                (
-                    str(row["statement_id"]),
+        if retrieval_contract.embedding_table == "chunk_embeddings":
+            connection.executemany(
+                """
+                INSERT INTO chunk_embeddings(
+                    chunk_uid,
                     model_id,
-                    str(row["text_sha256"]),
-                    json.dumps(row["embedding"], sort_keys=False),
-                    float(_l2_norm([float(value) for value in row["embedding"]])),
-                    _utc_now(),
-                    str(row.get("source_fetched_at", "")),
-                )
-                for row in rows
-            ],
-        )
+                    embed_version,
+                    text_sha256,
+                    vector_json,
+                    vector_norm,
+                    embedded_at,
+                    source_fetched_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chunk_uid, model_id, embed_version)
+                DO UPDATE SET
+                    text_sha256 = excluded.text_sha256,
+                    vector_json = excluded.vector_json,
+                    vector_norm = excluded.vector_norm,
+                    embedded_at = excluded.embedded_at,
+                    source_fetched_at = excluded.source_fetched_at
+                """,
+                [
+                    (
+                        str(row["statement_id"]),
+                        model_id,
+                        retrieval_contract.embed_version,
+                        str(row["text_sha256"]),
+                        json.dumps(row["embedding"], sort_keys=False),
+                        float(_l2_norm([float(value) for value in row["embedding"]])),
+                        _utc_now(),
+                        str(row.get("source_fetched_at", "")),
+                    )
+                    for row in rows
+                ],
+            )
+        else:
+            connection.executemany(
+                """
+                INSERT INTO statement_embeddings(
+                    statement_id,
+                    model_id,
+                    text_sha256,
+                    vector_json,
+                    vector_norm,
+                    embedded_at,
+                    source_fetched_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(statement_id, model_id)
+                DO UPDATE SET
+                    text_sha256 = excluded.text_sha256,
+                    vector_json = excluded.vector_json,
+                    vector_norm = excluded.vector_norm,
+                    embedded_at = excluded.embedded_at,
+                    source_fetched_at = excluded.source_fetched_at
+                """,
+                [
+                    (
+                        str(row["statement_id"]),
+                        model_id,
+                        str(row["text_sha256"]),
+                        json.dumps(row["embedding"], sort_keys=False),
+                        float(_l2_norm([float(value) for value in row["embedding"]])),
+                        _utc_now(),
+                        str(row.get("source_fetched_at", "")),
+                    )
+                    for row in rows
+                ],
+            )
         connection.commit()
     finally:
         connection.close()
@@ -929,6 +1009,7 @@ def _persist_embedding_cache(
 def _semantic_candidates(
     *,
     db_path: Path,
+    retrieval_contract: RetrievalContractProfile,
     config: SemanticBackendConfig,
     retries: int,
     query_text: str,
@@ -951,6 +1032,7 @@ def _semantic_candidates(
 
     embeddings_by_statement_id = _load_embedding_cache(
         db_path=db_path,
+        retrieval_contract=retrieval_contract,
         model_id=config.embed_model_id,
         corpus_rows=corpus_rows,
     )
@@ -1006,6 +1088,7 @@ def _semantic_candidates(
         if persist_cache:
             _persist_embedding_cache(
                 db_path=db_path,
+                retrieval_contract=retrieval_contract,
                 model_id=config.embed_model_id,
                 rows=persisted_payloads,
             )
@@ -1245,11 +1328,12 @@ def execute_retrieval_query(
             "rows": rows,
         }
 
-    _ensure_embedding_cache_table(db_path)
+    _ensure_embedding_cache_table(db_path, retrieval_contract)
 
     try:
         semantic_rows = _semantic_candidates(
             db_path=db_path,
+            retrieval_contract=retrieval_contract,
             config=semantic_config,
             retries=semantic_retries,
             query_text=query_text,

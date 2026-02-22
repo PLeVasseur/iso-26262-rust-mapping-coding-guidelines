@@ -15,10 +15,12 @@ from semantic_backend_client import SemanticBackendConfig, embed_texts
 from sqlite_query_guardrails import GuardrailError
 from sqlite_query_rust_reference import (
     ModeExecutionError,
+    RetrievalContractProfile,
     _annotate_rows_with_row_markers,
     _ensure_embedding_cache_table,
     _filter_rows_by_row_marker,
     _load_embedding_cache,
+    _resolve_retrieval_contract_profile,
     _load_statement_corpus,
     _load_table1_row_requirements,
     _sha256_text,
@@ -29,9 +31,11 @@ EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
 
 
-def _count_statements(db_path: Path) -> int:
+def _count_corpus_rows(db_path: Path, retrieval_contract: RetrievalContractProfile) -> int:
     connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
     try:
+        if retrieval_contract.corpus_query_id == "chunk_corpus_v1_all":
+            return int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
         return int(connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0])
     finally:
         connection.close()
@@ -182,47 +186,87 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _persist_rows(db_path: Path, model_id: str, rows: list[dict[str, Any]]) -> None:
+def _persist_rows(
+    db_path: Path,
+    retrieval_contract: RetrievalContractProfile,
+    model_id: str,
+    rows: list[dict[str, Any]],
+) -> None:
     if not rows:
         return
 
-    _ensure_embedding_cache_table(db_path)
+    _ensure_embedding_cache_table(db_path, retrieval_contract)
     import sqlite3
 
     connection = sqlite3.connect(db_path)
     try:
         connection.execute("PRAGMA busy_timeout = 1500")
-        connection.executemany(
-            """
-            INSERT INTO statement_embeddings(
-                statement_id,
-                model_id,
-                text_sha256,
-                vector_json,
-                vector_norm,
-                embedded_at,
-                source_fetched_at
-            ) VALUES(?, ?, ?, ?, ?, datetime('now'), ?)
-            ON CONFLICT(statement_id, model_id)
-            DO UPDATE SET
-                text_sha256 = excluded.text_sha256,
-                vector_json = excluded.vector_json,
-                vector_norm = excluded.vector_norm,
-                embedded_at = excluded.embedded_at,
-                source_fetched_at = excluded.source_fetched_at
-            """,
-            [
-                (
-                    str(row["statement_id"]),
+        if retrieval_contract.embedding_table == "chunk_embeddings":
+            connection.executemany(
+                """
+                INSERT INTO chunk_embeddings(
+                    chunk_uid,
                     model_id,
-                    str(row["text_sha256"]),
-                    json.dumps(row["embedding"]),
-                    float(row["vector_norm"]),
-                    str(row.get("source_fetched_at", "")),
-                )
-                for row in rows
-            ],
-        )
+                    embed_version,
+                    text_sha256,
+                    vector_json,
+                    vector_norm,
+                    embedded_at,
+                    source_fetched_at
+                ) VALUES(?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                ON CONFLICT(chunk_uid, model_id, embed_version)
+                DO UPDATE SET
+                    text_sha256 = excluded.text_sha256,
+                    vector_json = excluded.vector_json,
+                    vector_norm = excluded.vector_norm,
+                    embedded_at = excluded.embedded_at,
+                    source_fetched_at = excluded.source_fetched_at
+                """,
+                [
+                    (
+                        str(row["statement_id"]),
+                        model_id,
+                        retrieval_contract.embed_version,
+                        str(row["text_sha256"]),
+                        json.dumps(row["embedding"]),
+                        float(row["vector_norm"]),
+                        str(row.get("source_fetched_at", "")),
+                    )
+                    for row in rows
+                ],
+            )
+        else:
+            connection.executemany(
+                """
+                INSERT INTO statement_embeddings(
+                    statement_id,
+                    model_id,
+                    text_sha256,
+                    vector_json,
+                    vector_norm,
+                    embedded_at,
+                    source_fetched_at
+                ) VALUES(?, ?, ?, ?, ?, datetime('now'), ?)
+                ON CONFLICT(statement_id, model_id)
+                DO UPDATE SET
+                    text_sha256 = excluded.text_sha256,
+                    vector_json = excluded.vector_json,
+                    vector_norm = excluded.vector_norm,
+                    embedded_at = excluded.embedded_at,
+                    source_fetched_at = excluded.source_fetched_at
+                """,
+                [
+                    (
+                        str(row["statement_id"]),
+                        model_id,
+                        str(row["text_sha256"]),
+                        json.dumps(row["embedding"]),
+                        float(row["vector_norm"]),
+                        str(row.get("source_fetched_at", "")),
+                    )
+                    for row in rows
+                ],
+            )
         connection.commit()
     finally:
         connection.close()
@@ -235,6 +279,7 @@ def main() -> int:
     db_path = (root / args.db_path).resolve()
     contract_path = (root / args.contract_path).resolve()
     query_log_root = (root / args.query_log_root).resolve()
+    retrieval_contract = _resolve_retrieval_contract_profile(contract_path)
 
     config = SemanticBackendConfig(
         base_url=str(args.semantic_base_url),
@@ -249,9 +294,9 @@ def main() -> int:
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     progress_log_path: Path | None = None
     progress_interval_sec = max(1.0, float(args.progress_interval_sec))
-    expected_statement_count = 0
+    expected_corpus_count = 0
     require_full_corpus = False
-    target_statement_count = 0
+    target_corpus_count = 0
     cached: dict[str, list[float]] = {}
     cached_after: dict[str, list[float]] = {}
     created = 0
@@ -263,8 +308,9 @@ def main() -> int:
             db_path=db_path,
             contract_path=contract_path,
             query_log_root=query_log_root,
+            retrieval_contract=retrieval_contract,
         )
-        expected_statement_count = _count_statements(db_path)
+        expected_corpus_count = _count_corpus_rows(db_path, retrieval_contract)
 
         scoped_row_marker = str(args.row_marker).strip().lower()
         if scoped_row_marker:
@@ -272,23 +318,23 @@ def main() -> int:
                 db_path=db_path,
                 contract_path=contract_path,
                 query_log_root=query_log_root,
+                retrieval_contract=retrieval_contract,
             )
             _annotate_rows_with_row_markers(corpus_rows, row_profiles)
             corpus_rows = _filter_rows_by_row_marker(corpus_rows, scoped_row_marker)
 
         require_full_corpus = (not scoped_row_marker) and (not bool(args.allow_partial_corpus))
-        target_statement_count = (
-            expected_statement_count if require_full_corpus else len(corpus_rows)
-        )
-        if require_full_corpus and len(corpus_rows) != expected_statement_count:
+        target_corpus_count = expected_corpus_count if require_full_corpus else len(corpus_rows)
+        if require_full_corpus and len(corpus_rows) != expected_corpus_count:
             raise GuardrailError(
                 "Full corpus materialization coverage mismatch: "
-                f"loaded_rows={len(corpus_rows)} expected_rows={expected_statement_count}. "
-                "Check statement_corpus_v3_all contract and paging logic."
+                f"loaded_rows={len(corpus_rows)} expected_rows={expected_corpus_count}. "
+                "Check corpus contract and paging logic."
             )
 
         cached = _load_embedding_cache(
             db_path=db_path,
+            retrieval_contract=retrieval_contract,
             model_id=config.embed_model_id,
             corpus_rows=corpus_rows,
         )
@@ -306,10 +352,13 @@ def main() -> int:
                 "row_marker": scoped_row_marker,
                 "require_full_corpus": require_full_corpus,
                 "total_statement_rows": len(corpus_rows),
-                "target_statement_rows": target_statement_count,
+                "target_statement_rows": target_corpus_count,
+                "total_corpus_rows": len(corpus_rows),
+                "target_corpus_rows": target_corpus_count,
                 "already_cached": len(cached),
                 "missing_before": len(missing_rows),
                 "db_path": str(db_path),
+                "corpus_query_id": retrieval_contract.corpus_query_id,
             },
         )
 
@@ -336,7 +385,7 @@ def main() -> int:
                     }
                 )
 
-            _persist_rows(db_path, config.embed_model_id, payload_rows)
+            _persist_rows(db_path, retrieval_contract, config.embed_model_id, payload_rows)
             created += len(payload_rows)
 
             now = time.perf_counter()
@@ -351,7 +400,7 @@ def main() -> int:
                     started_monotonic=started,
                     created=created,
                     baseline_cached=len(cached),
-                    target_rows=target_statement_count,
+                    target_rows=target_corpus_count,
                 )
                 _append_progress_event(
                     progress_log_path,
@@ -365,7 +414,8 @@ def main() -> int:
                         "batch_count": batch_count,
                         "batch_size": len(batch_rows),
                         "created": created,
-                        "target_statement_rows": target_statement_count,
+                        "target_statement_rows": target_corpus_count,
+                        "target_corpus_rows": target_corpus_count,
                         **metrics,
                     },
                 )
@@ -373,16 +423,17 @@ def main() -> int:
 
         cached_after = _load_embedding_cache(
             db_path=db_path,
+            retrieval_contract=retrieval_contract,
             model_id=config.embed_model_id,
             corpus_rows=corpus_rows,
         )
-        if require_full_corpus and len(cached_after) != expected_statement_count:
-            missing = expected_statement_count - len(cached_after)
+        if require_full_corpus and len(cached_after) != expected_corpus_count:
+            missing = expected_corpus_count - len(cached_after)
             raise ModeExecutionError(
                 code="SEMANTIC_INDEX_INCOMPLETE",
                 message=(
                     "Semantic embedding materialization incomplete for full corpus: "
-                    f"cached_rows={len(cached_after)} expected_rows={expected_statement_count} "
+                    f"cached_rows={len(cached_after)} expected_rows={expected_corpus_count} "
                     f"missing_rows={max(0, missing)} model_id={config.embed_model_id}"
                 ),
             )
@@ -393,7 +444,7 @@ def main() -> int:
                 started_monotonic=started,
                 created=created,
                 baseline_cached=len(cached),
-                target_rows=max(target_statement_count, len(corpus_rows)),
+                target_rows=max(target_corpus_count, len(corpus_rows)),
             )
             _append_progress_event(
                 progress_log_path,
@@ -404,7 +455,8 @@ def main() -> int:
                     "embed_model_id": config.embed_model_id,
                     "row_marker": str(args.row_marker).strip().lower(),
                     "created": created,
-                    "target_statement_rows": max(target_statement_count, len(corpus_rows)),
+                    "target_statement_rows": max(target_corpus_count, len(corpus_rows)),
+                    "target_corpus_rows": max(target_corpus_count, len(corpus_rows)),
                     "error": str(exc),
                     **metrics,
                 },
@@ -418,7 +470,7 @@ def main() -> int:
             started_monotonic=started,
             created=created,
             baseline_cached=len(cached),
-            target_rows=target_statement_count,
+            target_rows=target_corpus_count,
         )
         _append_progress_event(
             progress_log_path,
@@ -429,7 +481,8 @@ def main() -> int:
                 "embed_model_id": config.embed_model_id,
                 "row_marker": str(args.row_marker).strip().lower(),
                 "created": created,
-                "target_statement_rows": target_statement_count,
+                "target_statement_rows": target_corpus_count,
+                "target_corpus_rows": target_corpus_count,
                 "cached_after": len(cached_after),
                 **metrics,
             },
@@ -440,7 +493,10 @@ def main() -> int:
         "embed_model_id": config.embed_model_id,
         "row_marker": str(args.row_marker).strip().lower(),
         "total_statement_rows": len(corpus_rows),
-        "expected_statement_rows": expected_statement_count,
+        "expected_statement_rows": expected_corpus_count,
+        "total_corpus_rows": len(corpus_rows),
+        "expected_corpus_rows": expected_corpus_count,
+        "corpus_query_id": retrieval_contract.corpus_query_id,
         "require_full_corpus": require_full_corpus,
         "already_cached": len(cached),
         "cached_after": len(cached_after),

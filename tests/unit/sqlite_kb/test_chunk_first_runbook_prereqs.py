@@ -391,6 +391,56 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
                 set(),
             )
 
+    def test_materialize_writes_chunk_embedding_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = self._build_fixture_db(temp_root)
+            contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference_chunk.yaml"
+
+            with patch(
+                "sqlite_materialize_rust_reference_embeddings.embed_texts",
+                side_effect=lambda _config, texts: [[0.1, 0.2, 0.3] for _ in texts],
+            ):
+                with patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "sqlite_materialize_rust_reference_embeddings.py",
+                        "--db-path",
+                        str(db_path),
+                        "--contract-path",
+                        str(contract_path),
+                        "--query-log-root",
+                        str(temp_root / "query_logs"),
+                        "--batch-size",
+                        "8",
+                        "--semantic-retries",
+                        "0",
+                    ],
+                ):
+                    self.assertEqual(materialize_main(), 0)
+
+            connection = sqlite3.connect(db_path)
+            try:
+                chunk_cached = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM chunk_embeddings WHERE model_id = ?",
+                        ("Qwen/Qwen3-Embedding-4B",),
+                    ).fetchone()[0]
+                )
+                chunk_count = int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+                statement_cached = int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM statement_embeddings WHERE model_id = ?",
+                        ("Qwen/Qwen3-Embedding-4B",),
+                    ).fetchone()[0]
+                )
+            finally:
+                connection.close()
+
+            self.assertEqual(chunk_cached, chunk_count)
+            self.assertEqual(statement_cached, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
