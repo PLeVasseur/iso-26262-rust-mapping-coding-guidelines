@@ -228,6 +228,36 @@ class QueryRustReferenceTests(unittest.TestCase):
             self.assertEqual(top_row["top_statement_id"], trace_head["statement_id"])
             self.assertEqual(top_row["top_source_anchor"], trace_head["source_anchor"])
 
+    def test_row_projection_supports_explicit_abstain(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path, contract_path, query_log_root = self._build_fixture_db(temp_root)
+
+            result = execute_retrieval_query(
+                mode="lexical",
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                query_text="zzzxxyyqqq qqqzzz nohits",
+                row_marker="",
+                top_k=5,
+                candidate_limit=200,
+                allow_degraded=False,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.2,
+                ),
+                semantic_retries=0,
+                persist_semantic_cache=False,
+            )
+
+            abstain = result.get("abstain", {})
+            self.assertTrue(bool(abstain.get("active", False)))
+            self.assertEqual(str(abstain.get("reason_code", "")), "NO_ROW_SIGNAL")
+            self.assertEqual(list(result.get("row_projection", [])), [])
+
     def test_review_artifact_path_conflict_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)

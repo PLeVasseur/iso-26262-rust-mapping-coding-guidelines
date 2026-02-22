@@ -131,6 +131,20 @@ LEXICAL_WEIGHT = 0.30
 SEMANTIC_WEIGHT = 0.25
 RERANK_WEIGHT = 0.45
 
+ROW_PROJECTION_THRESHOLDS = {
+    "1a": 0.015,
+    "1b": 0.015,
+    "1c": 0.015,
+    "1d": 0.015,
+    "1e": 0.015,
+    "1f": 0.015,
+    "1g": 0.015,
+    "1h": 0.015,
+    "1i": 0.020,
+}
+ROW_PROJECTION_MIN_EVIDENCE_HITS = 1
+ROW_PROJECTION_MARGIN = 0.005
+
 CHUNK_REQUIRED_QUERY_IDS = {
     "chunk_corpus_v1_all",
     "lexical_chunk_search_v1",
@@ -1265,6 +1279,86 @@ def _build_row_projection(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return projection
 
 
+def _apply_abstain_policy(
+    projection: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not projection:
+        return [], {
+            "active": True,
+            "reason_code": "NO_ROW_SIGNAL",
+            "detail": "No row marker evidence was generated from retrieved chunks",
+            "thresholds": ROW_PROJECTION_THRESHOLDS,
+        }
+
+    top = projection[0]
+    top_marker = str(top.get("row_marker", "")).strip().lower()
+    top_score = float(top.get("score", 0.0))
+    top_hits = int(top.get("evidence_hits", 0))
+    threshold = float(ROW_PROJECTION_THRESHOLDS.get(top_marker, 0.015))
+
+    if top_hits < ROW_PROJECTION_MIN_EVIDENCE_HITS:
+        return [], {
+            "active": True,
+            "reason_code": "INSUFFICIENT_EVIDENCE",
+            "detail": (
+                f"Top row {top_marker} has evidence_hits={top_hits}, "
+                f"required={ROW_PROJECTION_MIN_EVIDENCE_HITS}"
+            ),
+            "thresholds": ROW_PROJECTION_THRESHOLDS,
+        }
+
+    if top_score < threshold:
+        return [], {
+            "active": True,
+            "reason_code": "ROW_SCORE_BELOW_THRESHOLD",
+            "detail": f"Top row {top_marker} score={top_score:.6f} threshold={threshold:.6f}",
+            "thresholds": ROW_PROJECTION_THRESHOLDS,
+        }
+
+    if len(projection) > 1:
+        second_score = float(projection[1].get("score", 0.0))
+        margin = top_score - second_score
+        if margin < ROW_PROJECTION_MARGIN:
+            return [], {
+                "active": True,
+                "reason_code": "LOW_CONFIDENCE_MARGIN",
+                "detail": (
+                    f"Top-vs-second margin={margin:.6f} "
+                    f"required>={ROW_PROJECTION_MARGIN:.6f}"
+                ),
+                "thresholds": ROW_PROJECTION_THRESHOLDS,
+            }
+
+    selected: list[dict[str, Any]] = []
+    for row in projection:
+        marker = str(row.get("row_marker", "")).strip().lower()
+        score = float(row.get("score", 0.0))
+        hits = int(row.get("evidence_hits", 0))
+        min_score = float(ROW_PROJECTION_THRESHOLDS.get(marker, threshold))
+        if hits < ROW_PROJECTION_MIN_EVIDENCE_HITS:
+            continue
+        if score < min_score:
+            continue
+        selected.append(row)
+        if len(selected) >= 3:
+            break
+
+    if not selected:
+        return [], {
+            "active": True,
+            "reason_code": "NO_ROW_ABOVE_THRESHOLD",
+            "detail": "No row markers satisfied score and evidence thresholds",
+            "thresholds": ROW_PROJECTION_THRESHOLDS,
+        }
+
+    return selected, {
+        "active": False,
+        "reason_code": "NONE",
+        "detail": "Row projection produced calibrated labels",
+        "thresholds": ROW_PROJECTION_THRESHOLDS,
+    }
+
+
 def execute_retrieval_query(
     *,
     mode: str,
@@ -1335,7 +1429,8 @@ def execute_retrieval_query(
                 reranker_score=0.0,
             )
         rows = lexical_rows[:top_k]
-        row_projection = _build_row_projection(rows)
+        row_projection_all = _build_row_projection(rows)
+        row_projection, abstain = _apply_abstain_policy(row_projection_all)
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
             "requested_mode": mode,
@@ -1353,6 +1448,8 @@ def execute_retrieval_query(
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
             "row_projection": row_projection,
+            "row_projection_all": row_projection_all,
+            "abstain": abstain,
             "rows": rows,
         }
 
@@ -1378,7 +1475,8 @@ def execute_retrieval_query(
                 reranker_score=0.0,
             )
         rows = lexical_rows[:top_k]
-        row_projection = _build_row_projection(rows)
+        row_projection_all = _build_row_projection(rows)
+        row_projection, abstain = _apply_abstain_policy(row_projection_all)
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
             "requested_mode": mode,
@@ -1398,6 +1496,8 @@ def execute_retrieval_query(
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
             "row_projection": row_projection,
+            "row_projection_all": row_projection_all,
+            "abstain": abstain,
             "rows": rows,
         }
 
@@ -1437,7 +1537,8 @@ def execute_retrieval_query(
                 reranker_score=0.0,
             )
         rows = lexical_rows[:top_k]
-        row_projection = _build_row_projection(rows)
+        row_projection_all = _build_row_projection(rows)
+        row_projection, abstain = _apply_abstain_policy(row_projection_all)
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
             "requested_mode": mode,
@@ -1457,6 +1558,8 @@ def execute_retrieval_query(
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
             "row_projection": row_projection,
+            "row_projection_all": row_projection_all,
+            "abstain": abstain,
             "rows": rows,
         }
 
@@ -1479,7 +1582,8 @@ def execute_retrieval_query(
             )
         )
         rows = semantic_rows[:top_k]
-        row_projection = _build_row_projection(rows)
+        row_projection_all = _build_row_projection(rows)
+        row_projection, abstain = _apply_abstain_policy(row_projection_all)
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
             "requested_mode": mode,
@@ -1498,6 +1602,8 @@ def execute_retrieval_query(
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
             "row_projection": row_projection,
+            "row_projection_all": row_projection_all,
+            "abstain": abstain,
             "rows": rows,
         }
 
@@ -1542,7 +1648,8 @@ def execute_retrieval_query(
         )
     )
     rows = hybrid_rows[:top_k]
-    row_projection = _build_row_projection(rows)
+    row_projection_all = _build_row_projection(rows)
+    row_projection, abstain = _apply_abstain_policy(row_projection_all)
     duration_ms = (time.perf_counter() - started) * 1000.0
     return {
         "requested_mode": mode,
@@ -1561,6 +1668,8 @@ def execute_retrieval_query(
         "row_count": len(rows),
         "duration_ms": round(duration_ms, 3),
         "row_projection": row_projection,
+        "row_projection_all": row_projection_all,
+        "abstain": abstain,
         "rows": rows,
     }
 
@@ -1568,6 +1677,7 @@ def execute_retrieval_query(
 def _without_score_breakdown(result: dict[str, Any]) -> dict[str, Any]:
     projected = dict(result)
     projected.pop("row_projection", None)
+    projected.pop("row_projection_all", None)
 
     rows = []
     for row in result.get("rows", []):
