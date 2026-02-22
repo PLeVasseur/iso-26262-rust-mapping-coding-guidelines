@@ -47,10 +47,19 @@ queries:
       - row_marker
     sql: |
       SELECT
-        row_node_id,
-        row_marker,
-        requirement_text
-      FROM table1_rows
+        r.row_node_id,
+        r.row_marker,
+        r.requirement_text,
+        COALESCE(pt.profile_terms, '') AS profile_terms
+      FROM table1_rows AS r
+      LEFT JOIN (
+        SELECT
+          row_node_id,
+          GROUP_CONCAT(term, ',') AS profile_terms
+        FROM table1_row_profile_terms
+        GROUP BY row_node_id
+      ) AS pt
+        ON pt.row_node_id = r.row_node_id
       WHERE :row_marker = '' OR row_marker = :row_marker
       ORDER BY row_marker ASC
 

@@ -802,16 +802,23 @@ def _load_table1_row_requirements(
     for row in result["rows"]:
         row_marker = str(row.get("row_marker", "")).strip().lower()
         requirement_text = str(row.get("requirement_text", "")).strip()
+        profile_terms = _split_csv_field(str(row.get("profile_terms", "")))
         if not row_marker:
             continue
 
         tokens = _tokenize(requirement_text)
+        for term in profile_terms:
+            tokens.update(_tokenize(term))
         if not tokens:
             tokens = _tokenize_raw(requirement_text)
+        if not tokens:
+            for term in profile_terms:
+                tokens.update(_tokenize_raw(term))
         profiles.append(
             {
                 "row_marker": row_marker,
                 "requirement_text": requirement_text,
+                "profile_terms": profile_terms,
                 "tokens": tokens,
             }
         )

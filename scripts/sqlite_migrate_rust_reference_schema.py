@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -24,6 +25,9 @@ def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
         (table_name,),
     ).fetchone()
     return row is not None
+
+
+TOKEN_RE = re.compile(r"[a-z0-9_]{3,}")
 
 
 def _count_rows(connection: sqlite3.Connection, table_name: str) -> int:
@@ -55,6 +59,7 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
         refreshed_chunk_fts = False
         migrated_docs = 0
         migrated_chunks = 0
+        migrated_row_profile_terms = 0
 
         if _ensure_column(
             connection, "snapshots", "commit_sha TEXT NOT NULL DEFAULT 'unknown'", "commit_sha"
@@ -279,6 +284,44 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
             )
             refreshed_chunk_fts = True
 
+        if _table_exists(connection, "table1_row_profile_terms") and _table_exists(
+            connection, "table1_rows"
+        ):
+            existing_profile_terms = _count_rows(connection, "table1_row_profile_terms")
+            if existing_profile_terms == 0:
+                rows = connection.execute(
+                    "SELECT row_node_id, requirement_text FROM table1_rows ORDER BY row_idx ASC"
+                ).fetchall()
+                payload: list[tuple[str, int, str, str]] = []
+                for row in rows:
+                    row_node_id = str(row[0])
+                    requirement_text = str(row[1] or "").lower()
+                    terms = []
+                    seen: set[str] = set()
+                    for token in TOKEN_RE.findall(requirement_text):
+                        if token in seen:
+                            continue
+                        seen.add(token)
+                        terms.append(token)
+                        if len(terms) >= 8:
+                            break
+                    for term_order, term in enumerate(terms, start=1):
+                        payload.append((row_node_id, term_order, term, "migrated"))
+
+                if payload:
+                    connection.executemany(
+                        """
+                        INSERT INTO table1_row_profile_terms(
+                            row_node_id,
+                            term_order,
+                            term,
+                            term_source
+                        ) VALUES(?, ?, ?, ?)
+                        """,
+                        payload,
+                    )
+                    migrated_row_profile_terms = len(payload)
+
         connection.execute("PRAGMA user_version = 6")
         connection.commit()
     finally:
@@ -291,6 +334,7 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
         "refreshed_chunks_fts": refreshed_chunk_fts,
         "migrated_docs": migrated_docs,
         "migrated_chunks": migrated_chunks,
+        "migrated_row_profile_terms": migrated_row_profile_terms,
         "target_user_version": 6,
     }
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -63,6 +64,27 @@ class Table1RowQueryabilityContractTests(unittest.TestCase):
             for row in rows:
                 verdict = row["verdict"]
                 self.assertIn(verdict, {"applicable", "not_applicable"})
+
+                connection = sqlite3.connect(db_path)
+                try:
+                    req_len = int(
+                        connection.execute(
+                            "SELECT LENGTH(requirement_text) FROM table1_rows WHERE row_node_id = ?",
+                            (row["row_node_id"],),
+                        ).fetchone()[0]
+                    )
+                    profile_terms = int(
+                        connection.execute(
+                            "SELECT COUNT(*) FROM table1_row_profile_terms WHERE row_node_id = ?",
+                            (row["row_node_id"],),
+                        ).fetchone()[0]
+                    )
+                finally:
+                    connection.close()
+
+                self.assertGreaterEqual(req_len, 48)
+                self.assertLessEqual(req_len, 480)
+                self.assertGreaterEqual(profile_terms, 3)
 
                 if verdict == "not_applicable":
                     self.assertTrue(str(row["rationale"]).strip())

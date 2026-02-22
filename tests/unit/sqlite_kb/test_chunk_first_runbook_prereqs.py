@@ -441,6 +441,43 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
             self.assertEqual(chunk_cached, chunk_count)
             self.assertEqual(statement_cached, 0)
 
+    def test_row_metadata_report_and_profile_terms_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = temp_root / "current" / "rust_reference.sqlite"
+            snapshot_root = temp_root / "snapshots"
+            manifest_path = temp_root / "manifest.yaml"
+            report_root = temp_root / "reports"
+            reference_source_dir = create_reference_fixture(temp_root)
+
+            summary = build_rust_reference_db(
+                db_path=db_path,
+                snapshot_root=snapshot_root,
+                manifest_path=manifest_path,
+                report_root=report_root,
+                extractor_db=DEFAULT_EXTRACTOR_DB,
+                table_node_id=DEFAULT_TABLE_NODE_ID,
+                reference_source_dir=reference_source_dir,
+                reference_revision="fixture-001",
+                min_sections=4,
+                min_statements=8,
+                min_mechanisms=4,
+            )
+
+            self.assertTrue(Path(summary["row_metadata_report"]).is_file())
+
+            connection = sqlite3.connect(db_path)
+            try:
+                row_count = int(connection.execute("SELECT COUNT(*) FROM table1_rows").fetchone()[0])
+                profile_term_count = int(
+                    connection.execute("SELECT COUNT(*) FROM table1_row_profile_terms").fetchone()[0]
+                )
+            finally:
+                connection.close()
+
+            self.assertEqual(row_count, 9)
+            self.assertGreaterEqual(profile_term_count, 27)
+
 
 if __name__ == "__main__":
     unittest.main()

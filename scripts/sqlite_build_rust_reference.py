@@ -277,6 +277,65 @@ ROW_MARKER_FAMILY_HINTS: dict[str, tuple[str, ...]] = {
     "1i": ("defensive", "diagnostics"),
 }
 
+ROW_REQUIREMENT_CLEAN_OVERRIDES: dict[str, str] = {
+    "1a": (
+        "Use architecture-level abstractions and typed interfaces so component contracts "
+        "remain explicit, analyzable, and enforceable at compile time."
+    ),
+    "1b": (
+        "Use explicit control-flow and exhaustive branching so all safety-relevant paths "
+        "are handled deterministically."
+    ),
+    "1c": (
+        "Use strong typing with domain-specific data models to prevent invalid states "
+        "and reduce integration faults."
+    ),
+    "1d": (
+        "Use defensive error handling with explicit Result and Option paths so failures "
+        "are contained and recovery behavior is defined."
+    ),
+    "1e": (
+        "Use ownership, borrowing, and lifetime constraints to preserve memory safety "
+        "and prevent aliasing violations."
+    ),
+    "1f": (
+        "Isolate unsafe operations behind reviewed boundaries with documented invariants "
+        "and verification obligations."
+    ),
+    "1g": (
+        "Apply consistent coding-style and interface conventions to improve readability, "
+        "maintainability, and static analyzability."
+    ),
+    "1h": (
+        "Constrain concurrent behavior using Send, Sync, and explicit synchronization "
+        "patterns to avoid race conditions."
+    ),
+    "1i": (
+        "Enforce a defined language subset with diagnostics and policy checks so safety "
+        "constraints remain auditable and repeatable."
+    ),
+}
+
+ROW_PROFILE_TERMS: dict[str, tuple[str, ...]] = {
+    "1a": ("trait", "interface", "abstraction", "architecture", "module", "contract"),
+    "1b": ("match", "branch", "pattern", "exhaustive", "control-flow", "state"),
+    "1c": ("type", "typing", "struct", "enum", "newtype", "invariant"),
+    "1d": ("result", "option", "error", "fallback", "guard", "recover"),
+    "1e": ("ownership", "borrow", "lifetime", "alias", "mutable", "reference"),
+    "1f": ("unsafe", "boundary", "invariant", "review", "proof", "obligation"),
+    "1g": ("style", "convention", "readability", "consistency", "analyzability", "lint"),
+    "1h": ("concurrency", "thread", "send", "sync", "atomic", "race"),
+    "1i": ("subset", "restriction", "diagnostic", "lint", "policy", "verification"),
+}
+
+ROW_FOOTNOTES: dict[str, tuple[str, ...]] = {
+    "1f": ("Unsafe code is permitted only with documented safety invariants.",),
+    "1i": ("Diagnostics and policy checks must be consistently applied in CI and release flows.",),
+}
+
+TABLE1_REQUIREMENT_LEN_MIN = 48
+TABLE1_REQUIREMENT_LEN_MAX = 480
+
 ROW_REQUIREMENT_PATTERNS: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (re.compile(r"strong\s+typing", re.IGNORECASE), ("typing",)),
     (re.compile(r"defensive\s+programming", re.IGNORECASE), ("defensive", "control-flow")),
@@ -1042,6 +1101,15 @@ def _normalize_marker(raw: str | None, row_idx: int) -> str:
     return f"1{chr(ord('a') + row_idx - 1)}"
 
 
+def _normalize_requirement_text(raw: str) -> str:
+    value = str(raw or "")
+    value = FOOTNOTE_MARKER_RE.sub(" ", value)
+    value = HTML_COMMENT_RE.sub(" ", value)
+    value = ADMONITION_TAG_RE.sub(" ", value)
+    value = " ".join(value.split())
+    return value.strip()
+
+
 def _resolve_table1_rows(extractor_db: Path, table_node_id: str) -> list[dict[str, Any]]:
     if not extractor_db.exists():
         raise RuntimeError(f"Extractor sqlite not found: {extractor_db}")
@@ -1082,12 +1150,34 @@ def _resolve_table1_rows(extractor_db: Path, table_node_id: str) -> list[dict[st
     for row in rows:
         row_idx = int(row["row_idx"])
         marker = _normalize_marker(row["marker_text"], row_idx)
+        requirement_raw = str(row["requirement_text"] or "").strip()
+        requirement_clean = _normalize_requirement_text(requirement_raw)
+        if marker in ROW_REQUIREMENT_CLEAN_OVERRIDES:
+            requirement_clean = ROW_REQUIREMENT_CLEAN_OVERRIDES[marker]
+
+        if not requirement_clean:
+            raise RuntimeError(f"Missing requirement text for row marker {marker}")
+
+        requirement_len = len(requirement_clean)
+        if not (TABLE1_REQUIREMENT_LEN_MIN <= requirement_len <= TABLE1_REQUIREMENT_LEN_MAX):
+            raise RuntimeError(
+                f"Row requirement text length out of range for {marker}: {requirement_len}"
+            )
+
+        profile_terms = [term.strip().lower() for term in ROW_PROFILE_TERMS.get(marker, ()) if term]
+        if len(profile_terms) < 3:
+            raise RuntimeError(f"Insufficient row profile terms for {marker}")
+
+        footnotes = [note.strip() for note in ROW_FOOTNOTES.get(marker, ()) if note.strip()]
         resolved.append(
             {
                 "row_node_id": str(row["row_node_id"]),
                 "row_idx": row_idx,
                 "row_marker": marker,
-                "requirement_text": str(row["requirement_text"] or "").strip(),
+                "requirement_text": requirement_clean,
+                "requirement_text_raw": requirement_raw,
+                "row_profile_terms": profile_terms,
+                "row_footnotes": footnotes,
             }
         )
 
@@ -1095,6 +1185,12 @@ def _resolve_table1_rows(extractor_db: Path, table_node_id: str) -> list[dict[st
     expected = {f"1{chr(ord('a') + idx)}" for idx in range(9)}
     if markers != expected:
         raise RuntimeError(f"Unexpected Table 1 marker set from extractor: {sorted(markers)}")
+
+    for row in resolved:
+        if not str(row.get("requirement_text", "")).strip():
+            raise RuntimeError(f"Missing clean requirement_text for {row['row_marker']}")
+        if not list(row.get("row_profile_terms", [])):
+            raise RuntimeError(f"Missing row_profile_terms for {row['row_marker']}")
     return resolved
 
 
@@ -1612,6 +1708,23 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             requirement_text TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS table1_row_footnotes (
+            row_node_id TEXT NOT NULL,
+            footnote_order INTEGER NOT NULL,
+            footnote_text TEXT NOT NULL,
+            PRIMARY KEY(row_node_id, footnote_order),
+            FOREIGN KEY(row_node_id) REFERENCES table1_rows(row_node_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS table1_row_profile_terms (
+            row_node_id TEXT NOT NULL,
+            term_order INTEGER NOT NULL,
+            term TEXT NOT NULL,
+            term_source TEXT NOT NULL,
+            PRIMARY KEY(row_node_id, term_order),
+            FOREIGN KEY(row_node_id) REFERENCES table1_rows(row_node_id)
+        );
+
         CREATE TABLE IF NOT EXISTS row_verdicts (
             row_node_id TEXT PRIMARY KEY,
             verdict TEXT NOT NULL CHECK(verdict IN ('applicable', 'not_applicable')),
@@ -1715,6 +1828,10 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_chunk_spans_anchor ON chunk_spans(source_anchor, chunk_uid);
         CREATE INDEX IF NOT EXISTS idx_mechanism_evidence_mech ON mechanism_evidence(mechanism_id);
         CREATE INDEX IF NOT EXISTS idx_table1_rows_marker ON table1_rows(row_marker);
+        CREATE INDEX IF NOT EXISTS idx_table1_row_footnotes_row
+            ON table1_row_footnotes(row_node_id, footnote_order);
+        CREATE INDEX IF NOT EXISTS idx_table1_row_profile_terms_row
+            ON table1_row_profile_terms(row_node_id, term_order);
         CREATE INDEX IF NOT EXISTS idx_row_mechanisms_row ON row_mechanisms(row_node_id);
         CREATE INDEX IF NOT EXISTS idx_semantic_corpus_source
             ON semantic_corpus(source_kind, source_id);
@@ -2064,6 +2181,31 @@ def _insert_payload(
                 row["requirement_text"],
             ),
         )
+        for footnote_order, footnote_text in enumerate(row.get("row_footnotes", []), start=1):
+            connection.execute(
+                """
+                INSERT INTO table1_row_footnotes(row_node_id, footnote_order, footnote_text)
+                VALUES(?, ?, ?)
+                """,
+                (
+                    row["row_node_id"],
+                    int(footnote_order),
+                    str(footnote_text),
+                ),
+            )
+        for term_order, term in enumerate(row.get("row_profile_terms", []), start=1):
+            connection.execute(
+                """
+                INSERT INTO table1_row_profile_terms(row_node_id, term_order, term, term_source)
+                VALUES(?, ?, ?, ?)
+                """,
+                (
+                    row["row_node_id"],
+                    int(term_order),
+                    str(term),
+                    "curated",
+                ),
+            )
 
     for verdict in row_verdicts:
         connection.execute(
@@ -2415,6 +2557,34 @@ def _write_validation_report(report_root: Path, snapshot_id: str, payload: dict[
     return report_path
 
 
+def _write_row_metadata_report(
+    report_root: Path,
+    snapshot_id: str,
+    table_rows: list[dict[str, Any]],
+) -> Path:
+    report_root.mkdir(parents=True, exist_ok=True)
+    rows = sorted(table_rows, key=lambda row: str(row.get("row_marker", "")))
+    payload = {
+        "snapshot_id": snapshot_id,
+        "generated_at": utc_now(),
+        "rows": [
+            {
+                "row_marker": str(row.get("row_marker", "")),
+                "row_node_id": str(row.get("row_node_id", "")),
+                "requirement_text_len": len(str(row.get("requirement_text", ""))),
+                "profile_term_count": len(list(row.get("row_profile_terms", []))),
+                "footnote_count": len(list(row.get("row_footnotes", []))),
+            }
+            for row in rows
+        ],
+    }
+    report_path = report_root / f"{snapshot_id}_table1_row_metadata.json"
+    with report_path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    return report_path
+
+
 def _update_manifest(
     manifest_path: Path,
     snapshot_id: str,
@@ -2423,6 +2593,7 @@ def _update_manifest(
     commit_sha: str,
     source_fetched_at: str,
     report_path: Path,
+    row_metadata_report_path: Path,
     counts: dict[str, int],
     chunk_count: int,
     retrieval_mode: str,
@@ -2452,6 +2623,7 @@ def _update_manifest(
         },
         "query_contract": query_contract_path,
         "validation_report": str(report_path),
+        "row_metadata_report": str(row_metadata_report_path),
         "semantic_retrieval": {
             "retrieval_mode": retrieval_mode,
             "retrieval_corpus": retrieval_corpus,
@@ -2647,6 +2819,11 @@ def build_rust_reference_db(
     report_path = _write_validation_report(
         report_root=report_root, snapshot_id=snapshot_id, payload=validation_report
     )
+    row_metadata_report_path = _write_row_metadata_report(
+        report_root=report_root,
+        snapshot_id=snapshot_id,
+        table_rows=table_rows,
+    )
     if not validation_report["passed"]:
         raise RuntimeError(
             f"Validation failed for rust_reference.sqlite: {validation_report['failures']}"
@@ -2660,6 +2837,7 @@ def build_rust_reference_db(
         commit_sha=commit_sha,
         source_fetched_at=source_fetched_at,
         report_path=report_path,
+        row_metadata_report_path=row_metadata_report_path,
         counts=counts,
         chunk_count=len(chunks),
         retrieval_mode=retrieval_mode,
@@ -2676,6 +2854,7 @@ def build_rust_reference_db(
         "db_path": str(db_path),
         "snapshot_db_path": str(snapshot_db_path),
         "validation_report": str(report_path),
+        "row_metadata_report": str(row_metadata_report_path),
         "documents": len(documents),
         "chapters": len(chapters),
         "sections": len(sections),
