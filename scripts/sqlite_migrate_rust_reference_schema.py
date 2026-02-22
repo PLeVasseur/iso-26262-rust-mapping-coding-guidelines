@@ -45,6 +45,7 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
     try:
         initialize_schema(connection)
         added_columns: list[str] = []
+        refreshed_fts = False
 
         if _ensure_column(
             connection, "snapshots", "commit_sha TEXT NOT NULL DEFAULT 'unknown'", "commit_sha"
@@ -107,7 +108,41 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
         ):
             added_columns.append("row_mechanisms.source_fetched_at")
 
-        connection.execute("PRAGMA user_version = 2")
+        if _table_exists(connection, "statements"):
+            connection.execute("DROP TABLE IF EXISTS statements_fts")
+            connection.execute(
+                """
+                CREATE VIRTUAL TABLE statements_fts
+                USING fts5(
+                    statement_id UNINDEXED,
+                    section_id UNINDEXED,
+                    section_heading,
+                    statement_text,
+                    tokenize='unicode61 remove_diacritics 2'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO statements_fts(
+                    statement_id,
+                    section_id,
+                    section_heading,
+                    statement_text
+                )
+                SELECT
+                    s.statement_id,
+                    s.section_id,
+                    COALESCE(sec.heading, ''),
+                    s.text
+                FROM statements AS s
+                LEFT JOIN sections AS sec ON sec.section_id = s.section_id
+                ORDER BY s.statement_id ASC
+                """
+            )
+            refreshed_fts = True
+
+        connection.execute("PRAGMA user_version = 5")
         connection.commit()
     finally:
         connection.close()
@@ -115,7 +150,8 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
     return {
         "db_path": str(db_path),
         "added_columns": added_columns,
-        "target_user_version": 2,
+        "refreshed_statements_fts": refreshed_fts,
+        "target_user_version": 5,
     }
 
 

@@ -15,7 +15,18 @@ if str(THIS_DIR) not in sys.path:
 
 from _fixture import create_reference_fixture  # noqa: E402
 
-from sqlite_build_rust_reference import DEFAULT_EXTRACTOR_DB  # noqa: E402
+from sqlite_build_rust_reference import (  # noqa: E402
+    DEFAULT_EMBEDDING_DIM,
+    DEFAULT_EMBEDDING_MODEL_ID,
+    DEFAULT_EMBEDDING_MODEL_LICENSE,
+    DEFAULT_EMBEDDING_MODEL_REVISION,
+    DEFAULT_EXTRACTOR_DB,
+    DEFAULT_RERANKER_MODEL_ID,
+    DEFAULT_RERANKER_MODEL_LICENSE,
+    DEFAULT_RERANKER_MODEL_REVISION,
+    DEFAULT_RETRIEVAL_MODE,
+    DEFAULT_SEMANTIC_PROFILE_VERSION,
+)
 from sqlite_smoke_rust_reference import run_smoke  # noqa: E402
 
 
@@ -46,6 +57,15 @@ class SmokeRustReferenceTests(unittest.TestCase):
                 min_sections=4,
                 min_statements=8,
                 min_mechanisms=4,
+                retrieval_mode=DEFAULT_RETRIEVAL_MODE,
+                semantic_profile_version=DEFAULT_SEMANTIC_PROFILE_VERSION,
+                embedding_model_id=DEFAULT_EMBEDDING_MODEL_ID,
+                embedding_model_revision=DEFAULT_EMBEDDING_MODEL_REVISION,
+                embedding_model_license=DEFAULT_EMBEDDING_MODEL_LICENSE,
+                embedding_dim=DEFAULT_EMBEDDING_DIM,
+                reranker_model_id=DEFAULT_RERANKER_MODEL_ID,
+                reranker_model_revision=DEFAULT_RERANKER_MODEL_REVISION,
+                reranker_model_license=DEFAULT_RERANKER_MODEL_LICENSE,
             )
 
             self.assertTrue(ok)

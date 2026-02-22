@@ -27,6 +27,17 @@ DEFAULT_TABLE_NODE_ID = "ISO26262-6-2018:node:table:table_1:001"
 DEFAULT_REFERENCE_REPO_URL = "https://github.com/rust-lang/reference.git"
 DEFAULT_REFERENCE_CACHE_DIR = ".cache/sqlite_kb/sources/rust-reference"
 DEFAULT_REFERENCE_SOURCE_URL = "https://doc.rust-lang.org/reference/"
+DEFAULT_EMBEDDING_MODEL_ID = "Qwen/Qwen3-Embedding-4B"
+DEFAULT_EMBEDDING_MODEL_REVISION = "unspecified"
+DEFAULT_EMBEDDING_MODEL_LICENSE = "unspecified"
+DEFAULT_EMBEDDING_DIM = 0
+DEFAULT_RERANKER_MODEL_ID = "BAAI/bge-reranker-v2-m3"
+DEFAULT_RERANKER_MODEL_REVISION = "unspecified"
+DEFAULT_RERANKER_MODEL_LICENSE = "unspecified"
+DEFAULT_RETRIEVAL_MODE = "hybrid"
+DEFAULT_SEMANTIC_PROFILE_VERSION = "semantic-hybrid-v1"
+DEFAULT_RETRIEVAL_CORPUS = "statement"
+RETRIEVAL_CORPUS_VALUES = ("statement", "chunk")
 
 SUMMARY_ENTRY_RE = re.compile(r"^(\s*)[-*]\s+\[([^\]]+)\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -34,6 +45,7 @@ EXPLICIT_ANCHOR_RE = re.compile(r"\s*\{#([A-Za-z0-9_-]+)\}\s*$")
 CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(`\[])")
+SEMANTIC_TOKEN_RE = re.compile(r"[a-z0-9_]+")
 
 STATEMENT_TYPE_PATTERNS: list[tuple[str, re.Pattern[str], float]] = [
     (
@@ -368,6 +380,24 @@ def _sha256_text(value: str) -> str:
 
 def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def _normalize_semantic_text(value: str) -> str:
+    return " ".join(str(value).split())
+
+
+def _semantic_tokens(value: str) -> set[str]:
+    normalized = _normalize_semantic_text(value).lower()
+    return set(SEMANTIC_TOKEN_RE.findall(normalized))
+
+
+def _jaccard_similarity(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    intersection = len(left & right)
+    if intersection == 0:
+        return 0.0
+    return intersection / float(len(left | right))
 
 
 def _run_git_command(command: list[str], cwd: Path | None = None) -> str:
@@ -808,70 +838,287 @@ def _resolve_row_families(row_marker: str, requirement_text: str) -> list[str]:
     return families
 
 
-def _build_row_queryability(
+def _build_semantic_models(
+    source_fetched_at: str,
+    retrieval_mode: str,
+    embedding_model_id: str,
+    embedding_model_revision: str,
+    embedding_model_license: str,
+    embedding_dim: int,
+    reranker_model_id: str,
+    reranker_model_revision: str,
+    reranker_model_license: str,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "model_id": "semantic.embedder.primary",
+            "model_role": "embedder",
+            "model_name": embedding_model_id,
+            "model_revision": embedding_model_revision,
+            "embedding_dim": int(embedding_dim),
+            "distance_metric": "cosine",
+            "license": embedding_model_license,
+            "provider": "huggingface-tei",
+            "retrieval_mode": retrieval_mode,
+            "created_at": source_fetched_at,
+        },
+        {
+            "model_id": "semantic.reranker.primary",
+            "model_role": "reranker",
+            "model_name": reranker_model_id,
+            "model_revision": reranker_model_revision,
+            "embedding_dim": 0,
+            "distance_metric": "n/a",
+            "license": reranker_model_license,
+            "provider": "huggingface-tei",
+            "retrieval_mode": retrieval_mode,
+            "created_at": source_fetched_at,
+        },
+    ]
+
+
+def _build_semantic_corpus(
     table_rows: list[dict[str, Any]],
     mechanisms: list[dict[str, Any]],
-    evidence_count_by_mechanism: dict[str, int],
-    best_anchor_by_mechanism: dict[str, dict[str, Any]],
+    mechanism_evidence: list[dict[str, Any]],
+    statements: list[StatementRecord],
     source_fetched_at: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
-    mechanisms_by_family: dict[str, list[dict[str, Any]]] = {}
-    for mechanism in mechanisms:
-        mechanisms_by_family.setdefault(mechanism["mechanism_family"], []).append(mechanism)
+) -> list[dict[str, Any]]:
+    statements_by_id = {statement.statement_id: statement for statement in statements}
+    evidence_by_mechanism: dict[str, list[dict[str, Any]]] = {}
+    for evidence in mechanism_evidence:
+        evidence_by_mechanism.setdefault(str(evidence["mechanism_id"]), []).append(evidence)
 
-    for _family, family_mechanisms in mechanisms_by_family.items():
-        family_mechanisms.sort(
-            key=lambda value: (
-                -evidence_count_by_mechanism.get(value["mechanism_id"], 0),
-                value["mechanism_id"],
+    for mechanism_id in evidence_by_mechanism:
+        evidence_by_mechanism[mechanism_id].sort(
+            key=lambda row: (
+                -float(row.get("confidence", 0.0)),
+                str(row.get("evidence_id", "")),
             )
         )
 
-    all_mechanisms_sorted = sorted(
-        mechanisms,
-        key=lambda value: (
-            -evidence_count_by_mechanism.get(value["mechanism_id"], 0),
-            value["mechanism_id"],
-        ),
-    )
+    semantic_corpus: list[dict[str, Any]] = []
+
+    for row in sorted(table_rows, key=lambda item: item["row_marker"]):
+        text = _normalize_semantic_text(
+            f"Table 1 {row['row_marker']} requirement. {row['requirement_text']}"
+        )
+        row_anchor = f"{DEFAULT_REFERENCE_SOURCE_URL}#iso26262-table1-{row['row_marker']}"
+        semantic_corpus.append(
+            {
+                "corpus_id": f"row::{row['row_node_id']}",
+                "source_kind": "table1_row",
+                "source_id": row["row_node_id"],
+                "row_node_id": row["row_node_id"],
+                "mechanism_id": "",
+                "source_anchor": row_anchor,
+                "text": text,
+                "text_sha256": _sha256_text(text.lower()),
+                "source_fetched_at": source_fetched_at,
+            }
+        )
+
+    for mechanism in sorted(mechanisms, key=lambda item: item["mechanism_id"]):
+        mechanism_id = str(mechanism["mechanism_id"])
+        evidence_rows = evidence_by_mechanism.get(mechanism_id, [])
+        excerpts: list[str] = []
+        source_anchor = DEFAULT_REFERENCE_SOURCE_URL
+        if evidence_rows:
+            source_anchor = str(evidence_rows[0].get("source_anchor", source_anchor))
+        for evidence in evidence_rows[:3]:
+            statement_id = str(evidence.get("statement_id") or "").strip()
+            if statement_id and statement_id in statements_by_id:
+                excerpts.append(statements_by_id[statement_id].text)
+            else:
+                excerpts.append(str(evidence.get("text_excerpt", "")).strip())
+
+        profile_text = _normalize_semantic_text(
+            " ".join(
+                [
+                    f"Mechanism {mechanism_id}.",
+                    f"Symbol {mechanism['canonical_symbol']}.",
+                    f"Family {mechanism['mechanism_family']}.",
+                    f"Enforcement {mechanism['enforcement_kind']}.",
+                    f"Stability {mechanism['stability']}.",
+                    " ".join(value for value in excerpts if value),
+                ]
+            )
+        )
+        semantic_corpus.append(
+            {
+                "corpus_id": f"mechanism::{mechanism_id}",
+                "source_kind": "mechanism_profile",
+                "source_id": mechanism_id,
+                "row_node_id": "",
+                "mechanism_id": mechanism_id,
+                "source_anchor": source_anchor,
+                "text": profile_text,
+                "text_sha256": _sha256_text(profile_text.lower()),
+                "source_fetched_at": source_fetched_at,
+            }
+        )
+
+    for evidence in mechanism_evidence:
+        statement_id = str(evidence.get("statement_id") or "").strip()
+        if statement_id and statement_id in statements_by_id:
+            text = statements_by_id[statement_id].text
+            source_id = statement_id
+        else:
+            text = str(evidence.get("text_excerpt", "")).strip()
+            source_id = str(evidence.get("evidence_id", "")).strip()
+
+        normalized = _normalize_semantic_text(text)
+        semantic_corpus.append(
+            {
+                "corpus_id": f"evidence::{evidence['evidence_id']}",
+                "source_kind": "statement_evidence",
+                "source_id": source_id,
+                "row_node_id": "",
+                "mechanism_id": str(evidence["mechanism_id"]),
+                "source_anchor": str(evidence.get("source_anchor", DEFAULT_REFERENCE_SOURCE_URL)),
+                "text": normalized,
+                "text_sha256": _sha256_text(normalized.lower()),
+                "source_fetched_at": source_fetched_at,
+            }
+        )
+
+    return semantic_corpus
+
+
+def _build_row_queryability(
+    table_rows: list[dict[str, Any]],
+    mechanisms: list[dict[str, Any]],
+    mechanism_evidence: list[dict[str, Any]],
+    statements: list[StatementRecord],
+    evidence_count_by_mechanism: dict[str, int],
+    best_anchor_by_mechanism: dict[str, dict[str, Any]],
+    source_fetched_at: str,
+    retrieval_mode: str,
+    semantic_profile_version: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    statements_by_id = {statement.statement_id: statement for statement in statements}
+    evidence_by_mechanism: dict[str, list[dict[str, Any]]] = {}
+    for evidence in mechanism_evidence:
+        evidence_by_mechanism.setdefault(str(evidence["mechanism_id"]), []).append(evidence)
+
+    for mechanism_id in evidence_by_mechanism:
+        evidence_by_mechanism[mechanism_id].sort(
+            key=lambda row: (
+                -float(row.get("confidence", 0.0)),
+                str(row.get("evidence_id", "")),
+            )
+        )
 
     row_verdicts: list[dict[str, Any]] = []
     row_mechanisms: list[dict[str, Any]] = []
+    row_mechanism_scores: list[dict[str, Any]] = []
     applicable = 0
     not_applicable = 0
 
     for row in sorted(table_rows, key=lambda item: item["row_marker"]):
         families = _resolve_row_families(row["row_marker"], row["requirement_text"])
-        selected: list[dict[str, Any]] = []
-        seen_ids: set[str] = set()
-
+        row_tokens = _semantic_tokens(row["requirement_text"])
         for family in families:
-            for mechanism in mechanisms_by_family.get(family, []):
-                if mechanism["mechanism_id"] in seen_ids:
-                    continue
-                selected.append(mechanism)
-                seen_ids.add(mechanism["mechanism_id"])
-                if len(selected) >= 3:
-                    break
-            if len(selected) >= 3:
-                break
+            concept = FAMILY_TO_CONCEPT.get(family, family.replace("-", "_"))
+            for term in SEMANTIC_CONCEPT_TERMS.get(concept, ()):  # semantic expansion seed
+                row_tokens.update(_semantic_tokens(term))
 
+        if not row_tokens:
+            row_tokens = _semantic_tokens(row["row_marker"])
+
+        candidates: list[dict[str, Any]] = []
+        for mechanism in mechanisms:
+            mechanism_id = str(mechanism["mechanism_id"])
+            family_match = mechanism["mechanism_family"] in families
+            evidence_rows = evidence_by_mechanism.get(mechanism_id, [])
+            evidence_count = int(evidence_count_by_mechanism.get(mechanism_id, 0))
+
+            lexical_score = (1.0 if family_match else 0.0) + min(evidence_count / 20.0, 1.0) * 0.25
+
+            best_semantic_score = 0.0
+            top_statement_id = ""
+            top_anchor = str(
+                best_anchor_by_mechanism.get(mechanism_id, {}).get(
+                    "source_anchor", DEFAULT_REFERENCE_SOURCE_URL
+                )
+            )
+            top_section_id = str(
+                best_anchor_by_mechanism.get(mechanism_id, {}).get("section_id", "")
+            )
+
+            for evidence in evidence_rows:
+                statement_id = str(evidence.get("statement_id") or "").strip()
+                if statement_id and statement_id in statements_by_id:
+                    candidate_text = statements_by_id[statement_id].text
+                else:
+                    candidate_text = str(evidence.get("text_excerpt", "")).strip()
+                semantic_score = _jaccard_similarity(row_tokens, _semantic_tokens(candidate_text))
+                if semantic_score > best_semantic_score:
+                    best_semantic_score = semantic_score
+                    top_statement_id = statement_id
+                    top_anchor = str(evidence.get("source_anchor", top_anchor))
+                    top_section_id = str(evidence.get("section_id", top_section_id))
+
+            mechanism_tokens = _semantic_tokens(
+                f"{mechanism['canonical_symbol']} {mechanism['mechanism_family']}"
+            )
+            best_semantic_score = max(
+                best_semantic_score,
+                _jaccard_similarity(row_tokens, mechanism_tokens),
+            )
+            if family_match:
+                best_semantic_score = min(1.0, best_semantic_score + 0.12)
+
+            reranker_score = min(
+                1.0,
+                (0.75 * best_semantic_score) + (0.25 * (1.0 if family_match else 0.0)),
+            )
+            if retrieval_mode == "lexical":
+                hybrid_score = lexical_score
+            else:
+                hybrid_score = (
+                    (0.20 * lexical_score)
+                    + (0.45 * best_semantic_score)
+                    + (0.35 * reranker_score)
+                )
+
+            candidates.append(
+                {
+                    "mechanism_id": mechanism_id,
+                    "mechanism_family": mechanism["mechanism_family"],
+                    "lexical_score": lexical_score,
+                    "semantic_score": best_semantic_score,
+                    "reranker_score": reranker_score,
+                    "hybrid_score": hybrid_score,
+                    "top_statement_id": top_statement_id,
+                    "top_anchor": top_anchor,
+                    "top_section_id": top_section_id,
+                    "family_match": family_match,
+                }
+            )
+
+        candidates.sort(
+            key=lambda value: (
+                -float(value["hybrid_score"]),
+                -float(value["semantic_score"]),
+                str(value["mechanism_id"]),
+            )
+        )
+
+        selected: list[dict[str, Any]] = [
+            candidate for candidate in candidates if candidate["family_match"]
+        ]
         if not selected:
-            for mechanism in all_mechanisms_sorted[:2]:
-                if mechanism["mechanism_id"] in seen_ids:
-                    continue
-                selected.append(mechanism)
-                seen_ids.add(mechanism["mechanism_id"])
+            selected = candidates[:3]
 
         if selected:
             applicable += 1
             top = selected[0]
-            top_anchor = best_anchor_by_mechanism.get(top["mechanism_id"], {})
-            rationale_anchor = str(top_anchor.get("source_anchor", DEFAULT_REFERENCE_SOURCE_URL))
+            rationale_anchor = str(top["top_anchor"])
             rationale = (
                 "Rust Reference sections provide language semantics relevant to "
                 f"ISO 26262 Part 6 Table 1 item {row['row_marker']} "
-                f"({', '.join(families)})."
+                f"({', '.join(families)}), ranked with {retrieval_mode} retrieval profile."
             )
             row_verdicts.append(
                 {
@@ -883,19 +1130,29 @@ def _build_row_queryability(
                 }
             )
 
-            max_rank = float(len(selected))
-            for index, mechanism in enumerate(selected):
-                evidence = best_anchor_by_mechanism.get(mechanism["mechanism_id"], {})
+            for mechanism in selected:
                 row_mechanisms.append(
                     {
                         "row_node_id": row["row_node_id"],
                         "mechanism_id": mechanism["mechanism_id"],
-                        "relevance_score": max_rank - float(index),
-                        "evidence_anchor": str(
-                            evidence.get("source_anchor", DEFAULT_REFERENCE_SOURCE_URL)
-                        ),
-                        "evidence_section_id": str(evidence.get("section_id", "")),
-                        "evidence_statement_id": str(evidence.get("statement_id", "")),
+                        "relevance_score": round(float(mechanism["hybrid_score"]), 6),
+                        "evidence_anchor": str(mechanism["top_anchor"]),
+                        "evidence_section_id": str(mechanism["top_section_id"]),
+                        "evidence_statement_id": str(mechanism["top_statement_id"]),
+                        "source_fetched_at": source_fetched_at,
+                    }
+                )
+                row_mechanism_scores.append(
+                    {
+                        "row_node_id": row["row_node_id"],
+                        "mechanism_id": mechanism["mechanism_id"],
+                        "lexical_score": round(float(mechanism["lexical_score"]), 6),
+                        "semantic_score": round(float(mechanism["semantic_score"]), 6),
+                        "reranker_score": round(float(mechanism["reranker_score"]), 6),
+                        "hybrid_score": round(float(mechanism["hybrid_score"]), 6),
+                        "score_version": semantic_profile_version,
+                        "top_statement_id": str(mechanism["top_statement_id"]),
+                        "scored_at": source_fetched_at,
                         "source_fetched_at": source_fetched_at,
                     }
                 )
@@ -918,6 +1175,7 @@ def _build_row_queryability(
     return (
         row_verdicts,
         row_mechanisms,
+        row_mechanism_scores,
         {"applicable": applicable, "not_applicable": not_applicable},
     )
 
@@ -988,6 +1246,15 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             FOREIGN KEY(section_id) REFERENCES sections(section_id)
         );
 
+        CREATE VIRTUAL TABLE IF NOT EXISTS statements_fts
+        USING fts5(
+            statement_id UNINDEXED,
+            section_id UNINDEXED,
+            section_heading,
+            statement_text,
+            tokenize='unicode61 remove_diacritics 2'
+        );
+
         CREATE TABLE IF NOT EXISTS mechanisms (
             mechanism_id TEXT PRIMARY KEY,
             canonical_symbol TEXT NOT NULL,
@@ -1041,6 +1308,62 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             FOREIGN KEY(mechanism_id) REFERENCES mechanisms(mechanism_id)
         );
 
+        CREATE TABLE IF NOT EXISTS semantic_models (
+            model_id TEXT PRIMARY KEY,
+            model_role TEXT NOT NULL CHECK(model_role IN ('embedder', 'reranker')),
+            model_name TEXT NOT NULL,
+            model_revision TEXT NOT NULL,
+            embedding_dim INTEGER NOT NULL,
+            distance_metric TEXT NOT NULL,
+            license TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            retrieval_mode TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS semantic_corpus (
+            corpus_id TEXT PRIMARY KEY,
+            source_kind TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            row_node_id TEXT,
+            mechanism_id TEXT,
+            source_anchor TEXT NOT NULL,
+            text TEXT NOT NULL,
+            text_sha256 TEXT NOT NULL,
+            source_fetched_at TEXT NOT NULL,
+            FOREIGN KEY(row_node_id) REFERENCES table1_rows(row_node_id),
+            FOREIGN KEY(mechanism_id) REFERENCES mechanisms(mechanism_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS statement_embeddings (
+            statement_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            text_sha256 TEXT NOT NULL,
+            vector_json TEXT NOT NULL,
+            vector_norm REAL NOT NULL,
+            embedded_at TEXT NOT NULL,
+            source_fetched_at TEXT NOT NULL,
+            PRIMARY KEY(statement_id, model_id),
+            FOREIGN KEY(statement_id) REFERENCES statements(statement_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS row_mechanism_scores (
+            row_node_id TEXT NOT NULL,
+            mechanism_id TEXT NOT NULL,
+            lexical_score REAL NOT NULL,
+            semantic_score REAL NOT NULL,
+            reranker_score REAL NOT NULL,
+            hybrid_score REAL NOT NULL,
+            score_version TEXT NOT NULL,
+            top_statement_id TEXT,
+            scored_at TEXT NOT NULL,
+            source_fetched_at TEXT NOT NULL,
+            PRIMARY KEY (row_node_id, mechanism_id),
+            FOREIGN KEY(row_node_id) REFERENCES table1_rows(row_node_id),
+            FOREIGN KEY(mechanism_id) REFERENCES mechanisms(mechanism_id),
+            FOREIGN KEY(top_statement_id) REFERENCES statements(statement_id)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_chapters_order ON chapters(order_index);
         CREATE INDEX IF NOT EXISTS idx_documents_chapter
             ON source_documents(chapter_id, order_index);
@@ -1050,8 +1373,16 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_mechanism_evidence_mech ON mechanism_evidence(mechanism_id);
         CREATE INDEX IF NOT EXISTS idx_table1_rows_marker ON table1_rows(row_marker);
         CREATE INDEX IF NOT EXISTS idx_row_mechanisms_row ON row_mechanisms(row_node_id);
+        CREATE INDEX IF NOT EXISTS idx_semantic_corpus_source
+            ON semantic_corpus(source_kind, source_id);
+        CREATE INDEX IF NOT EXISTS idx_semantic_corpus_mechanism
+            ON semantic_corpus(mechanism_id, source_kind);
+        CREATE INDEX IF NOT EXISTS idx_statement_embeddings_model
+            ON statement_embeddings(model_id, statement_id);
+        CREATE INDEX IF NOT EXISTS idx_row_mechanism_scores_row
+            ON row_mechanism_scores(row_node_id, hybrid_score DESC);
 
-        PRAGMA user_version = 2;
+        PRAGMA user_version = 5;
         """
     )
 
@@ -1086,7 +1417,12 @@ def _insert_payload(
     table_rows: list[dict[str, Any]],
     row_verdicts: list[dict[str, Any]],
     row_mechanisms: list[dict[str, Any]],
+    semantic_models: list[dict[str, Any]],
+    semantic_corpus: list[dict[str, Any]],
+    row_mechanism_scores: list[dict[str, Any]],
 ) -> None:
+    section_heading_by_id = {section.section_id: section.heading for section in sections}
+
     connection.execute(
         """
         INSERT INTO snapshots(snapshot_id, commit_sha, source_url, fetched_at, sha256)
@@ -1188,6 +1524,22 @@ def _insert_payload(
                 statement.source_sha256,
                 statement.source_fetched_at,
                 statement.source_commit_sha,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO statements_fts(
+                statement_id,
+                section_id,
+                section_heading,
+                statement_text
+            ) VALUES(?, ?, ?, ?)
+            """,
+            (
+                statement.statement_id,
+                statement.section_id,
+                section_heading_by_id.get(statement.section_id, ""),
+                statement.text,
             ),
         )
 
@@ -1299,6 +1651,94 @@ def _insert_payload(
             ),
         )
 
+    for model in semantic_models:
+        connection.execute(
+            """
+            INSERT INTO semantic_models(
+                model_id,
+                model_role,
+                model_name,
+                model_revision,
+                embedding_dim,
+                distance_metric,
+                license,
+                provider,
+                retrieval_mode,
+                created_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                model["model_id"],
+                model["model_role"],
+                model["model_name"],
+                model["model_revision"],
+                int(model["embedding_dim"]),
+                model["distance_metric"],
+                model["license"],
+                model["provider"],
+                model["retrieval_mode"],
+                model["created_at"],
+            ),
+        )
+
+    for corpus_row in semantic_corpus:
+        connection.execute(
+            """
+            INSERT INTO semantic_corpus(
+                corpus_id,
+                source_kind,
+                source_id,
+                row_node_id,
+                mechanism_id,
+                source_anchor,
+                text,
+                text_sha256,
+                source_fetched_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                corpus_row["corpus_id"],
+                corpus_row["source_kind"],
+                corpus_row["source_id"],
+                corpus_row["row_node_id"] or None,
+                corpus_row["mechanism_id"] or None,
+                corpus_row["source_anchor"],
+                corpus_row["text"],
+                corpus_row["text_sha256"],
+                corpus_row["source_fetched_at"],
+            ),
+        )
+
+    for score_row in row_mechanism_scores:
+        connection.execute(
+            """
+            INSERT INTO row_mechanism_scores(
+                row_node_id,
+                mechanism_id,
+                lexical_score,
+                semantic_score,
+                reranker_score,
+                hybrid_score,
+                score_version,
+                top_statement_id,
+                scored_at,
+                source_fetched_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                score_row["row_node_id"],
+                score_row["mechanism_id"],
+                float(score_row["lexical_score"]),
+                float(score_row["semantic_score"]),
+                float(score_row["reranker_score"]),
+                float(score_row["hybrid_score"]),
+                score_row["score_version"],
+                score_row["top_statement_id"] or None,
+                score_row["scored_at"],
+                score_row["source_fetched_at"],
+            ),
+        )
+
 
 def _load_manifest(path: Path) -> dict[str, Any]:
     if not path.exists():
@@ -1337,6 +1777,21 @@ def validate_rust_reference_db(
         section_count = int(connection.execute("SELECT COUNT(*) FROM sections").fetchone()[0])
         statement_count = int(connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0])
         mechanism_count = int(connection.execute("SELECT COUNT(*) FROM mechanisms").fetchone()[0])
+        semantic_model_count = int(
+            connection.execute("SELECT COUNT(*) FROM semantic_models").fetchone()[0]
+        )
+        semantic_corpus_count = int(
+            connection.execute("SELECT COUNT(*) FROM semantic_corpus").fetchone()[0]
+        )
+        statement_embedding_count = int(
+            connection.execute("SELECT COUNT(*) FROM statement_embeddings").fetchone()[0]
+        )
+        statements_fts_count = int(
+            connection.execute("SELECT COUNT(*) FROM statements_fts").fetchone()[0]
+        )
+        row_mechanism_score_count = int(
+            connection.execute("SELECT COUNT(*) FROM row_mechanism_scores").fetchone()[0]
+        )
 
         if section_count < int(min_sections):
             failures.append("Too few sections extracted from Rust Reference")
@@ -1344,6 +1799,19 @@ def validate_rust_reference_db(
             failures.append("Too few semantic statements extracted from Rust Reference")
         if mechanism_count < int(min_mechanisms):
             failures.append("Too few mechanisms extracted from Rust Reference")
+        if semantic_model_count < 2:
+            failures.append("Semantic model metadata is incomplete")
+        if semantic_corpus_count < int(mechanism_count + 9):
+            failures.append("Semantic corpus coverage is below minimum row/mechanism threshold")
+        if statements_fts_count != statement_count:
+            failures.append("FTS statement index coverage does not match statements table")
+        if row_mechanism_score_count < 9:
+            failures.append("Row mechanism score coverage is incomplete")
+        if statement_embedding_count == 0:
+            warnings.append(
+                "No statement embeddings materialized yet; "
+                "semantic retrieval will compute on demand"
+            )
 
         duplicate_section_count = int(
             connection.execute(
@@ -1497,10 +1965,20 @@ def _update_manifest(
     source_fetched_at: str,
     report_path: Path,
     counts: dict[str, int],
+    retrieval_mode: str,
+    retrieval_corpus: str,
+    semantic_profile_version: str,
+    embedding_model_id: str,
+    reranker_model_id: str,
 ) -> None:
     manifest = _load_manifest(manifest_path)
     manifest.setdefault("databases", {})
     manifest["updated_at"] = utc_now()
+    query_contract_path = (
+        "config/sqlite_query_contracts/rust_reference_chunk.yaml"
+        if retrieval_corpus == "chunk"
+        else "config/sqlite_query_contracts/rust_reference.yaml"
+    )
     manifest["databases"]["rust_reference"] = {
         "db_name": "rust_reference.sqlite",
         "current_path": str(current_db_path),
@@ -1512,8 +1990,15 @@ def _update_manifest(
             "commit_sha": commit_sha,
             "fetched_at": source_fetched_at,
         },
-        "query_contract": "config/sqlite_query_contracts/rust_reference.yaml",
+        "query_contract": query_contract_path,
         "validation_report": str(report_path),
+        "semantic_retrieval": {
+            "retrieval_mode": retrieval_mode,
+            "retrieval_corpus": retrieval_corpus,
+            "profile_version": semantic_profile_version,
+            "embedding_model_id": embedding_model_id,
+            "reranker_model_id": reranker_model_id,
+        },
         "table1_queryability": {
             "rows_total": counts["applicable"] + counts["not_applicable"],
             "applicable": counts["applicable"],
@@ -1541,9 +2026,24 @@ def build_rust_reference_db(
     min_sections: int = 20,
     min_statements: int = 50,
     min_mechanisms: int = 6,
+    retrieval_mode: str = DEFAULT_RETRIEVAL_MODE,
+    retrieval_corpus: str = DEFAULT_RETRIEVAL_CORPUS,
+    semantic_profile_version: str = DEFAULT_SEMANTIC_PROFILE_VERSION,
+    embedding_model_id: str = DEFAULT_EMBEDDING_MODEL_ID,
+    embedding_model_revision: str = DEFAULT_EMBEDDING_MODEL_REVISION,
+    embedding_model_license: str = DEFAULT_EMBEDDING_MODEL_LICENSE,
+    embedding_dim: int = DEFAULT_EMBEDDING_DIM,
+    reranker_model_id: str = DEFAULT_RERANKER_MODEL_ID,
+    reranker_model_revision: str = DEFAULT_RERANKER_MODEL_REVISION,
+    reranker_model_license: str = DEFAULT_RERANKER_MODEL_LICENSE,
 ) -> dict[str, Any]:
     report_root = report_root or (db_path.parents[1] / "reports" / "rust_reference")
     reference_cache_dir = reference_cache_dir or (db_path.parents[1] / "sources" / "rust-reference")
+    if retrieval_corpus not in RETRIEVAL_CORPUS_VALUES:
+        raise ValueError(
+            "Unsupported retrieval corpus "
+            f"'{retrieval_corpus}'; expected one of {sorted(RETRIEVAL_CORPUS_VALUES)}"
+        )
 
     existing_manifest = _load_manifest(manifest_path)
     previous_snapshot_path = _read_previous_snapshot_path(existing_manifest)
@@ -1578,13 +2078,37 @@ def build_rust_reference_db(
             source_fetched_at=source_fetched_at,
         )
     )
+    semantic_models = _build_semantic_models(
+        source_fetched_at=source_fetched_at,
+        retrieval_mode=retrieval_mode,
+        embedding_model_id=embedding_model_id,
+        embedding_model_revision=embedding_model_revision,
+        embedding_model_license=embedding_model_license,
+        embedding_dim=embedding_dim,
+        reranker_model_id=reranker_model_id,
+        reranker_model_revision=reranker_model_revision,
+        reranker_model_license=reranker_model_license,
+    )
+
     table_rows = _resolve_table1_rows(extractor_db=extractor_db, table_node_id=table_node_id)
-    row_verdicts, row_mechanisms, counts = _build_row_queryability(
+    semantic_corpus = _build_semantic_corpus(
         table_rows=table_rows,
         mechanisms=mechanisms,
+        mechanism_evidence=mechanism_evidence,
+        statements=statements,
+        source_fetched_at=source_fetched_at,
+    )
+
+    row_verdicts, row_mechanisms, row_mechanism_scores, counts = _build_row_queryability(
+        table_rows=table_rows,
+        mechanisms=mechanisms,
+        mechanism_evidence=mechanism_evidence,
+        statements=statements,
         evidence_count_by_mechanism=evidence_count_by_mechanism,
         best_anchor_by_mechanism=best_anchor_by_mechanism,
         source_fetched_at=source_fetched_at,
+        retrieval_mode=retrieval_mode,
+        semantic_profile_version=semantic_profile_version,
     )
 
     snapshot_sha256 = _compute_snapshot_sha256(
@@ -1617,6 +2141,9 @@ def build_rust_reference_db(
             table_rows=table_rows,
             row_verdicts=row_verdicts,
             row_mechanisms=row_mechanisms,
+            semantic_models=semantic_models,
+            semantic_corpus=semantic_corpus,
+            row_mechanism_scores=row_mechanism_scores,
         )
         connection.commit()
     finally:
@@ -1662,6 +2189,11 @@ def build_rust_reference_db(
         source_fetched_at=source_fetched_at,
         report_path=report_path,
         counts=counts,
+        retrieval_mode=retrieval_mode,
+        retrieval_corpus=retrieval_corpus,
+        semantic_profile_version=semantic_profile_version,
+        embedding_model_id=embedding_model_id,
+        reranker_model_id=reranker_model_id,
     )
 
     return {
@@ -1676,6 +2208,12 @@ def build_rust_reference_db(
         "sections": len(sections),
         "statements": len(statements),
         "mechanisms": len(mechanisms),
+        "semantic_models": len(semantic_models),
+        "semantic_corpus": len(semantic_corpus),
+        "row_mechanism_scores": len(row_mechanism_scores),
+        "retrieval_mode": retrieval_mode,
+        "retrieval_corpus": retrieval_corpus,
+        "semantic_profile_version": semantic_profile_version,
         "rows_total": counts["applicable"] + counts["not_applicable"],
         "applicable": counts["applicable"],
         "not_applicable": counts["not_applicable"],
@@ -1757,6 +2295,59 @@ def parse_args() -> argparse.Namespace:
         default=6,
         help="Minimum extracted mechanism count required by validation",
     )
+    parser.add_argument(
+        "--retrieval-mode",
+        choices=("hybrid", "lexical"),
+        default=DEFAULT_RETRIEVAL_MODE,
+        help="Row-mechanism ranking mode",
+    )
+    parser.add_argument(
+        "--retrieval-corpus",
+        choices=RETRIEVAL_CORPUS_VALUES,
+        default=DEFAULT_RETRIEVAL_CORPUS,
+        help="Retrieval corpus lane to materialize (statement or chunk)",
+    )
+    parser.add_argument(
+        "--semantic-profile-version",
+        default=DEFAULT_SEMANTIC_PROFILE_VERSION,
+        help="Semantic score profile/version label",
+    )
+    parser.add_argument(
+        "--embedding-model-id",
+        default=DEFAULT_EMBEDDING_MODEL_ID,
+        help="Embedding model identifier used for semantic retrieval metadata",
+    )
+    parser.add_argument(
+        "--embedding-model-revision",
+        default=DEFAULT_EMBEDDING_MODEL_REVISION,
+        help="Embedding model revision metadata",
+    )
+    parser.add_argument(
+        "--embedding-model-license",
+        default=DEFAULT_EMBEDDING_MODEL_LICENSE,
+        help="Embedding model license metadata",
+    )
+    parser.add_argument(
+        "--embedding-dim",
+        type=int,
+        default=DEFAULT_EMBEDDING_DIM,
+        help="Embedding vector dimension metadata",
+    )
+    parser.add_argument(
+        "--reranker-model-id",
+        default=DEFAULT_RERANKER_MODEL_ID,
+        help="Reranker model identifier used for semantic retrieval metadata",
+    )
+    parser.add_argument(
+        "--reranker-model-revision",
+        default=DEFAULT_RERANKER_MODEL_REVISION,
+        help="Reranker model revision metadata",
+    )
+    parser.add_argument(
+        "--reranker-model-license",
+        default=DEFAULT_RERANKER_MODEL_LICENSE,
+        help="Reranker model license metadata",
+    )
     return parser.parse_args()
 
 
@@ -1792,6 +2383,16 @@ def main() -> int:
             min_sections=args.min_sections,
             min_statements=args.min_statements,
             min_mechanisms=args.min_mechanisms,
+            retrieval_mode=args.retrieval_mode,
+            retrieval_corpus=args.retrieval_corpus,
+            semantic_profile_version=args.semantic_profile_version,
+            embedding_model_id=args.embedding_model_id,
+            embedding_model_revision=args.embedding_model_revision,
+            embedding_model_license=args.embedding_model_license,
+            embedding_dim=args.embedding_dim,
+            reranker_model_id=args.reranker_model_id,
+            reranker_model_revision=args.reranker_model_revision,
+            reranker_model_license=args.reranker_model_license,
         )
     except Exception as exc:  # pragma: no cover - CLI guard
         print(f"[build-rust-reference][error] {exc}")

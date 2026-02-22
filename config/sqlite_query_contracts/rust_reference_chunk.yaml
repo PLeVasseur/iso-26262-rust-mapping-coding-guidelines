@@ -1,0 +1,99 @@
+version: 1
+database: rust_reference
+defaults:
+  row_limit: 200
+
+queries:
+  snapshot_metadata:
+    description: Active snapshot metadata for rust_reference
+    requires_order: true
+    row_limit: 5
+    params: []
+    sql: |
+      SELECT
+        snapshot_id,
+        commit_sha,
+        source_url,
+        fetched_at,
+        sha256
+      FROM snapshots
+      ORDER BY fetched_at DESC
+
+  semantic_model_metadata:
+    description: Semantic retrieval model metadata for auditability
+    requires_order: true
+    row_limit: 10
+    params: []
+    sql: |
+      SELECT
+        model_id,
+        model_role,
+        model_name,
+        model_revision,
+        embedding_dim,
+        distance_metric,
+        license,
+        provider,
+        retrieval_mode,
+        created_at
+      FROM semantic_models
+      ORDER BY model_role ASC, model_id ASC
+
+  table1_row_requirements_v2:
+    description: Table 1 row requirement text for chunk-first row projection
+    requires_order: true
+    row_limit: 20
+    params:
+      - row_marker
+    sql: |
+      SELECT
+        row_node_id,
+        row_marker,
+        requirement_text
+      FROM table1_rows
+      WHERE :row_marker = '' OR row_marker = :row_marker
+      ORDER BY row_marker ASC
+
+  chunk_corpus_v1_all:
+    description: Full chunk retrieval corpus (chunk-lane contract bootstrap)
+    requires_order: true
+    row_limit: 5000
+    params:
+      - chunk_uid_after
+    sql: |
+      SELECT
+        s.statement_id AS chunk_uid,
+        s.text AS chunk_text,
+        sec.heading AS section_heading,
+        (
+          'https://doc.rust-lang.org/reference/' ||
+          CASE
+            WHEN sd.rel_path LIKE '%.md'
+              THEN substr(sd.rel_path, 1, length(sd.rel_path) - 3) || '.html'
+            ELSE sd.rel_path
+          END ||
+          '#' || sec.anchor
+        ) AS source_anchor,
+        s.source_fetched_at,
+        '' AS row_markers,
+        '' AS mechanism_ids,
+        '' AS mechanism_families
+      FROM statements AS s
+      JOIN sections AS sec ON sec.section_id = s.section_id
+      JOIN source_documents AS sd ON sd.document_id = sec.document_id
+      WHERE :chunk_uid_after = '' OR s.statement_id > :chunk_uid_after
+      ORDER BY chunk_uid ASC
+
+  lexical_chunk_search_v1:
+    description: Free-text lexical chunk candidates using FTS5 and BM25
+    requires_order: true
+    row_limit: 500
+    params:
+      - fts_query
+    sql: |
+      SELECT
+        statement_id AS chunk_uid,
+        bm25(statements_fts) AS bm25_raw
+      FROM statements_fts
+      WHERE statements_fts MATCH :fts_query
+      ORDER BY bm25_raw ASC, chunk_uid ASC

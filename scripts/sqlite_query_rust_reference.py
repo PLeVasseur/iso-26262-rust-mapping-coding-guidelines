@@ -2,26 +2,230 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import os
+import re
+import sqlite3
 import sys
+import time
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from semantic_backend_client import (
+    SemanticBackendConfig,
+    SemanticBackendError,
+    check_semantic_backend,
+    embed_texts,
+    rerank_texts,
+)
 from sqlite_query_guardrails import GuardrailError, execute_contract_query
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
+DEFAULT_TOP_K = 20
+DEFAULT_CANDIDATE_LIMIT = 5000
+FULL_CORPUS_PAGE_LIMIT = 5000
+DEFAULT_QUERY_REVIEW_DIR = ".cache/sqlite_kb/reports/rust_reference/query_reviews"
+REVIEW_ARTIFACT_SCHEMA_VERSION = 1
+TOKEN_RE = re.compile(r"[a-z0-9_]+")
+STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "can",
+    "do",
+    "does",
+    "for",
+    "how",
+    "in",
+    "is",
+    "it",
+    "kinds",
+    "of",
+    "on",
+    "or",
+    "rust",
+    "that",
+    "the",
+    "to",
+    "what",
+    "when",
+    "where",
+    "which",
+    "available",
+    "features",
+    "feature",
+    "language",
+    "programming",
+    "support",
+    "supports",
+    "techniques",
+    "with",
+    "why",
+}
+EMBEDDING_CACHE_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS statement_embeddings (
+    statement_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    text_sha256 TEXT NOT NULL,
+    vector_json TEXT NOT NULL,
+    vector_norm REAL NOT NULL,
+    embedded_at TEXT NOT NULL,
+    source_fetched_at TEXT NOT NULL,
+    PRIMARY KEY(statement_id, model_id),
+    FOREIGN KEY(statement_id) REFERENCES statements(statement_id)
+);
+CREATE INDEX IF NOT EXISTS idx_statement_embeddings_model
+    ON statement_embeddings(model_id, statement_id);
+"""
+
+
+class ModeExecutionError(RuntimeError):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+SCORE_FIELDS = {
+    "bm25_raw",
+    "phrase_match",
+    "token_overlap_count",
+    "lexical_score",
+    "semantic_score",
+    "semantic_score_raw",
+    "reranker_score",
+    "relevance_score",
+    "row_marker_scores",
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Read-only query wrapper for rust_reference.sqlite"
     )
-    parser.add_argument("--query-id", required=True, help="Contract query id to execute")
+    parser.add_argument(
+        "--mode",
+        choices=("contract", "lexical", "semantic", "hybrid"),
+        default="contract",
+        help="Query mode (contract passthrough or retrieval mode)",
+    )
+    parser.add_argument("--query-id", default=None, help="Contract query id to execute")
     parser.add_argument(
         "--params-json",
         default="{}",
         help="JSON object of named params passed to the contract query",
+    )
+    parser.add_argument(
+        "--query-text",
+        default="",
+        help="Natural-language query text for lexical/semantic/hybrid retrieval",
+    )
+    parser.add_argument(
+        "--row-marker",
+        default="",
+        help="Optional Table 1 row marker filter (1a..1i)",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=DEFAULT_TOP_K,
+        help="Maximum number of retrieval rows returned",
+    )
+    parser.add_argument(
+        "--candidate-limit",
+        type=int,
+        default=DEFAULT_CANDIDATE_LIMIT,
+        help="Maximum candidate statement rows considered during retrieval",
+    )
+    parser.add_argument(
+        "--include-score-breakdown",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include score component fields in retrieval output",
+    )
+    parser.add_argument(
+        "--prompt-id",
+        default="",
+        help="Optional prompt identifier for saved review artifacts",
+    )
+    parser.add_argument(
+        "--save-response-path",
+        default="",
+        help="Optional JSON path to persist full query response review artifact",
+    )
+    parser.add_argument(
+        "--save-response-dir",
+        default="",
+        help=(
+            "Optional directory for persisted review artifact JSON using "
+            "<timestamp>__<prompt_id>__<mode>.json naming"
+        ),
+    )
+    parser.add_argument(
+        "--allow-degraded",
+        action="store_true",
+        help="Allow lexical degraded fallback if semantic backend is unavailable",
+    )
+    parser.add_argument(
+        "--semantic-base-url",
+        default=os.environ.get("RUST_REF_TEI_BASE_URL", "http://127.0.0.1:8080"),
+        help="Fallback semantic backend base URL",
+    )
+    parser.add_argument(
+        "--semantic-embed-base-url",
+        default=os.environ.get("RUST_REF_TEI_EMBED_BASE_URL", "http://127.0.0.1:8080"),
+        help="Optional embedding backend base URL override",
+    )
+    parser.add_argument(
+        "--semantic-rerank-base-url",
+        default=os.environ.get("RUST_REF_TEI_RERANK_BASE_URL", "http://127.0.0.1:8081"),
+        help="Optional reranker backend base URL override",
+    )
+    parser.add_argument(
+        "--embed-model-id",
+        default=os.environ.get("RUST_REF_EMBED_MODEL_ID", "Qwen/Qwen3-Embedding-4B"),
+        help="Embedding model identifier",
+    )
+    parser.add_argument(
+        "--reranker-model-id",
+        default=os.environ.get("RUST_REF_RERANK_MODEL_ID", "BAAI/bge-reranker-v2-m3"),
+        help="Reranker model identifier",
+    )
+    parser.add_argument(
+        "--semantic-timeout-sec",
+        type=float,
+        default=float(os.environ.get("RUST_REF_SEMANTIC_TIMEOUT_SEC", "60.0")),
+        help="Timeout for semantic backend HTTP requests",
+    )
+    parser.add_argument(
+        "--semantic-retries",
+        type=int,
+        default=2,
+        help="Retry count for transient semantic backend failures",
+    )
+    parser.add_argument(
+        "--persist-semantic-cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Persist per-statement embeddings in sqlite cache table",
+    )
+    parser.add_argument(
+        "--allow-online-corpus-embedding",
+        action=argparse.BooleanOptionalAction,
+        default=bool(int(os.environ.get("RUST_REF_ALLOW_ONLINE_CORPUS_EMBEDDING", "0"))),
+        help=(
+            "Allow semantic query path to embed missing corpus rows on demand "
+            "(disabled by default; prefer materialize-first)"
+        ),
     )
     parser.add_argument(
         "--db-path",
@@ -54,6 +258,1038 @@ def _parse_params(raw: str) -> dict[str, Any]:
     return payload
 
 
+def _tokenize(text: str) -> set[str]:
+    return {
+        token
+        for token in (match.group(0) for match in TOKEN_RE.finditer(text.lower()))
+        if len(token) >= 3 and token not in STOPWORDS
+    }
+
+
+def _tokenize_raw(text: str) -> set[str]:
+    return {
+        token
+        for token in (match.group(0) for match in TOKEN_RE.finditer(text.lower()))
+        if len(token) >= 3
+    }
+
+
+def _to_fts_query(query_text: str) -> str:
+    tokens = _tokenize(query_text)
+    if not tokens:
+        tokens = _tokenize_raw(query_text)
+    ordered = sorted(tokens)
+    if not ordered:
+        raise GuardrailError("Query text did not yield searchable lexical tokens")
+    return " OR ".join(ordered)
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _safe_slug(value: str, fallback: str) -> str:
+    tokens = [token for token in re.findall(r"[a-z0-9]+", str(value).lower()) if token]
+    if not tokens:
+        return fallback
+    slug = "-".join(tokens)
+    clipped = slug[:80].strip("-")
+    return clipped if clipped else fallback
+
+
+def _resolve_root_relative_path(root: Path, raw: str) -> Path:
+    path = Path(str(raw).strip())
+    if not path.is_absolute():
+        path = root / path
+    return path.resolve()
+
+
+def resolve_review_artifact_path(
+    *,
+    root: Path,
+    mode: str,
+    query_text: str,
+    prompt_id: str,
+    save_response_path: str,
+    save_response_dir: str,
+) -> Path | None:
+    explicit_path = str(save_response_path).strip()
+    explicit_dir = str(save_response_dir).strip()
+    if explicit_path and explicit_dir:
+        raise GuardrailError("Use either --save-response-path or --save-response-dir, not both")
+
+    if not explicit_path and not explicit_dir:
+        return None
+
+    if explicit_path:
+        return _resolve_root_relative_path(root, explicit_path)
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    prompt_token = _safe_slug(prompt_id, "")
+    if not prompt_token:
+        prompt_token = _safe_slug(query_text, "adhoc")
+    filename = f"{stamp}__{prompt_token}__{str(mode).strip().lower()}.json"
+    directory = _resolve_root_relative_path(root, explicit_dir or DEFAULT_QUERY_REVIEW_DIR)
+    return directory / filename
+
+
+def build_review_artifact_payload(
+    *,
+    mode: str,
+    query_text: str,
+    row_marker: str,
+    prompt_id: str,
+    top_k: int,
+    candidate_limit: int,
+    include_score_breakdown: bool,
+    allow_degraded: bool,
+    db_path: Path,
+    contract_path: Path,
+    query_log_root: Path,
+    semantic_config: SemanticBackendConfig | None,
+    semantic_retries: int,
+    persist_semantic_cache: bool,
+    allow_online_corpus_embedding: bool,
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    semantic_runtime: dict[str, Any] = {}
+    if semantic_config is not None:
+        semantic_runtime = {
+            "base_url": str(semantic_config.base_url),
+            "embed_base_url": str(semantic_config.embed_base_url or semantic_config.base_url),
+            "rerank_base_url": str(semantic_config.rerank_base_url or semantic_config.base_url),
+            "embed_model_id": str(semantic_config.embed_model_id),
+            "reranker_model_id": str(semantic_config.reranker_model_id),
+            "timeout_sec": float(semantic_config.timeout_sec),
+            "semantic_retries": int(semantic_retries),
+            "persist_semantic_cache": bool(persist_semantic_cache),
+            "allow_online_corpus_embedding": bool(allow_online_corpus_embedding),
+        }
+
+    return {
+        "schema_version": REVIEW_ARTIFACT_SCHEMA_VERSION,
+        "generated_at": _utc_now(),
+        "prompt_id": str(prompt_id).strip(),
+        "query": {
+            "mode": str(mode).strip().lower(),
+            "query_text": str(query_text),
+            "row_marker": str(row_marker).strip().lower(),
+            "top_k": int(top_k),
+            "candidate_limit": int(candidate_limit),
+            "include_score_breakdown": bool(include_score_breakdown),
+            "allow_degraded": bool(allow_degraded),
+        },
+        "runtime": {
+            "db_path": str(db_path),
+            "contract_path": str(contract_path),
+            "query_log_root": str(query_log_root),
+            "backend_profile": str(os.environ.get("RUST_REF_SEMANTIC_BACKEND_PROFILE", "unknown")),
+            "semantic": semantic_runtime,
+        },
+        "response": response,
+    }
+
+
+def persist_review_artifact(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _ensure_embedding_cache_table(db_path: Path) -> None:
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(EMBEDDING_CACHE_TABLE_DDL)
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _split_csv_field(raw: str) -> list[str]:
+    values = [value.strip() for value in str(raw).split(",") if value.strip()]
+    return sorted(set(values))
+
+
+def _min_max_normalize(values: list[float]) -> list[float]:
+    if not values:
+        return []
+    lower = min(values)
+    upper = max(values)
+    if abs(upper - lower) < 1e-12:
+        return [1.0 for _ in values]
+    return [(value - lower) / (upper - lower) for value in values]
+
+
+def _dot(left: list[float], right: list[float]) -> float:
+    return float(sum(a * b for a, b in zip(left, right, strict=False)))
+
+
+def _l2_norm(values: list[float]) -> float:
+    return math.sqrt(sum(value * value for value in values))
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    left_norm = _l2_norm(left)
+    right_norm = _l2_norm(right)
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return _dot(left, right) / (left_norm * right_norm)
+
+
+def _with_semantic_retries(
+    description: str,
+    retries: int,
+    call: Callable[[], Any],
+    telemetry: list[dict[str, Any]] | None = None,
+) -> Any:
+    attempts = max(0, int(retries)) + 1
+    last_error: SemanticBackendError | None = None
+    for attempt in range(attempts):
+        try:
+            value = call()
+            if telemetry is not None:
+                telemetry.append(
+                    {
+                        "operation": description,
+                        "status": "pass",
+                        "max_attempts": attempts,
+                        "attempts_used": attempt + 1,
+                        "retry_count": attempt,
+                    }
+                )
+            return value
+        except SemanticBackendError as exc:
+            last_error = exc
+            if attempt + 1 >= attempts:
+                break
+            time.sleep(0.2 * (attempt + 1))
+    message = str(last_error) if last_error is not None else "unknown semantic backend error"
+    if telemetry is not None:
+        telemetry.append(
+            {
+                "operation": description,
+                "status": "fail",
+                "max_attempts": attempts,
+                "attempts_used": attempts,
+                "retry_count": max(0, attempts - 1),
+                "error": message,
+            }
+        )
+    raise ModeExecutionError(
+        code="SEMANTIC_BACKEND_UNAVAILABLE",
+        message=f"{description} failed after {attempts} attempts: {message}",
+    )
+
+
+def _build_semantic_config(args: argparse.Namespace) -> SemanticBackendConfig:
+    return SemanticBackendConfig(
+        base_url=args.semantic_base_url,
+        embed_model_id=args.embed_model_id,
+        reranker_model_id=args.reranker_model_id,
+        timeout_sec=float(args.semantic_timeout_sec),
+        embed_base_url=(str(args.semantic_embed_base_url).strip() or None),
+        rerank_base_url=(str(args.semantic_rerank_base_url).strip() or None),
+    )
+
+
+def _materialize_common_row(raw_row: dict[str, Any], query_tokens: set[str]) -> dict[str, Any]:
+    text = str(raw_row.get("statement_text", ""))
+    overlap = len(query_tokens.intersection(_tokenize(text))) if query_tokens else 0
+    bm25_raw = float(raw_row.get("bm25_raw", 0.0))
+    return {
+        "statement_id": str(raw_row.get("statement_id", "")),
+        "statement_text": text,
+        "section_heading": str(raw_row.get("section_heading", "")),
+        "source_anchor": str(raw_row.get("source_anchor", "")),
+        "source_fetched_at": str(raw_row.get("source_fetched_at", "")),
+        "row_markers": _split_csv_field(str(raw_row.get("row_markers", ""))),
+        "mechanism_ids": _split_csv_field(str(raw_row.get("mechanism_ids", ""))),
+        "mechanism_families": _split_csv_field(str(raw_row.get("mechanism_families", ""))),
+        "text_sha256": _sha256_text(text.lower()),
+        "bm25_raw": bm25_raw,
+        "phrase_match": int(raw_row.get("phrase_match", 0) or 0),
+        "token_overlap_count": overlap,
+        "lexical_score": -bm25_raw,
+    }
+
+
+def _run_lexical_query(
+    *,
+    contract_path: Path,
+    query_log_root: Path,
+    db_path: Path,
+    corpus_rows: list[dict[str, Any]],
+    row_profiles: list[dict[str, Any]],
+    query_text: str,
+    row_marker: str,
+    row_limit: int,
+) -> list[dict[str, Any]]:
+    query_tokens = _tokenize(query_text)
+    fts_query = _to_fts_query(query_text)
+
+    corpus_by_statement_id = {str(row["statement_id"]): row for row in corpus_rows}
+
+    result = execute_contract_query(
+        db_path=db_path,
+        contract_path=contract_path,
+        query_id="lexical_statement_search_v2",
+        params={"fts_query": fts_query},
+        row_limit=row_limit,
+        query_log_root=query_log_root,
+    )
+
+    if not result["rows"]:
+        fallback_tokens = sorted(_tokenize_raw(query_text))
+        fallback_query = " OR ".join(fallback_tokens)
+        if fallback_query and fallback_query != fts_query:
+            result = execute_contract_query(
+                db_path=db_path,
+                contract_path=contract_path,
+                query_id="lexical_statement_search_v2",
+                params={"fts_query": fallback_query},
+                row_limit=row_limit,
+                query_log_root=query_log_root,
+            )
+
+    rows: list[dict[str, Any]] = []
+    for match_row in result["rows"]:
+        statement_id = str(match_row.get("statement_id", ""))
+        if statement_id not in corpus_by_statement_id:
+            continue
+
+        row = dict(corpus_by_statement_id[statement_id])
+        row["bm25_raw"] = float(match_row.get("bm25_raw", 0.0))
+        row["phrase_match"] = int(query_text.lower() in str(row["statement_text"]).lower())
+        row["token_overlap_count"] = len(
+            query_tokens.intersection(_tokenize(str(row["statement_text"])))
+        )
+        rows.append(row)
+
+    if not rows:
+        return []
+
+    if query_tokens:
+        max_overlap = max(int(row["token_overlap_count"]) for row in rows)
+        target_overlap = max(1, int(math.ceil(len(query_tokens) * 0.6)))
+        min_overlap_required = min(max_overlap, target_overlap)
+        filtered_rows = [
+            row for row in rows if int(row["token_overlap_count"]) >= min_overlap_required
+        ]
+        if filtered_rows:
+            rows = filtered_rows
+
+    bm25_values = [-float(row["bm25_raw"]) for row in rows]
+    overlap_values = [float(row["token_overlap_count"]) for row in rows]
+    bm25_norm = _min_max_normalize(bm25_values)
+    overlap_norm = _min_max_normalize(overlap_values)
+
+    for row, bm25_score, overlap_score in zip(rows, bm25_norm, overlap_norm, strict=False):
+        row["lexical_score"] = (
+            (0.55 * float(bm25_score))
+            + (0.35 * float(overlap_score))
+            + (0.10 * float(row["phrase_match"]))
+        )
+
+    rows.sort(
+        key=lambda row: (
+            -float(row["lexical_score"]),
+            float(row["bm25_raw"]),
+            str(row["statement_id"]),
+        )
+    )
+    _annotate_rows_with_row_markers(rows, row_profiles)
+    return _filter_rows_by_row_marker(rows, row_marker)
+
+
+def _load_statement_corpus(
+    *,
+    db_path: Path,
+    contract_path: Path,
+    query_log_root: Path,
+    max_rows: int | None = None,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    statement_id_after = ""
+
+    while True:
+        result = execute_contract_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_id="statement_corpus_v3_all",
+            params={"statement_id_after": statement_id_after},
+            row_limit=FULL_CORPUS_PAGE_LIMIT,
+            query_log_root=query_log_root,
+        )
+        batch = [_materialize_common_row(row, set()) for row in result["rows"]]
+        if not batch:
+            break
+
+        rows.extend(batch)
+        if max_rows is not None and len(rows) >= int(max_rows):
+            return rows[: int(max_rows)]
+
+        if len(batch) < FULL_CORPUS_PAGE_LIMIT:
+            break
+        statement_id_after = str(batch[-1]["statement_id"])
+
+    return rows
+
+
+def _load_table1_row_requirements(
+    *,
+    db_path: Path,
+    contract_path: Path,
+    query_log_root: Path,
+) -> list[dict[str, Any]]:
+    result = execute_contract_query(
+        db_path=db_path,
+        contract_path=contract_path,
+        query_id="table1_row_requirements_v1",
+        params={"row_marker": ""},
+        row_limit=20,
+        query_log_root=query_log_root,
+    )
+
+    profiles: list[dict[str, Any]] = []
+    for row in result["rows"]:
+        row_marker = str(row.get("row_marker", "")).strip().lower()
+        requirement_text = str(row.get("requirement_text", "")).strip()
+        if not row_marker:
+            continue
+
+        tokens = _tokenize(requirement_text)
+        if not tokens:
+            tokens = _tokenize_raw(requirement_text)
+        profiles.append(
+            {
+                "row_marker": row_marker,
+                "requirement_text": requirement_text,
+                "tokens": tokens,
+            }
+        )
+
+    profiles.sort(key=lambda value: str(value["row_marker"]))
+    return profiles
+
+
+def _derive_row_marker_scores(
+    statement_text: str,
+    row_profiles: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    statement_tokens = _tokenize(statement_text)
+    if not statement_tokens:
+        statement_tokens = _tokenize_raw(statement_text)
+    if not statement_tokens or not row_profiles:
+        return []
+
+    matches: list[dict[str, Any]] = []
+    for profile in row_profiles:
+        row_marker = str(profile.get("row_marker", "")).strip().lower()
+        row_tokens = set(profile.get("tokens", set()))
+        if not row_marker or not row_tokens:
+            continue
+
+        overlap = statement_tokens.intersection(row_tokens)
+        overlap_count = len(overlap)
+        if overlap_count <= 0:
+            continue
+
+        score = float(overlap_count) / math.sqrt(float(len(row_tokens)))
+        matches.append(
+            {
+                "row_marker": row_marker,
+                "score": float(score),
+                "overlap_count": int(overlap_count),
+            }
+        )
+
+    if not matches:
+        return []
+
+    matches.sort(
+        key=lambda row: (
+            -float(row["score"]),
+            -int(row["overlap_count"]),
+            str(row["row_marker"]),
+        )
+    )
+
+    top_score = float(matches[0]["score"])
+    threshold = max(0.20, top_score * 0.72)
+    selected = [row for row in matches if float(row["score"]) >= threshold][:3]
+    for row in selected:
+        row["score"] = round(float(row["score"]), 6)
+    return selected
+
+
+def _annotate_rows_with_row_markers(
+    rows: list[dict[str, Any]],
+    row_profiles: list[dict[str, Any]],
+) -> None:
+    for row in rows:
+        statement_text = str(row.get("statement_text", ""))
+        derived = _derive_row_marker_scores(statement_text, row_profiles)
+        row["row_marker_scores"] = derived
+        row["row_markers"] = [str(item["row_marker"]) for item in derived]
+
+
+def _filter_rows_by_row_marker(rows: list[dict[str, Any]], row_marker: str) -> list[dict[str, Any]]:
+    scoped = str(row_marker).strip().lower()
+    if not scoped:
+        return rows
+    return [
+        row
+        for row in rows
+        if scoped in {str(marker).strip().lower() for marker in row.get("row_markers", [])}
+    ]
+
+
+def _load_embedding_cache(
+    *,
+    db_path: Path,
+    model_id: str,
+    corpus_rows: list[dict[str, Any]],
+) -> dict[str, list[float]]:
+    if not corpus_rows:
+        return {}
+
+    statement_ids = [str(row["statement_id"]) for row in corpus_rows]
+    expected_hash_by_id = {
+        str(row["statement_id"]): str(row.get("text_sha256", "")) for row in corpus_rows
+    }
+
+    embedding_by_id: dict[str, list[float]] = {}
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    try:
+        connection.row_factory = sqlite3.Row
+        chunk_size = 800
+        for offset in range(0, len(statement_ids), chunk_size):
+            chunk = statement_ids[offset : offset + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            sql = (
+                "SELECT statement_id, text_sha256, vector_json "
+                "FROM statement_embeddings "
+                "WHERE model_id = ? AND statement_id IN ("
+                + placeholders
+                + ")"
+            )
+            rows = connection.execute(sql, [model_id, *chunk]).fetchall()
+            for row in rows:
+                statement_id = str(row["statement_id"])
+                if str(row["text_sha256"]) != expected_hash_by_id.get(statement_id, ""):
+                    continue
+                vector_payload = json.loads(str(row["vector_json"]))
+                if isinstance(vector_payload, list):
+                    embedding_by_id[statement_id] = [float(value) for value in vector_payload]
+    finally:
+        connection.close()
+
+    return embedding_by_id
+
+
+def _persist_embedding_cache(
+    *,
+    db_path: Path,
+    model_id: str,
+    rows: list[dict[str, Any]],
+) -> None:
+    if not rows:
+        return
+
+    _ensure_embedding_cache_table(db_path)
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA busy_timeout = 1500")
+        connection.executemany(
+            """
+            INSERT INTO statement_embeddings(
+                statement_id,
+                model_id,
+                text_sha256,
+                vector_json,
+                vector_norm,
+                embedded_at,
+                source_fetched_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(statement_id, model_id)
+            DO UPDATE SET
+                text_sha256 = excluded.text_sha256,
+                vector_json = excluded.vector_json,
+                vector_norm = excluded.vector_norm,
+                embedded_at = excluded.embedded_at,
+                source_fetched_at = excluded.source_fetched_at
+            """,
+            [
+                (
+                    str(row["statement_id"]),
+                    model_id,
+                    str(row["text_sha256"]),
+                    json.dumps(row["embedding"], sort_keys=False),
+                    float(_l2_norm([float(value) for value in row["embedding"]])),
+                    _utc_now(),
+                    str(row.get("source_fetched_at", "")),
+                )
+                for row in rows
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _semantic_candidates(
+    *,
+    db_path: Path,
+    config: SemanticBackendConfig,
+    retries: int,
+    query_text: str,
+    corpus_rows: list[dict[str, Any]],
+    top_k: int,
+    candidate_limit: int,
+    persist_cache: bool,
+    allow_online_corpus_embedding: bool,
+    retry_events: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    if not corpus_rows:
+        return []
+
+    query_embedding = _with_semantic_retries(
+        "query embedding",
+        retries,
+        lambda: embed_texts(config, [query_text]),
+        telemetry=retry_events,
+    )[0]
+
+    embeddings_by_statement_id = _load_embedding_cache(
+        db_path=db_path,
+        model_id=config.embed_model_id,
+        corpus_rows=corpus_rows,
+    )
+
+    missing_rows = [
+        row for row in corpus_rows if str(row["statement_id"]) not in embeddings_by_statement_id
+    ]
+    if missing_rows:
+        if not allow_online_corpus_embedding:
+            sample_ids = [str(row["statement_id"]) for row in missing_rows[:5]]
+            raise ModeExecutionError(
+                code="SEMANTIC_INDEX_INCOMPLETE",
+                message=(
+                    f"Semantic index incomplete for model {config.embed_model_id}: "
+                    f"missing_embeddings={len(missing_rows)} sample_statement_ids={sample_ids}. "
+                    "Run sqlite_materialize_rust_reference_embeddings.py first "
+                    "or set --allow-online-corpus-embedding for local experimentation."
+                ),
+            )
+
+        batch_size = 32
+        persisted_payloads: list[dict[str, Any]] = []
+        for offset in range(0, len(missing_rows), batch_size):
+            batch_rows = missing_rows[offset : offset + batch_size]
+            batch_texts = [str(row["statement_text"]) for row in batch_rows]
+            vectors = _with_semantic_retries(
+                "statement embedding",
+                retries,
+                lambda batch_texts=batch_texts: embed_texts(config, batch_texts),
+                telemetry=retry_events,
+            )
+            if len(vectors) != len(batch_rows):
+                raise ModeExecutionError(
+                    code="SEMANTIC_BACKEND_UNAVAILABLE",
+                    message=(
+                        "Semantic embedding cardinality mismatch "
+                        f"({len(vectors)} != {len(batch_rows)})"
+                    ),
+                )
+
+            for row, vector in zip(batch_rows, vectors, strict=False):
+                statement_id = str(row["statement_id"])
+                embeddings_by_statement_id[statement_id] = [float(value) for value in vector]
+                persisted_payloads.append(
+                    {
+                        "statement_id": statement_id,
+                        "text_sha256": str(row.get("text_sha256", "")),
+                        "embedding": [float(value) for value in vector],
+                        "source_fetched_at": str(row.get("source_fetched_at", "")),
+                    }
+                )
+
+        if persist_cache:
+            _persist_embedding_cache(
+                db_path=db_path,
+                model_id=config.embed_model_id,
+                rows=persisted_payloads,
+            )
+
+    scored_rows: list[dict[str, Any]] = []
+    semantic_scores: list[float] = []
+    for row in corpus_rows:
+        statement_id = str(row["statement_id"])
+        if statement_id not in embeddings_by_statement_id:
+            continue
+        vector = embeddings_by_statement_id[statement_id]
+        semantic_score = _cosine_similarity(query_embedding, vector)
+        enriched = dict(row)
+        enriched["semantic_score_raw"] = semantic_score
+        scored_rows.append(enriched)
+        semantic_scores.append(semantic_score)
+
+    if not scored_rows:
+        return []
+
+    normalized_semantic = _min_max_normalize(semantic_scores)
+    for row, norm_score in zip(scored_rows, normalized_semantic, strict=False):
+        row["semantic_score"] = float(norm_score)
+
+    scored_rows.sort(
+        key=lambda row: (
+            -float(row["semantic_score"]),
+            str(row["statement_id"]),
+        )
+    )
+
+    semantic_pool_limit = max(top_k, min(int(candidate_limit), len(scored_rows)))
+    semantic_pool = scored_rows[:semantic_pool_limit]
+
+    rerank_pool_limit = min(len(semantic_pool), max(top_k * 8, 64))
+    rerank_pool = semantic_pool[:rerank_pool_limit]
+    rerank_texts_input = [str(row["statement_text"]) for row in rerank_pool]
+    reranker_scores_raw = _with_semantic_retries(
+        "reranker scoring",
+        retries,
+        lambda: rerank_texts(
+            config=config,
+            query_text=query_text,
+            documents=rerank_texts_input,
+        ),
+        telemetry=retry_events,
+    )
+    reranker_scores = _min_max_normalize([float(value) for value in reranker_scores_raw])
+
+    reranker_by_id: dict[str, float] = {}
+    for row, rerank_score in zip(rerank_pool, reranker_scores, strict=False):
+        reranker_by_id[str(row["statement_id"])] = float(rerank_score)
+
+    for row in scored_rows:
+        reranker_score = reranker_by_id.get(str(row["statement_id"]), 0.0)
+        row["reranker_score"] = reranker_score
+        row["relevance_score"] = (0.45 * float(row["semantic_score"])) + (0.55 * reranker_score)
+
+    scored_rows.sort(
+        key=lambda row: (
+            -float(row["relevance_score"]),
+            -float(row["reranker_score"]),
+            str(row["statement_id"]),
+        )
+    )
+    return scored_rows
+
+
+def _build_row_projection(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    row_scores: dict[str, float] = {}
+    row_evidence_count: dict[str, int] = {}
+    row_evidence_trace: dict[str, list[dict[str, Any]]] = {}
+
+    for rank, row in enumerate(rows, start=1):
+        relevance = float(
+            row.get(
+                "relevance_score",
+                row.get("lexical_score", 0.0),
+            )
+        )
+        rank_weight = 1.0 / float(rank)
+        marker_scores = row.get("row_marker_scores", [])
+        if not isinstance(marker_scores, list):
+            marker_scores = []
+
+        for marker_score in marker_scores:
+            if not isinstance(marker_score, dict):
+                continue
+            key = str(marker_score.get("row_marker", "")).strip().lower()
+            if not key:
+                continue
+            profile_score = float(marker_score.get("score", 0.0))
+            if profile_score <= 0.0:
+                continue
+            contribution = relevance * rank_weight * profile_score
+            row_scores[key] = row_scores.get(key, 0.0) + contribution
+            row_evidence_count[key] = row_evidence_count.get(key, 0) + 1
+            row_evidence_trace.setdefault(key, []).append(
+                {
+                    "statement_id": str(row.get("statement_id", "")),
+                    "source_anchor": str(row.get("source_anchor", "")),
+                    "contribution": float(contribution),
+                }
+            )
+
+    projection: list[dict[str, Any]] = []
+    for marker, score in row_scores.items():
+        trace = row_evidence_trace.get(marker, [])
+        trace.sort(
+            key=lambda row: (
+                -float(row.get("contribution", 0.0)),
+                str(row.get("statement_id", "")),
+            )
+        )
+        rounded_trace = [
+            {
+                "statement_id": str(item.get("statement_id", "")),
+                "source_anchor": str(item.get("source_anchor", "")),
+                "contribution": round(float(item.get("contribution", 0.0)), 6),
+            }
+            for item in trace[:10]
+        ]
+
+        top = rounded_trace[0] if rounded_trace else {}
+        projection.append(
+            {
+                "row_marker": marker,
+                "score": round(score, 6),
+                "evidence_hits": int(row_evidence_count.get(marker, 0)),
+                "top_statement_id": str(top.get("statement_id", "")),
+                "top_source_anchor": str(top.get("source_anchor", "")),
+                "evidence_trace": rounded_trace,
+            }
+        )
+
+    projection.sort(key=lambda row: (-float(row["score"]), str(row["row_marker"])))
+    return projection
+
+
+def execute_retrieval_query(
+    *,
+    mode: str,
+    db_path: Path,
+    contract_path: Path,
+    query_log_root: Path,
+    query_text: str,
+    row_marker: str,
+    top_k: int,
+    candidate_limit: int,
+    allow_degraded: bool,
+    semantic_config: SemanticBackendConfig,
+    semantic_retries: int,
+    persist_semantic_cache: bool,
+    allow_online_corpus_embedding: bool = False,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    semantic_retry_events: list[dict[str, Any]] = []
+    row_marker = row_marker.strip().lower()
+    top_k = max(1, int(top_k))
+    candidate_limit = max(top_k, int(candidate_limit))
+
+    corpus_rows = _load_statement_corpus(
+        db_path=db_path,
+        contract_path=contract_path,
+        query_log_root=query_log_root,
+    )
+    row_profiles = _load_table1_row_requirements(
+        db_path=db_path,
+        contract_path=contract_path,
+        query_log_root=query_log_root,
+    )
+
+    def _run_lexical() -> list[dict[str, Any]]:
+        return _run_lexical_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_log_root=query_log_root,
+            corpus_rows=corpus_rows,
+            row_profiles=row_profiles,
+            query_text=query_text,
+            row_marker=row_marker,
+            row_limit=candidate_limit,
+        )
+
+    if mode == "lexical":
+        lexical_rows = _run_lexical()
+        rows = lexical_rows[:top_k]
+        row_projection = _build_row_projection(rows)
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        return {
+            "requested_mode": mode,
+            "executed_mode": mode,
+            "degraded": False,
+            "semantic_retry_events": semantic_retry_events,
+            "query_text": query_text,
+            "row_marker": row_marker,
+            "row_count": len(rows),
+            "duration_ms": round(duration_ms, 3),
+            "row_projection": row_projection,
+            "rows": rows,
+        }
+
+    preflight = check_semantic_backend(semantic_config)
+    if not bool(preflight.get("ok", False)):
+        error_code = "SEMANTIC_BACKEND_UNAVAILABLE"
+        if mode == "hybrid":
+            error_code = "HYBRID_BACKEND_UNAVAILABLE"
+
+        if not allow_degraded:
+            detail = preflight.get("checks", [])
+            raise ModeExecutionError(
+                code=error_code,
+                message=f"Semantic backend preflight failed: {detail}",
+            )
+
+        lexical_rows = _run_lexical()
+        rows = lexical_rows[:top_k]
+        row_projection = _build_row_projection(rows)
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        return {
+            "requested_mode": mode,
+            "executed_mode": "lexical",
+            "degraded": True,
+            "degraded_reason": error_code,
+            "semantic_retry_events": semantic_retry_events,
+            "preflight": preflight,
+            "query_text": query_text,
+            "row_marker": row_marker,
+            "row_count": len(rows),
+            "duration_ms": round(duration_ms, 3),
+            "row_projection": row_projection,
+            "rows": rows,
+        }
+
+    _ensure_embedding_cache_table(db_path)
+
+    try:
+        semantic_rows = _semantic_candidates(
+            db_path=db_path,
+            config=semantic_config,
+            retries=semantic_retries,
+            query_text=query_text,
+            corpus_rows=corpus_rows,
+            top_k=top_k,
+            candidate_limit=candidate_limit,
+            persist_cache=persist_semantic_cache,
+            allow_online_corpus_embedding=allow_online_corpus_embedding,
+            retry_events=semantic_retry_events,
+        )
+    except ModeExecutionError as exc:
+        mapped_code = str(exc.code)
+        if mode == "hybrid":
+            if mapped_code == "SEMANTIC_BACKEND_UNAVAILABLE":
+                mapped_code = "HYBRID_BACKEND_UNAVAILABLE"
+            elif mapped_code == "SEMANTIC_INDEX_INCOMPLETE":
+                mapped_code = "HYBRID_INDEX_INCOMPLETE"
+
+        if not allow_degraded:
+            raise ModeExecutionError(code=mapped_code, message=str(exc)) from exc
+
+        lexical_rows = _run_lexical()
+        rows = lexical_rows[:top_k]
+        row_projection = _build_row_projection(rows)
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        return {
+            "requested_mode": mode,
+            "executed_mode": "lexical",
+            "degraded": True,
+            "degraded_reason": mapped_code,
+            "semantic_retry_events": semantic_retry_events,
+            "preflight": preflight,
+            "query_text": query_text,
+            "row_marker": row_marker,
+            "row_count": len(rows),
+            "duration_ms": round(duration_ms, 3),
+            "row_projection": row_projection,
+            "rows": rows,
+        }
+
+    _annotate_rows_with_row_markers(semantic_rows, row_profiles)
+    semantic_rows = _filter_rows_by_row_marker(semantic_rows, row_marker)
+
+    if mode == "semantic":
+        rows = semantic_rows[:top_k]
+        row_projection = _build_row_projection(rows)
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        return {
+            "requested_mode": mode,
+            "executed_mode": mode,
+            "degraded": False,
+            "semantic_retry_events": semantic_retry_events,
+            "preflight": preflight,
+            "query_text": query_text,
+            "row_marker": row_marker,
+            "row_count": len(rows),
+            "duration_ms": round(duration_ms, 3),
+            "row_projection": row_projection,
+            "rows": rows,
+        }
+
+    lexical_rows = _run_lexical()
+    lexical_ids = [str(row["statement_id"]) for row in lexical_rows]
+    lexical_values = [float(row.get("lexical_score", 0.0)) for row in lexical_rows]
+    lexical_norm = _min_max_normalize(lexical_values)
+    lexical_score_by_id = dict(zip(lexical_ids, lexical_norm, strict=False))
+
+    merged: dict[str, dict[str, Any]] = {}
+    for row in semantic_rows:
+        statement_id = str(row["statement_id"])
+        merged[statement_id] = dict(row)
+        merged[statement_id]["lexical_score"] = lexical_score_by_id.get(statement_id, 0.0)
+
+    for row in lexical_rows:
+        statement_id = str(row["statement_id"])
+        if statement_id not in merged:
+            merged[statement_id] = dict(row)
+            merged[statement_id]["semantic_score"] = 0.0
+            merged[statement_id]["reranker_score"] = 0.0
+        merged[statement_id]["lexical_score"] = lexical_score_by_id.get(statement_id, 0.0)
+
+    hybrid_rows: list[dict[str, Any]] = []
+    for row in merged.values():
+        lexical_score = float(row.get("lexical_score", 0.0))
+        semantic_score = float(row.get("semantic_score", 0.0))
+        reranker_score = float(row.get("reranker_score", 0.0))
+        row["relevance_score"] = (
+            (0.30 * lexical_score) + (0.25 * semantic_score) + (0.45 * reranker_score)
+        )
+        hybrid_rows.append(row)
+
+    hybrid_rows.sort(
+        key=lambda row: (
+            -float(row["relevance_score"]),
+            -float(row.get("reranker_score", 0.0)),
+            str(row["statement_id"]),
+        )
+    )
+    rows = hybrid_rows[:top_k]
+    row_projection = _build_row_projection(rows)
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    return {
+        "requested_mode": mode,
+        "executed_mode": mode,
+        "degraded": False,
+        "semantic_retry_events": semantic_retry_events,
+        "preflight": preflight,
+        "query_text": query_text,
+        "row_marker": row_marker,
+        "row_count": len(rows),
+        "duration_ms": round(duration_ms, 3),
+        "row_projection": row_projection,
+        "rows": rows,
+    }
+
+
+def _without_score_breakdown(result: dict[str, Any]) -> dict[str, Any]:
+    projected = dict(result)
+    projected.pop("row_projection", None)
+
+    rows = []
+    for row in result.get("rows", []):
+        if not isinstance(row, dict):
+            continue
+        rows.append({key: value for key, value in row.items() if key not in SCORE_FIELDS})
+    projected["rows"] = rows
+    return projected
+
+
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -62,17 +1298,85 @@ def main() -> int:
     contract_path = (root / args.contract_path).resolve()
     query_log_root = (root / args.query_log_root).resolve()
 
+    query_text = str(getattr(args, "query_text", "")).strip()
+    allow_degraded = bool(getattr(args, "allow_degraded", False))
+    if not allow_degraded:
+        allow_degraded = os.environ.get("RUST_REF_ALLOW_DEGRADED", "0") == "1"
+
+    semantic_config: SemanticBackendConfig | None = None
+
     try:
-        params = _parse_params(args.params_json)
-        result = execute_contract_query(
-            db_path=db_path,
-            contract_path=contract_path,
-            query_id=args.query_id,
-            params=params,
-            row_limit=args.row_limit,
-            query_log_root=query_log_root,
+        if args.mode == "contract":
+            if not args.query_id:
+                raise GuardrailError("--query-id is required when --mode contract")
+            params = _parse_params(args.params_json)
+            result = execute_contract_query(
+                db_path=db_path,
+                contract_path=contract_path,
+                query_id=args.query_id,
+                params=params,
+                row_limit=args.row_limit,
+                query_log_root=query_log_root,
+            )
+        else:
+            if not query_text:
+                raise GuardrailError("--query-text is required for lexical/semantic/hybrid modes")
+
+            semantic_config = _build_semantic_config(args)
+            result = execute_retrieval_query(
+                mode=args.mode,
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                query_text=query_text,
+                row_marker=str(args.row_marker),
+                top_k=int(args.top_k),
+                candidate_limit=int(args.candidate_limit),
+                allow_degraded=allow_degraded,
+                semantic_config=semantic_config,
+                semantic_retries=int(args.semantic_retries),
+                persist_semantic_cache=bool(args.persist_semantic_cache),
+                allow_online_corpus_embedding=bool(args.allow_online_corpus_embedding),
+            )
+            if not bool(args.include_score_breakdown):
+                result = _without_score_breakdown(result)
+
+        review_artifact_path = resolve_review_artifact_path(
+            root=root,
+            mode=str(args.mode),
+            query_text=query_text,
+            prompt_id=str(args.prompt_id),
+            save_response_path=str(args.save_response_path),
+            save_response_dir=str(args.save_response_dir),
         )
-    except (json.JSONDecodeError, GuardrailError, OSError) as exc:
+        if review_artifact_path is not None:
+            review_payload = build_review_artifact_payload(
+                mode=str(args.mode),
+                query_text=query_text,
+                row_marker=str(args.row_marker),
+                prompt_id=str(args.prompt_id),
+                top_k=int(args.top_k),
+                candidate_limit=int(args.candidate_limit),
+                include_score_breakdown=bool(args.include_score_breakdown),
+                allow_degraded=allow_degraded,
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                semantic_config=semantic_config,
+                semantic_retries=int(args.semantic_retries),
+                persist_semantic_cache=bool(args.persist_semantic_cache),
+                allow_online_corpus_embedding=bool(args.allow_online_corpus_embedding),
+                response=result,
+            )
+            persist_review_artifact(review_artifact_path, review_payload)
+            print(
+                f"[query-rust-reference][artifact] wrote {review_artifact_path}",
+                file=sys.stderr,
+            )
+    except ModeExecutionError as exc:
+        print(f"[query-rust-reference][error][{exc.code}] {exc}")
+        return EXIT_RUNTIME_FAIL
+    except (json.JSONDecodeError, GuardrailError, OSError, sqlite3.Error) as exc:
         print(f"[query-rust-reference][error] {exc}")
         return EXIT_RUNTIME_FAIL
 

@@ -2,13 +2,23 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from pathlib import Path
 
 from sqlite_build_rust_reference import (
+    DEFAULT_EMBEDDING_DIM,
+    DEFAULT_EMBEDDING_MODEL_ID,
+    DEFAULT_EMBEDDING_MODEL_LICENSE,
+    DEFAULT_EMBEDDING_MODEL_REVISION,
     DEFAULT_EXTRACTOR_DB,
     DEFAULT_REFERENCE_CACHE_DIR,
     DEFAULT_REFERENCE_REPO_URL,
+    DEFAULT_RERANKER_MODEL_ID,
+    DEFAULT_RERANKER_MODEL_LICENSE,
+    DEFAULT_RERANKER_MODEL_REVISION,
+    DEFAULT_RETRIEVAL_MODE,
+    DEFAULT_SEMANTIC_PROFILE_VERSION,
     DEFAULT_TABLE_NODE_ID,
     build_rust_reference_db,
 )
@@ -17,6 +27,15 @@ from sqlite_query_guardrails import GuardrailError, execute_contract_query
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
 EXPECTED_MARKERS = {f"1{chr(ord('a') + idx)}" for idx in range(9)}
+FULL_CORPUS_PAGE_LIMIT = 5000
+
+
+def _count_statements(db_path: Path) -> int:
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    try:
+        return int(connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0])
+    finally:
+        connection.close()
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,6 +118,53 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Fail instead of auto-building when db is absent",
     )
+    parser.add_argument(
+        "--retrieval-mode",
+        choices=("hybrid", "lexical"),
+        default=DEFAULT_RETRIEVAL_MODE,
+        help="Row-mechanism ranking mode for auto-build",
+    )
+    parser.add_argument(
+        "--semantic-profile-version",
+        default=DEFAULT_SEMANTIC_PROFILE_VERSION,
+        help="Semantic score profile/version label for auto-build",
+    )
+    parser.add_argument(
+        "--embedding-model-id",
+        default=DEFAULT_EMBEDDING_MODEL_ID,
+        help="Embedding model identifier metadata for auto-build",
+    )
+    parser.add_argument(
+        "--embedding-model-revision",
+        default=DEFAULT_EMBEDDING_MODEL_REVISION,
+        help="Embedding model revision metadata for auto-build",
+    )
+    parser.add_argument(
+        "--embedding-model-license",
+        default=DEFAULT_EMBEDDING_MODEL_LICENSE,
+        help="Embedding model license metadata for auto-build",
+    )
+    parser.add_argument(
+        "--embedding-dim",
+        type=int,
+        default=DEFAULT_EMBEDDING_DIM,
+        help="Embedding vector dimension metadata for auto-build",
+    )
+    parser.add_argument(
+        "--reranker-model-id",
+        default=DEFAULT_RERANKER_MODEL_ID,
+        help="Reranker model identifier metadata for auto-build",
+    )
+    parser.add_argument(
+        "--reranker-model-revision",
+        default=DEFAULT_RERANKER_MODEL_REVISION,
+        help="Reranker model revision metadata for auto-build",
+    )
+    parser.add_argument(
+        "--reranker-model-license",
+        default=DEFAULT_RERANKER_MODEL_LICENSE,
+        help="Reranker model license metadata for auto-build",
+    )
     return parser.parse_args()
 
 
@@ -118,6 +184,15 @@ def run_smoke(
     min_sections: int,
     min_statements: int,
     min_mechanisms: int,
+    retrieval_mode: str,
+    semantic_profile_version: str,
+    embedding_model_id: str,
+    embedding_model_revision: str,
+    embedding_model_license: str,
+    embedding_dim: int,
+    reranker_model_id: str,
+    reranker_model_revision: str,
+    reranker_model_license: str,
 ) -> tuple[bool, str]:
     if not db_path.exists():
         if not build_if_missing:
@@ -136,6 +211,15 @@ def run_smoke(
             min_sections=min_sections,
             min_statements=min_statements,
             min_mechanisms=min_mechanisms,
+            retrieval_mode=retrieval_mode,
+            semantic_profile_version=semantic_profile_version,
+            embedding_model_id=embedding_model_id,
+            embedding_model_revision=embedding_model_revision,
+            embedding_model_license=embedding_model_license,
+            embedding_dim=embedding_dim,
+            reranker_model_id=reranker_model_id,
+            reranker_model_revision=reranker_model_revision,
+            reranker_model_license=reranker_model_license,
         )
 
     snapshot_query = execute_contract_query(
@@ -179,6 +263,16 @@ def run_smoke(
         return False, "source_documents has missing source_fetched_at values"
     if int(doc_timestamp_row.get("missing_commit_sha", 0)) != 0:
         return False, "source_documents has missing source_commit_sha values"
+
+    semantic_models = execute_contract_query(
+        db_path=db_path,
+        contract_path=contract_path,
+        query_id="semantic_model_metadata",
+        params={},
+        query_log_root=query_log_root,
+    )
+    if semantic_models["row_count"] < 2:
+        return False, "semantic_model_metadata must include embedder and reranker rows"
 
     verdicts = execute_contract_query(
         db_path=db_path,
@@ -225,6 +319,59 @@ def run_smoke(
             if not str(mechanism_row.get("source_fetched_at", "")).strip():
                 return False, f"Missing mechanism source_fetched_at for {row['row_node_id']}"
 
+        score_breakdown = execute_contract_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_id="row_mechanism_score_breakdown",
+            params={"row_node_id": row["row_node_id"]},
+            query_log_root=query_log_root,
+        )
+        if score_breakdown["row_count"] < 1:
+            return False, f"Missing row_mechanism_score_breakdown for {row['row_node_id']}"
+
+    lexical_v2 = execute_contract_query(
+        db_path=db_path,
+        contract_path=contract_path,
+        query_id="lexical_statement_search_v2",
+        params={
+            "fts_query": "defensive OR error OR handling",
+        },
+        query_log_root=query_log_root,
+    )
+    if lexical_v2["row_count"] < 1:
+        return False, "lexical_statement_search_v2 returned no rows"
+
+    statement_count = _count_statements(db_path)
+    corpus_count = 0
+    statement_id_after = ""
+    while True:
+        corpus_page = execute_contract_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_id="statement_corpus_v3_all",
+            params={"statement_id_after": statement_id_after},
+            row_limit=FULL_CORPUS_PAGE_LIMIT,
+            query_log_root=query_log_root,
+        )
+        page_rows = list(corpus_page["rows"])
+        if not page_rows:
+            break
+
+        corpus_count += len(page_rows)
+        next_after = str(page_rows[-1].get("statement_id", ""))
+        if not next_after or next_after == statement_id_after:
+            return False, "statement_corpus_v3_all pagination did not advance"
+        statement_id_after = next_after
+
+        if len(page_rows) < FULL_CORPUS_PAGE_LIMIT:
+            break
+
+    if corpus_count != statement_count:
+        return False, (
+            "statement_corpus_v3_all coverage mismatch: "
+            f"{corpus_count} != {statement_count}"
+        )
+
     return True, "rank-1 rust_reference smoke checks passed"
 
 
@@ -262,6 +409,15 @@ def main() -> int:
             min_sections=args.min_sections,
             min_statements=args.min_statements,
             min_mechanisms=args.min_mechanisms,
+            retrieval_mode=args.retrieval_mode,
+            semantic_profile_version=args.semantic_profile_version,
+            embedding_model_id=args.embedding_model_id,
+            embedding_model_revision=args.embedding_model_revision,
+            embedding_model_license=args.embedding_model_license,
+            embedding_dim=args.embedding_dim,
+            reranker_model_id=args.reranker_model_id,
+            reranker_model_revision=args.reranker_model_revision,
+            reranker_model_license=args.reranker_model_license,
         )
     except (GuardrailError, OSError, RuntimeError) as exc:
         print(f"[smoke-rust-reference][error] {exc}")

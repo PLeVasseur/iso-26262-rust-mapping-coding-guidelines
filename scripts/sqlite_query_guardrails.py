@@ -146,9 +146,14 @@ def execute_contract_query(
         raise GuardrailError("Row limit exceeds guardrail maximum (5000)")
 
     sanitized_sql = spec.sql.strip().rstrip(";")
-    wrapped_sql = f"SELECT * FROM ({sanitized_sql}) AS _q LIMIT :__row_limit"
+    lowered = " ".join(sanitized_sql.lower().split())
+    if " limit " in f" {lowered} ":
+        wrapped_sql = sanitized_sql
+    else:
+        wrapped_sql = f"{sanitized_sql} LIMIT :__row_limit"
     bound_params = dict(params)
-    bound_params["__row_limit"] = int(effective_limit)
+    if ":__row_limit" in wrapped_sql:
+        bound_params["__row_limit"] = int(effective_limit)
 
     started = perf_counter()
     db_uri = f"file:{db_path}?mode=ro"
