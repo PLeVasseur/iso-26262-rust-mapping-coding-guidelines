@@ -119,6 +119,29 @@ class StatementRecord:
 
 
 @dataclass(frozen=True)
+class ChunkRecord:
+    chunk_uid: str
+    section_id: str
+    raw_text: str
+    clean_text: str
+    char_len: int
+    token_len: int
+    source_sha256: str
+    source_fetched_at: str
+    source_commit_sha: str
+    order_index: int
+
+
+@dataclass(frozen=True)
+class ChunkSpanRecord:
+    chunk_uid: str
+    source_anchor: str
+    start_offset: int
+    end_offset: int
+    span_order: int
+
+
+@dataclass(frozen=True)
 class MechanismDefinition:
     mechanism_id: str
     canonical_symbol: str
@@ -668,6 +691,84 @@ def _anchor_url_for_section(section: SectionRecord) -> str:
     return f"{DEFAULT_REFERENCE_SOURCE_URL}{html_path.as_posix()}#{section.anchor}"
 
 
+def _clean_chunk_text(raw_text: str) -> str:
+    value = CODE_FENCE_RE.sub(" ", str(raw_text))
+    value = HTML_COMMENT_RE.sub(" ", value)
+    return " ".join(value.split())
+
+
+def _build_statement_mirror_chunks(
+    *,
+    sections: list[SectionRecord],
+    statements: list[StatementRecord],
+) -> tuple[list[ChunkRecord], list[ChunkSpanRecord]]:
+    section_by_id = {section.section_id: section for section in sections}
+    chunks: list[ChunkRecord] = []
+    spans: list[ChunkSpanRecord] = []
+
+    search_cursor_by_section: dict[str, int] = {}
+    for statement in sorted(statements, key=lambda row: (row.section_id, row.sentence_index)):
+        section = section_by_id.get(statement.section_id)
+        if section is None:
+            continue
+
+        raw_text = str(statement.text).strip()
+        clean_text = _clean_chunk_text(raw_text)
+        if not clean_text:
+            continue
+
+        source_anchor = _anchor_url_for_section(section)
+        chunk_fingerprint = _sha256_text(
+            "|".join(
+                [
+                    str(section.document_id),
+                    str(source_anchor),
+                    str(statement.sentence_index),
+                    clean_text.lower(),
+                ]
+            )
+        )
+        chunk_uid = f"chunk::{chunk_fingerprint}"
+
+        section_text = str(section.text)
+        section_text_lower = section_text.lower()
+        statement_lower = raw_text.lower()
+        start_hint = int(search_cursor_by_section.get(section.section_id, 0))
+        start_offset = section_text_lower.find(statement_lower, start_hint)
+        if start_offset < 0 and start_hint > 0:
+            start_offset = section_text_lower.find(statement_lower)
+        if start_offset < 0:
+            start_offset = max(0, min(start_hint, len(section_text)))
+        end_offset = min(len(section_text), start_offset + len(raw_text))
+        search_cursor_by_section[section.section_id] = max(start_offset, end_offset)
+
+        chunks.append(
+            ChunkRecord(
+                chunk_uid=chunk_uid,
+                section_id=statement.section_id,
+                raw_text=raw_text,
+                clean_text=clean_text,
+                char_len=len(raw_text),
+                token_len=len(_semantic_tokens(clean_text)),
+                source_sha256=statement.source_sha256,
+                source_fetched_at=statement.source_fetched_at,
+                source_commit_sha=statement.source_commit_sha,
+                order_index=int(statement.sentence_index),
+            )
+        )
+        spans.append(
+            ChunkSpanRecord(
+                chunk_uid=chunk_uid,
+                source_anchor=source_anchor,
+                start_offset=int(start_offset),
+                end_offset=int(end_offset),
+                span_order=1,
+            )
+        )
+
+    return chunks, spans
+
+
 def _extract_mechanisms_and_evidence(
     sections: list[SectionRecord],
     statements: list[StatementRecord],
@@ -1190,6 +1291,15 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             sha256 TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS kb_metadata (
+            kb_id TEXT PRIMARY KEY,
+            source_name TEXT NOT NULL,
+            source_revision TEXT NOT NULL,
+            extractor_version TEXT NOT NULL,
+            built_at TEXT NOT NULL,
+            notes TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS chapters (
             chapter_id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -1208,6 +1318,18 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             order_index INTEGER NOT NULL,
             UNIQUE(snapshot_id, rel_path),
             FOREIGN KEY(snapshot_id) REFERENCES snapshots(snapshot_id),
+            FOREIGN KEY(chapter_id) REFERENCES chapters(chapter_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS docs (
+            doc_uid TEXT PRIMARY KEY,
+            source_path TEXT NOT NULL,
+            title TEXT NOT NULL,
+            revision TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            source_sha256 TEXT NOT NULL,
+            chapter_id TEXT NOT NULL,
+            order_index INTEGER NOT NULL,
             FOREIGN KEY(chapter_id) REFERENCES chapters(chapter_id)
         );
 
@@ -1241,6 +1363,39 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             source_fetched_at TEXT NOT NULL,
             source_commit_sha TEXT NOT NULL,
             FOREIGN KEY(section_id) REFERENCES sections(section_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS chunks (
+            chunk_uid TEXT PRIMARY KEY,
+            section_id TEXT NOT NULL,
+            raw_text TEXT NOT NULL,
+            clean_text TEXT NOT NULL,
+            char_len INTEGER NOT NULL,
+            token_len INTEGER NOT NULL,
+            source_sha256 TEXT NOT NULL,
+            source_fetched_at TEXT NOT NULL,
+            source_commit_sha TEXT NOT NULL,
+            order_index INTEGER NOT NULL,
+            FOREIGN KEY(section_id) REFERENCES sections(section_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS chunk_spans (
+            chunk_uid TEXT NOT NULL,
+            source_anchor TEXT NOT NULL,
+            start_offset INTEGER NOT NULL,
+            end_offset INTEGER NOT NULL,
+            span_order INTEGER NOT NULL,
+            PRIMARY KEY (chunk_uid, span_order),
+            FOREIGN KEY(chunk_uid) REFERENCES chunks(chunk_uid)
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
+        USING fts5(
+            chunk_uid UNINDEXED,
+            section_id UNINDEXED,
+            section_heading,
+            chunk_text,
+            tokenize='unicode61 remove_diacritics 2'
         );
 
         CREATE VIRTUAL TABLE IF NOT EXISTS statements_fts
@@ -1344,6 +1499,19 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             FOREIGN KEY(statement_id) REFERENCES statements(statement_id)
         );
 
+        CREATE TABLE IF NOT EXISTS chunk_embeddings (
+            chunk_uid TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            embed_version TEXT NOT NULL,
+            text_sha256 TEXT NOT NULL,
+            vector_json TEXT NOT NULL,
+            vector_norm REAL NOT NULL,
+            embedded_at TEXT NOT NULL,
+            source_fetched_at TEXT NOT NULL,
+            PRIMARY KEY(chunk_uid, model_id, embed_version),
+            FOREIGN KEY(chunk_uid) REFERENCES chunks(chunk_uid)
+        );
+
         CREATE TABLE IF NOT EXISTS row_mechanism_scores (
             row_node_id TEXT NOT NULL,
             mechanism_id TEXT NOT NULL,
@@ -1364,9 +1532,13 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_chapters_order ON chapters(order_index);
         CREATE INDEX IF NOT EXISTS idx_documents_chapter
             ON source_documents(chapter_id, order_index);
+        CREATE INDEX IF NOT EXISTS idx_docs_chapter
+            ON docs(chapter_id, order_index);
         CREATE INDEX IF NOT EXISTS idx_sections_document ON sections(document_id, order_index);
         CREATE INDEX IF NOT EXISTS idx_sections_chapter ON sections(chapter_id, order_index);
         CREATE INDEX IF NOT EXISTS idx_statements_section ON statements(section_id, sentence_index);
+        CREATE INDEX IF NOT EXISTS idx_chunks_section ON chunks(section_id, order_index);
+        CREATE INDEX IF NOT EXISTS idx_chunk_spans_anchor ON chunk_spans(source_anchor, chunk_uid);
         CREATE INDEX IF NOT EXISTS idx_mechanism_evidence_mech ON mechanism_evidence(mechanism_id);
         CREATE INDEX IF NOT EXISTS idx_table1_rows_marker ON table1_rows(row_marker);
         CREATE INDEX IF NOT EXISTS idx_row_mechanisms_row ON row_mechanisms(row_node_id);
@@ -1376,10 +1548,12 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             ON semantic_corpus(mechanism_id, source_kind);
         CREATE INDEX IF NOT EXISTS idx_statement_embeddings_model
             ON statement_embeddings(model_id, statement_id);
+        CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model
+            ON chunk_embeddings(model_id, chunk_uid, embed_version);
         CREATE INDEX IF NOT EXISTS idx_row_mechanism_scores_row
             ON row_mechanism_scores(row_node_id, hybrid_score DESC);
 
-        PRAGMA user_version = 5;
+        PRAGMA user_version = 6;
         """
     )
 
@@ -1389,12 +1563,14 @@ def _compute_snapshot_sha256(
     documents: list[SourceDocument],
     sections: list[SectionRecord],
     statements: list[StatementRecord],
+    chunks: list[ChunkRecord],
 ) -> str:
     payload = {
         "commit_sha": commit_sha,
         "document_hashes": sorted((doc.rel_path, doc.source_sha256) for doc in documents),
         "sections": len(sections),
         "statements": len(statements),
+        "chunks": len(chunks),
     }
     return _sha256_text(json.dumps(payload, sort_keys=True))
 
@@ -1409,6 +1585,8 @@ def _insert_payload(
     documents: list[SourceDocument],
     sections: list[SectionRecord],
     statements: list[StatementRecord],
+    chunks: list[ChunkRecord],
+    chunk_spans: list[ChunkSpanRecord],
     mechanisms: list[dict[str, Any]],
     mechanism_evidence: list[dict[str, Any]],
     table_rows: list[dict[str, Any]],
@@ -1426,6 +1604,26 @@ def _insert_payload(
         VALUES(?, ?, ?, ?, ?)
         """,
         (snapshot_id, commit_sha, DEFAULT_REFERENCE_SOURCE_URL, fetched_at, snapshot_sha256),
+    )
+    connection.execute(
+        """
+        INSERT INTO kb_metadata(
+            kb_id,
+            source_name,
+            source_revision,
+            extractor_version,
+            built_at,
+            notes
+        ) VALUES(?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "rust_reference",
+            "rust-reference",
+            commit_sha,
+            "sqlite-build-rust-reference-v6",
+            fetched_at,
+            "chunk-first schema",
+        ),
     )
 
     for chapter in chapters:
@@ -1458,6 +1656,30 @@ def _insert_payload(
                 document.source_sha256,
                 document.source_fetched_at,
                 document.source_commit_sha,
+                document.doc_order,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO docs(
+                doc_uid,
+                source_path,
+                title,
+                revision,
+                fetched_at,
+                source_sha256,
+                chapter_id,
+                order_index
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                document.document_id,
+                document.rel_path,
+                document.title,
+                document.source_commit_sha,
+                document.source_fetched_at,
+                document.source_sha256,
+                document.chapter_id,
                 document.doc_order,
             ),
         )
@@ -1537,6 +1759,72 @@ def _insert_payload(
                 statement.section_id,
                 section_heading_by_id.get(statement.section_id, ""),
                 statement.text,
+            ),
+        )
+
+    for chunk in chunks:
+        connection.execute(
+            """
+            INSERT INTO chunks(
+                chunk_uid,
+                section_id,
+                raw_text,
+                clean_text,
+                char_len,
+                token_len,
+                source_sha256,
+                source_fetched_at,
+                source_commit_sha,
+                order_index
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                chunk.chunk_uid,
+                chunk.section_id,
+                chunk.raw_text,
+                chunk.clean_text,
+                chunk.char_len,
+                chunk.token_len,
+                chunk.source_sha256,
+                chunk.source_fetched_at,
+                chunk.source_commit_sha,
+                chunk.order_index,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO chunks_fts(
+                chunk_uid,
+                section_id,
+                section_heading,
+                chunk_text
+            ) VALUES(?, ?, ?, ?)
+            """,
+            (
+                chunk.chunk_uid,
+                chunk.section_id,
+                section_heading_by_id.get(chunk.section_id, ""),
+                chunk.clean_text,
+            ),
+        )
+
+    for chunk_span in chunk_spans:
+        connection.execute(
+            """
+            INSERT INTO chunk_spans(
+                chunk_uid,
+                source_anchor,
+                start_offset,
+                end_offset,
+                span_order
+            ) VALUES(?, ?, ?, ?, ?)
+            """,
+            (
+                chunk_span.chunk_uid,
+                chunk_span.source_anchor,
+                chunk_span.start_offset,
+                chunk_span.end_offset,
+                chunk_span.span_order,
             ),
         )
 
@@ -1962,6 +2250,7 @@ def _update_manifest(
     source_fetched_at: str,
     report_path: Path,
     counts: dict[str, int],
+    chunk_count: int,
     retrieval_mode: str,
     retrieval_corpus: str,
     semantic_profile_version: str,
@@ -2000,6 +2289,9 @@ def _update_manifest(
             "rows_total": counts["applicable"] + counts["not_applicable"],
             "applicable": counts["applicable"],
             "not_applicable": counts["not_applicable"],
+        },
+        "chunk_stats": {
+            "chunk_count": int(chunk_count),
         },
     }
 
@@ -2072,6 +2364,7 @@ def build_rust_reference_db(
     sections, statements = _extract_sections_and_statements(
         snapshot_id=snapshot_id, documents=documents
     )
+    chunks, chunk_spans = _build_statement_mirror_chunks(sections=sections, statements=statements)
     mechanisms, mechanism_evidence, evidence_count_by_mechanism, best_anchor_by_mechanism = (
         _extract_mechanisms_and_evidence(
             sections=sections,
@@ -2117,6 +2410,7 @@ def build_rust_reference_db(
         documents=documents,
         sections=sections,
         statements=statements,
+        chunks=chunks,
     )
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2137,6 +2431,8 @@ def build_rust_reference_db(
             documents=documents,
             sections=sections,
             statements=statements,
+            chunks=chunks,
+            chunk_spans=chunk_spans,
             mechanisms=mechanisms,
             mechanism_evidence=mechanism_evidence,
             table_rows=table_rows,
@@ -2168,6 +2464,7 @@ def build_rust_reference_db(
             "chapters": len(chapters),
             "sections": len(sections),
             "statements": len(statements),
+            "chunks": len(chunks),
             "mechanisms": len(mechanisms),
             "mechanism_evidence": len(mechanism_evidence),
             "source_fetched_at": source_fetched_at,
@@ -2190,6 +2487,7 @@ def build_rust_reference_db(
         source_fetched_at=source_fetched_at,
         report_path=report_path,
         counts=counts,
+        chunk_count=len(chunks),
         retrieval_mode=retrieval_mode,
         retrieval_corpus=retrieval_corpus,
         semantic_profile_version=semantic_profile_version,
@@ -2208,6 +2506,7 @@ def build_rust_reference_db(
         "chapters": len(chapters),
         "sections": len(sections),
         "statements": len(statements),
+        "chunks": len(chunks),
         "mechanisms": len(mechanisms),
         "semantic_models": len(semantic_models),
         "semantic_corpus": len(semantic_corpus),

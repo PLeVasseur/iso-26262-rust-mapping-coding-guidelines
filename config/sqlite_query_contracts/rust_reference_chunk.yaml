@@ -62,10 +62,10 @@ queries:
       - chunk_uid_after
     sql: |
       SELECT
-        s.statement_id AS chunk_uid,
-        s.text AS chunk_text,
+        c.chunk_uid,
+        c.clean_text AS chunk_text,
         sec.heading AS section_heading,
-        (
+        COALESCE(sp.source_anchor, (
           'https://doc.rust-lang.org/reference/' ||
           CASE
             WHEN sd.rel_path LIKE '%.md'
@@ -73,16 +73,19 @@ queries:
             ELSE sd.rel_path
           END ||
           '#' || sec.anchor
-        ) AS source_anchor,
-        s.source_fetched_at,
+        )) AS source_anchor,
+        c.source_fetched_at,
         '' AS row_markers,
         '' AS mechanism_ids,
         '' AS mechanism_families
-      FROM statements AS s
-      JOIN sections AS sec ON sec.section_id = s.section_id
+      FROM chunks AS c
+      JOIN sections AS sec ON sec.section_id = c.section_id
       JOIN source_documents AS sd ON sd.document_id = sec.document_id
-      WHERE :chunk_uid_after = '' OR s.statement_id > :chunk_uid_after
-      ORDER BY chunk_uid ASC
+      LEFT JOIN chunk_spans AS sp
+        ON sp.chunk_uid = c.chunk_uid
+       AND sp.span_order = 1
+      WHERE :chunk_uid_after = '' OR c.chunk_uid > :chunk_uid_after
+      ORDER BY c.chunk_uid ASC
 
   lexical_chunk_search_v1:
     description: Free-text lexical chunk candidates using FTS5 and BM25
@@ -92,8 +95,8 @@ queries:
       - fts_query
     sql: |
       SELECT
-        statement_id AS chunk_uid,
-        bm25(statements_fts) AS bm25_raw
-      FROM statements_fts
-      WHERE statements_fts MATCH :fts_query
+        chunk_uid,
+        bm25(chunks_fts) AS bm25_raw
+      FROM chunks_fts
+      WHERE chunks_fts MATCH :fts_query
       ORDER BY bm25_raw ASC, chunk_uid ASC

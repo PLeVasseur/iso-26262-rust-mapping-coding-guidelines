@@ -26,6 +26,12 @@ def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     return row is not None
 
 
+def _count_rows(connection: sqlite3.Connection, table_name: str) -> int:
+    if not _table_exists(connection, table_name):
+        return 0
+    return int(connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
+
+
 def _ensure_column(
     connection: sqlite3.Connection, table_name: str, ddl_suffix: str, column_name: str
 ) -> bool:
@@ -46,6 +52,9 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
         initialize_schema(connection)
         added_columns: list[str] = []
         refreshed_fts = False
+        refreshed_chunk_fts = False
+        migrated_docs = 0
+        migrated_chunks = 0
 
         if _ensure_column(
             connection, "snapshots", "commit_sha TEXT NOT NULL DEFAULT 'unknown'", "commit_sha"
@@ -142,7 +151,135 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
             )
             refreshed_fts = True
 
-        connection.execute("PRAGMA user_version = 5")
+        if _table_exists(connection, "docs") and _table_exists(connection, "source_documents"):
+            if _count_rows(connection, "docs") == 0:
+                connection.execute(
+                    """
+                    INSERT INTO docs(
+                        doc_uid,
+                        source_path,
+                        title,
+                        revision,
+                        fetched_at,
+                        source_sha256,
+                        chapter_id,
+                        order_index
+                    )
+                    SELECT
+                        document_id,
+                        rel_path,
+                        title,
+                        source_commit_sha,
+                        source_fetched_at,
+                        source_sha256,
+                        chapter_id,
+                        order_index
+                    FROM source_documents
+                    ORDER BY order_index ASC
+                    """
+                )
+                migrated_docs = _count_rows(connection, "docs")
+
+        if _table_exists(connection, "chunks") and _table_exists(connection, "statements"):
+            if _count_rows(connection, "chunks") == 0:
+                connection.execute(
+                    """
+                    INSERT INTO chunks(
+                        chunk_uid,
+                        section_id,
+                        raw_text,
+                        clean_text,
+                        char_len,
+                        token_len,
+                        source_sha256,
+                        source_fetched_at,
+                        source_commit_sha,
+                        order_index
+                    )
+                    SELECT
+                        statement_id,
+                        section_id,
+                        text,
+                        TRIM(text),
+                        LENGTH(text),
+                        CASE
+                            WHEN TRIM(text) = '' THEN 0
+                            ELSE LENGTH(TRIM(text)) - LENGTH(REPLACE(TRIM(text), ' ', '')) + 1
+                        END,
+                        source_sha256,
+                        source_fetched_at,
+                        source_commit_sha,
+                        sentence_index
+                    FROM statements
+                    ORDER BY statement_id ASC
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO chunk_spans(
+                        chunk_uid,
+                        source_anchor,
+                        start_offset,
+                        end_offset,
+                        span_order
+                    )
+                    SELECT
+                        s.statement_id,
+                        (
+                          'https://doc.rust-lang.org/reference/' ||
+                          CASE
+                            WHEN sd.rel_path LIKE '%.md'
+                              THEN substr(sd.rel_path, 1, length(sd.rel_path) - 3) || '.html'
+                            ELSE sd.rel_path
+                          END ||
+                          '#' || sec.anchor
+                        ) AS source_anchor,
+                        0,
+                        LENGTH(s.text),
+                        1
+                    FROM statements AS s
+                    JOIN sections AS sec ON sec.section_id = s.section_id
+                    JOIN source_documents AS sd ON sd.document_id = sec.document_id
+                    ORDER BY s.statement_id ASC
+                    """
+                )
+                migrated_chunks = _count_rows(connection, "chunks")
+
+        if _table_exists(connection, "chunks"):
+            connection.execute("DROP TABLE IF EXISTS chunks_fts")
+            connection.execute(
+                """
+                CREATE VIRTUAL TABLE chunks_fts
+                USING fts5(
+                    chunk_uid UNINDEXED,
+                    section_id UNINDEXED,
+                    section_heading,
+                    chunk_text,
+                    tokenize='unicode61 remove_diacritics 2'
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO chunks_fts(
+                    chunk_uid,
+                    section_id,
+                    section_heading,
+                    chunk_text
+                )
+                SELECT
+                    c.chunk_uid,
+                    c.section_id,
+                    COALESCE(sec.heading, ''),
+                    c.clean_text
+                FROM chunks AS c
+                LEFT JOIN sections AS sec ON sec.section_id = c.section_id
+                ORDER BY c.chunk_uid ASC
+                """
+            )
+            refreshed_chunk_fts = True
+
+        connection.execute("PRAGMA user_version = 6")
         connection.commit()
     finally:
         connection.close()
@@ -151,7 +288,10 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
         "db_path": str(db_path),
         "added_columns": added_columns,
         "refreshed_statements_fts": refreshed_fts,
-        "target_user_version": 5,
+        "refreshed_chunks_fts": refreshed_chunk_fts,
+        "migrated_docs": migrated_docs,
+        "migrated_chunks": migrated_chunks,
+        "target_user_version": 6,
     }
 
 

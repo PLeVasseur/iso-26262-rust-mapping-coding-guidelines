@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -119,6 +120,32 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
             "semantic_model_metadata",
         }
         self.assertEqual(required - query_ids, set())
+
+    def test_build_populates_chunk_schema_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = self._build_fixture_db(temp_root)
+
+            connection = sqlite3.connect(db_path)
+            try:
+                user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+                table_names = {
+                    str(row[0])
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                chunk_count = int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+                span_count = int(connection.execute("SELECT COUNT(*) FROM chunk_spans").fetchone()[0])
+                docs_count = int(connection.execute("SELECT COUNT(*) FROM docs").fetchone()[0])
+            finally:
+                connection.close()
+
+            self.assertEqual(user_version, 6)
+            self.assertTrue({"kb_metadata", "docs", "chunks", "chunk_spans"}.issubset(table_names))
+            self.assertGreaterEqual(chunk_count, 1)
+            self.assertGreaterEqual(span_count, chunk_count)
+            self.assertGreaterEqual(docs_count, 1)
 
     def test_query_path_uses_chunk_query_ids_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
