@@ -11,9 +11,12 @@ import sqlite3
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from semantic_backend_client import (
     SemanticBackendConfig,
@@ -106,6 +109,72 @@ SCORE_FIELDS = {
     "relevance_score",
     "row_marker_scores",
 }
+
+CHUNK_REQUIRED_QUERY_IDS = {
+    "chunk_corpus_v1_all",
+    "lexical_chunk_search_v1",
+    "table1_row_requirements_v2",
+}
+LEGACY_REQUIRED_QUERY_IDS = {
+    "statement_corpus_v3_all",
+    "lexical_statement_search_v2",
+    "table1_row_requirements_v1",
+}
+
+
+@dataclass(frozen=True)
+class RetrievalContractProfile:
+    corpus_query_id: str
+    corpus_cursor_param: str
+    lexical_query_id: str
+    lexical_id_column: str
+    row_requirements_query_id: str
+
+
+def _load_contract_query_ids(contract_path: Path) -> set[str]:
+    with contract_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, dict):
+        raise GuardrailError("Contract payload must be a mapping")
+
+    raw_queries = payload.get("queries") or {}
+    if not isinstance(raw_queries, dict) or not raw_queries:
+        raise GuardrailError("Contract must define a non-empty queries mapping")
+    return {str(query_id).strip() for query_id in raw_queries.keys() if str(query_id).strip()}
+
+
+def _resolve_retrieval_contract_profile(contract_path: Path) -> RetrievalContractProfile:
+    query_ids = _load_contract_query_ids(contract_path)
+    chunk_present = sorted(CHUNK_REQUIRED_QUERY_IDS.intersection(query_ids))
+    if chunk_present:
+        missing_chunk = sorted(CHUNK_REQUIRED_QUERY_IDS.difference(query_ids))
+        if missing_chunk:
+            raise GuardrailError(
+                "Chunk retrieval contract is incomplete; missing query ids: "
+                + ", ".join(missing_chunk)
+            )
+        return RetrievalContractProfile(
+            corpus_query_id="chunk_corpus_v1_all",
+            corpus_cursor_param="chunk_uid_after",
+            lexical_query_id="lexical_chunk_search_v1",
+            lexical_id_column="chunk_uid",
+            row_requirements_query_id="table1_row_requirements_v2",
+        )
+
+    missing_legacy = sorted(LEGACY_REQUIRED_QUERY_IDS.difference(query_ids))
+    if missing_legacy:
+        raise GuardrailError(
+            "Contract missing retrieval query ids. Expected either chunk ids "
+            f"{sorted(CHUNK_REQUIRED_QUERY_IDS)} or legacy ids "
+            f"{sorted(LEGACY_REQUIRED_QUERY_IDS)}; missing legacy ids: {missing_legacy}"
+        )
+    return RetrievalContractProfile(
+        corpus_query_id="statement_corpus_v3_all",
+        corpus_cursor_param="statement_id_after",
+        lexical_query_id="lexical_statement_search_v2",
+        lexical_id_column="statement_id",
+        row_requirements_query_id="table1_row_requirements_v1",
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -498,11 +567,12 @@ def _build_semantic_config(args: argparse.Namespace) -> SemanticBackendConfig:
 
 
 def _materialize_common_row(raw_row: dict[str, Any], query_tokens: set[str]) -> dict[str, Any]:
-    text = str(raw_row.get("statement_text", ""))
+    statement_id = str(raw_row.get("statement_id", raw_row.get("chunk_uid", "")))
+    text = str(raw_row.get("statement_text", raw_row.get("chunk_text", "")))
     overlap = len(query_tokens.intersection(_tokenize(text))) if query_tokens else 0
     bm25_raw = float(raw_row.get("bm25_raw", 0.0))
-    return {
-        "statement_id": str(raw_row.get("statement_id", "")),
+    payload = {
+        "statement_id": statement_id,
         "statement_text": text,
         "section_heading": str(raw_row.get("section_heading", "")),
         "source_anchor": str(raw_row.get("source_anchor", "")),
@@ -516,11 +586,16 @@ def _materialize_common_row(raw_row: dict[str, Any], query_tokens: set[str]) -> 
         "token_overlap_count": overlap,
         "lexical_score": -bm25_raw,
     }
+    if "chunk_uid" in raw_row or "chunk_text" in raw_row:
+        payload["chunk_uid"] = statement_id
+        payload["chunk_text"] = text
+    return payload
 
 
 def _run_lexical_query(
     *,
     contract_path: Path,
+    retrieval_contract: RetrievalContractProfile,
     query_log_root: Path,
     db_path: Path,
     corpus_rows: list[dict[str, Any]],
@@ -537,7 +612,7 @@ def _run_lexical_query(
     result = execute_contract_query(
         db_path=db_path,
         contract_path=contract_path,
-        query_id="lexical_statement_search_v2",
+        query_id=retrieval_contract.lexical_query_id,
         params={"fts_query": fts_query},
         row_limit=row_limit,
         query_log_root=query_log_root,
@@ -550,7 +625,7 @@ def _run_lexical_query(
             result = execute_contract_query(
                 db_path=db_path,
                 contract_path=contract_path,
-                query_id="lexical_statement_search_v2",
+                query_id=retrieval_contract.lexical_query_id,
                 params={"fts_query": fallback_query},
                 row_limit=row_limit,
                 query_log_root=query_log_root,
@@ -558,7 +633,12 @@ def _run_lexical_query(
 
     rows: list[dict[str, Any]] = []
     for match_row in result["rows"]:
-        statement_id = str(match_row.get("statement_id", ""))
+        statement_id = str(
+            match_row.get(
+                retrieval_contract.lexical_id_column,
+                match_row.get("statement_id", ""),
+            )
+        )
         if statement_id not in corpus_by_statement_id:
             continue
 
@@ -611,8 +691,10 @@ def _load_statement_corpus(
     db_path: Path,
     contract_path: Path,
     query_log_root: Path,
+    retrieval_contract: RetrievalContractProfile | None = None,
     max_rows: int | None = None,
 ) -> list[dict[str, Any]]:
+    profile = retrieval_contract or _resolve_retrieval_contract_profile(contract_path)
     rows: list[dict[str, Any]] = []
     statement_id_after = ""
 
@@ -620,8 +702,8 @@ def _load_statement_corpus(
         result = execute_contract_query(
             db_path=db_path,
             contract_path=contract_path,
-            query_id="statement_corpus_v3_all",
-            params={"statement_id_after": statement_id_after},
+            query_id=profile.corpus_query_id,
+            params={profile.corpus_cursor_param: statement_id_after},
             row_limit=FULL_CORPUS_PAGE_LIMIT,
             query_log_root=query_log_root,
         )
@@ -645,11 +727,13 @@ def _load_table1_row_requirements(
     db_path: Path,
     contract_path: Path,
     query_log_root: Path,
+    retrieval_contract: RetrievalContractProfile | None = None,
 ) -> list[dict[str, Any]]:
+    profile = retrieval_contract or _resolve_retrieval_contract_profile(contract_path)
     result = execute_contract_query(
         db_path=db_path,
         contract_path=contract_path,
-        query_id="table1_row_requirements_v1",
+        query_id=profile.row_requirements_query_id,
         params={"row_marker": ""},
         row_limit=20,
         query_log_root=query_log_root,
@@ -1083,15 +1167,19 @@ def execute_retrieval_query(
     top_k = max(1, int(top_k))
     candidate_limit = max(top_k, int(candidate_limit))
 
+    retrieval_contract = _resolve_retrieval_contract_profile(contract_path)
+
     corpus_rows = _load_statement_corpus(
         db_path=db_path,
         contract_path=contract_path,
         query_log_root=query_log_root,
+        retrieval_contract=retrieval_contract,
     )
     row_profiles = _load_table1_row_requirements(
         db_path=db_path,
         contract_path=contract_path,
         query_log_root=query_log_root,
+        retrieval_contract=retrieval_contract,
     )
 
     def _run_lexical() -> list[dict[str, Any]]:
@@ -1099,6 +1187,7 @@ def execute_retrieval_query(
             db_path=db_path,
             contract_path=contract_path,
             query_log_root=query_log_root,
+            retrieval_contract=retrieval_contract,
             corpus_rows=corpus_rows,
             row_profiles=row_profiles,
             query_text=query_text,

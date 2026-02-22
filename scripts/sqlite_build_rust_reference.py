@@ -36,7 +36,7 @@ DEFAULT_RERANKER_MODEL_REVISION = "unspecified"
 DEFAULT_RERANKER_MODEL_LICENSE = "unspecified"
 DEFAULT_RETRIEVAL_MODE = "hybrid"
 DEFAULT_SEMANTIC_PROFILE_VERSION = "semantic-hybrid-v1"
-DEFAULT_RETRIEVAL_CORPUS = "statement"
+DEFAULT_RETRIEVAL_CORPUS = "chunk"
 RETRIEVAL_CORPUS_VALUES = ("statement", "chunk")
 
 SUMMARY_ENTRY_RE = re.compile(r"^(\s*)[-*]\s+\[([^\]]+)\]\(([^)]+)\)")
@@ -421,19 +421,20 @@ def _resolve_reference_checkout(
     reference_revision: str | None,
     skip_fetch: bool,
 ) -> tuple[Path, str, str]:
+    pinned_revision = str(reference_revision or "").strip()
+    if not pinned_revision:
+        raise RuntimeError(
+            "Pinned source revision is required; pass --reference-revision explicitly"
+        )
+
     if reference_source_dir is not None:
         source_dir = reference_source_dir.resolve()
         if not source_dir.exists():
             raise RuntimeError(f"Reference source directory not found: {source_dir}")
-        commit_sha = "local-source"
+        commit_sha = pinned_revision
         if (source_dir / ".git").exists():
-            if reference_revision:
-                commit_sha = _run_git_command(["rev-parse", reference_revision], cwd=source_dir)
-                _run_git_command(["checkout", "--quiet", "--detach", commit_sha], cwd=source_dir)
-            else:
-                commit_sha = _run_git_command(["rev-parse", "HEAD"], cwd=source_dir)
-        elif reference_revision:
-            commit_sha = reference_revision
+            commit_sha = _run_git_command(["rev-parse", pinned_revision], cwd=source_dir)
+            _run_git_command(["checkout", "--quiet", "--detach", commit_sha], cwd=source_dir)
         return source_dir, commit_sha, utc_now()
 
     source_dir = reference_cache_dir.resolve()
@@ -444,11 +445,7 @@ def _resolve_reference_checkout(
     if not skip_fetch:
         _run_git_command(["fetch", "--quiet", "origin"], cwd=source_dir)
 
-    if reference_revision:
-        commit_sha = _run_git_command(["rev-parse", reference_revision], cwd=source_dir)
-    else:
-        remote_head = _run_git_command(["symbolic-ref", "refs/remotes/origin/HEAD"], cwd=source_dir)
-        commit_sha = _run_git_command(["rev-parse", remote_head], cwd=source_dir)
+    commit_sha = _run_git_command(["rev-parse", pinned_revision], cwd=source_dir)
 
     _run_git_command(["checkout", "--quiet", "--detach", commit_sha], cwd=source_dir)
     return source_dir, commit_sha, utc_now()
@@ -2044,6 +2041,10 @@ def build_rust_reference_db(
             "Unsupported retrieval corpus "
             f"'{retrieval_corpus}'; expected one of {sorted(RETRIEVAL_CORPUS_VALUES)}"
         )
+    if not str(reference_revision or "").strip():
+        raise ValueError(
+            "Pinned source revision is required; pass --reference-revision explicitly"
+        )
 
     existing_manifest = _load_manifest(manifest_path)
     previous_snapshot_path = _read_previous_snapshot_path(existing_manifest)
@@ -2270,7 +2271,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reference-revision",
         default=None,
-        help="Pinned revision/commit/tag for rust reference checkout",
+        help="Pinned revision/commit/tag for rust reference checkout (required)",
     )
     parser.add_argument(
         "--skip-fetch",
