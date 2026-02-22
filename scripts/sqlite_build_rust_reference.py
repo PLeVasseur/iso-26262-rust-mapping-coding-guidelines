@@ -46,6 +46,11 @@ CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(`\[])")
 SEMANTIC_TOKEN_RE = re.compile(r"[a-z0-9_]+")
+ADMONITION_TAG_RE = re.compile(r"\[![A-Z]+\]")
+FOOTNOTE_MARKER_RE = re.compile(r"\[\^[^\]]+\]")
+RAW_ARTIFACT_RE = re.compile(r"\br\[[^\]]+\]")
+
+CLEAN_TEXT_NORMALIZER_VERSION = "clean-v1"
 
 STATEMENT_TYPE_PATTERNS: list[tuple[str, re.Pattern[str], float]] = [
     (
@@ -602,6 +607,51 @@ def _extract_heading_segments(document: SourceDocument) -> list[tuple[int, str, 
     return segments
 
 
+def _split_section_blocks(section_text: str) -> list[str]:
+    lines = str(section_text).splitlines()
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    in_code_fence = False
+
+    def _flush() -> None:
+        nonlocal current
+        if not current:
+            return
+        block = "\n".join(current).strip()
+        if block:
+            blocks.append(current)
+        current = []
+
+    for raw_line in lines:
+        line = str(raw_line).rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            if in_code_fence:
+                current.append(line)
+                _flush()
+                in_code_fence = False
+                continue
+
+            _flush()
+            in_code_fence = True
+            current.append(line)
+            continue
+
+        if in_code_fence:
+            current.append(line)
+            continue
+
+        if not stripped:
+            _flush()
+            continue
+
+        current.append(line)
+
+    _flush()
+    return ["\n".join(block).strip() for block in blocks if "\n".join(block).strip()]
+
+
 def _extract_sections_and_statements(
     snapshot_id: str,
     documents: list[SourceDocument],
@@ -641,44 +691,50 @@ def _extract_sections_and_statements(
             )
             sections.append(section_record)
 
-            cleaned = CODE_FENCE_RE.sub(" ", section_text)
-            cleaned = HTML_COMMENT_RE.sub(" ", cleaned)
-            cleaned = " ".join(cleaned.split())
-            raw_sentences = [
-                value.strip() for value in SENTENCE_SPLIT_RE.split(cleaned) if value.strip()
-            ]
-            if not raw_sentences:
-                raw_sentences = [heading]
+            blocks = _split_section_blocks(section_text)
+            if not blocks:
+                blocks = [heading]
 
             sentence_index = 0
-            for sentence in raw_sentences:
-                if len(sentence) < 30:
+            for block in blocks:
+                cleaned_block = _clean_chunk_text(block)
+                if not cleaned_block:
                     continue
-                sentence_index += 1
-                if sentence_index > 24:
-                    break
 
-                statement_type = "behavior"
-                confidence = 0.68
-                for candidate_type, pattern, candidate_confidence in STATEMENT_TYPE_PATTERNS:
-                    if pattern.search(sentence):
-                        statement_type = candidate_type
-                        confidence = candidate_confidence
-                        break
+                raw_sentences = [
+                    value.strip()
+                    for value in SENTENCE_SPLIT_RE.split(cleaned_block)
+                    if value.strip()
+                ]
+                if not raw_sentences:
+                    raw_sentences = [cleaned_block]
 
-                statements.append(
-                    StatementRecord(
-                        statement_id=f"{section_id}::statement:{sentence_index:03d}",
-                        section_id=section_id,
-                        statement_type=statement_type,
-                        text=sentence,
-                        confidence=confidence,
-                        sentence_index=sentence_index,
-                        source_sha256=document.source_sha256,
-                        source_fetched_at=document.source_fetched_at,
-                        source_commit_sha=document.source_commit_sha,
+                for sentence in raw_sentences:
+                    if len(sentence) < 30:
+                        continue
+                    sentence_index += 1
+
+                    statement_type = "behavior"
+                    confidence = 0.68
+                    for candidate_type, pattern, candidate_confidence in STATEMENT_TYPE_PATTERNS:
+                        if pattern.search(sentence):
+                            statement_type = candidate_type
+                            confidence = candidate_confidence
+                            break
+
+                    statements.append(
+                        StatementRecord(
+                            statement_id=f"{section_id}::statement:{sentence_index:03d}",
+                            section_id=section_id,
+                            statement_type=statement_type,
+                            text=sentence,
+                            confidence=confidence,
+                            sentence_index=sentence_index,
+                            source_sha256=document.source_sha256,
+                            source_fetched_at=document.source_fetched_at,
+                            source_commit_sha=document.source_commit_sha,
+                        )
                     )
-                )
 
     if not sections:
         raise RuntimeError("No sections extracted from Rust Reference documents")
@@ -694,6 +750,10 @@ def _anchor_url_for_section(section: SectionRecord) -> str:
 def _clean_chunk_text(raw_text: str) -> str:
     value = CODE_FENCE_RE.sub(" ", str(raw_text))
     value = HTML_COMMENT_RE.sub(" ", value)
+    value = ADMONITION_TAG_RE.sub(" ", value)
+    value = FOOTNOTE_MARKER_RE.sub(" ", value)
+    value = RAW_ARTIFACT_RE.sub(" ", value)
+    value = value.replace("`", " ")
     return " ".join(value.split())
 
 
@@ -1620,9 +1680,9 @@ def _insert_payload(
             "rust_reference",
             "rust-reference",
             commit_sha,
-            "sqlite-build-rust-reference-v6",
+            f"sqlite-build-rust-reference-v6::{CLEAN_TEXT_NORMALIZER_VERSION}",
             fetched_at,
-            "chunk-first schema",
+            "chunk-first schema and deterministic block parsing",
         ),
     )
 

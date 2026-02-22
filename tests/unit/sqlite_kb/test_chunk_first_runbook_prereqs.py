@@ -67,6 +67,25 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
                     ids.add(query_id)
         return ids
 
+    def _build_long_sentence_fixture(self, temp_root: Path) -> Path:
+        source_root = create_reference_fixture(temp_root)
+        src = source_root / "src"
+
+        sentences = [
+            (
+                f"Sentence {idx} documents deterministic ingestion behavior and "
+                "preserves explicit defensive result option error semantics in long form text."
+            )
+            for idx in range(1, 33)
+        ]
+        types_path = src / "types.md"
+        existing = types_path.read_text(encoding="utf-8")
+        types_path.write_text(
+            existing.rstrip() + "\n\n" + " ".join(sentences) + "\n",
+            encoding="utf-8",
+        )
+        return source_root
+
     def test_retrieval_corpus_flag_accepts_statement_and_chunk(self) -> None:
         for corpus in ("statement", "chunk"):
             with patch.object(
@@ -105,6 +124,35 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
                     min_statements=8,
                     min_mechanisms=4,
                 )
+
+    def test_build_has_no_hidden_sentence_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = temp_root / "current" / "rust_reference.sqlite"
+            snapshot_root = temp_root / "snapshots"
+            manifest_path = temp_root / "manifest.yaml"
+            reference_source_dir = self._build_long_sentence_fixture(temp_root)
+
+            build_rust_reference_db(
+                db_path=db_path,
+                snapshot_root=snapshot_root,
+                manifest_path=manifest_path,
+                extractor_db=DEFAULT_EXTRACTOR_DB,
+                table_node_id=DEFAULT_TABLE_NODE_ID,
+                reference_source_dir=reference_source_dir,
+                reference_revision="fixture-001",
+                min_sections=1,
+                min_statements=20,
+                min_mechanisms=1,
+            )
+
+            connection = sqlite3.connect(db_path)
+            try:
+                statement_count = int(connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0])
+            finally:
+                connection.close()
+
+            self.assertGreaterEqual(statement_count, 30)
 
     def test_chunk_contract_has_required_query_ids(self) -> None:
         contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference_chunk.yaml"
