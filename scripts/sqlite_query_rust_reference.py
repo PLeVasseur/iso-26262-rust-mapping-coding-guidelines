@@ -33,6 +33,7 @@ DEFAULT_TOP_K = 20
 DEFAULT_CANDIDATE_LIMIT = 5000
 FULL_CORPUS_PAGE_LIMIT = 5000
 DEFAULT_QUERY_REVIEW_DIR = ".cache/sqlite_kb/reports/rust_reference/query_reviews"
+DEFAULT_REWRITE_RULES_PATH = "config/sqlite_query_rewrite/rust_reference_rewrite.yaml"
 REVIEW_ARTIFACT_SCHEMA_VERSION = 1
 TOKEN_RE = re.compile(r"[a-z0-9_]+")
 STOPWORDS = {
@@ -221,6 +222,109 @@ def _resolve_retrieval_contract_profile(contract_path: Path) -> RetrievalContrac
     )
 
 
+def _load_rewrite_rules(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+    if not isinstance(payload, dict):
+        raise GuardrailError("Rewrite rules payload must be a mapping")
+    return payload
+
+
+def _rewrite_query_text(
+    *,
+    query_text: str,
+    row_marker: str,
+    mode: str,
+    rewrite_mode: str,
+    rewrite_rules_path: Path,
+) -> dict[str, Any]:
+    normalized_mode = str(rewrite_mode).strip().lower() or "auto"
+    original = " ".join(str(query_text).split())
+    if normalized_mode == "off":
+        return {
+            "enabled": False,
+            "strategy_tags": ["rewrite-disabled"],
+            "rules_path": str(rewrite_rules_path),
+            "original_query": original,
+            "rewritten_query": original,
+            "added_terms": [],
+        }
+
+    rules = _load_rewrite_rules(rewrite_rules_path)
+    strategy = str(rules.get("strategy", "rewrite-v1")).strip() or "rewrite-v1"
+    token_expansions_raw = rules.get("token_expansions") or {}
+    row_terms_raw = rules.get("row_marker_terms") or {}
+    mode_terms_raw = rules.get("mode_terms") or {}
+
+    token_expansions = {
+        str(token).strip().lower(): [
+            str(term).strip().lower() for term in list(values or []) if str(term).strip()
+        ]
+        for token, values in token_expansions_raw.items()
+        if str(token).strip()
+    }
+    row_terms = {
+        str(marker).strip().lower(): [
+            str(term).strip().lower() for term in list(values or []) if str(term).strip()
+        ]
+        for marker, values in row_terms_raw.items()
+        if str(marker).strip()
+    }
+    mode_terms = {
+        str(mode_name).strip().lower(): [
+            str(term).strip().lower() for term in list(values or []) if str(term).strip()
+        ]
+        for mode_name, values in mode_terms_raw.items()
+        if str(mode_name).strip()
+    }
+
+    tokens_in_order = [match.group(0).lower() for match in TOKEN_RE.finditer(original.lower())]
+    seen = set(tokens_in_order)
+    added_terms: list[str] = []
+    strategy_tags = [strategy]
+
+    for token in tokens_in_order:
+        for term in token_expansions.get(token, []):
+            if term in seen:
+                continue
+            seen.add(term)
+            added_terms.append(term)
+    if added_terms:
+        strategy_tags.append("token-expansion")
+
+    scoped_marker = str(row_marker).strip().lower()
+    marker_terms_added = False
+    if scoped_marker in row_terms:
+        for term in row_terms[scoped_marker]:
+            if term in seen:
+                continue
+            seen.add(term)
+            added_terms.append(term)
+            marker_terms_added = True
+    if marker_terms_added:
+        strategy_tags.append("row-marker-terms")
+
+    mode_terms_added = False
+    for term in mode_terms.get(str(mode).strip().lower(), []):
+        if term in seen:
+            continue
+        seen.add(term)
+        added_terms.append(term)
+        mode_terms_added = True
+    if mode_terms_added:
+        strategy_tags.append("mode-terms")
+
+    rewritten = " ".join(tokens_in_order + added_terms).strip() or original
+    return {
+        "enabled": True,
+        "strategy_tags": strategy_tags,
+        "rules_path": str(rewrite_rules_path),
+        "original_query": original,
+        "rewritten_query": rewritten,
+        "added_terms": added_terms,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Read-only query wrapper for rust_reference.sqlite"
@@ -354,6 +458,17 @@ def parse_args() -> argparse.Namespace:
         "--query-log-root",
         default=".cache/sqlite_kb/query_logs/rust_reference",
         help="Directory used for query audit logs",
+    )
+    parser.add_argument(
+        "--rewrite-mode",
+        choices=("auto", "off"),
+        default=os.environ.get("RUST_REF_REWRITE_MODE", "auto"),
+        help="Deterministic query rewrite mode",
+    )
+    parser.add_argument(
+        "--rewrite-rules-path",
+        default=DEFAULT_REWRITE_RULES_PATH,
+        help="Path to deterministic query rewrite rules YAML",
     )
     parser.add_argument(
         "--row-limit",
@@ -1374,12 +1489,24 @@ def execute_retrieval_query(
     semantic_retries: int,
     persist_semantic_cache: bool,
     allow_online_corpus_embedding: bool = False,
+    rewrite_mode: str = "auto",
+    rewrite_rules_path: Path | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     semantic_retry_events: list[dict[str, Any]] = []
     row_marker = row_marker.strip().lower()
     top_k = max(1, int(top_k))
     candidate_limit = max(top_k, int(candidate_limit))
+
+    rewrite_path = rewrite_rules_path or (Path(__file__).resolve().parents[1] / DEFAULT_REWRITE_RULES_PATH)
+    rewrite = _rewrite_query_text(
+        query_text=query_text,
+        row_marker=row_marker,
+        mode=mode,
+        rewrite_mode=rewrite_mode,
+        rewrite_rules_path=rewrite_path,
+    )
+    effective_query_text = str(rewrite.get("rewritten_query", query_text)).strip() or query_text
 
     retrieval_contract = _resolve_retrieval_contract_profile(contract_path)
 
@@ -1404,7 +1531,7 @@ def execute_retrieval_query(
             retrieval_contract=retrieval_contract,
             corpus_rows=corpus_rows,
             row_profiles=row_profiles,
-            query_text=query_text,
+            query_text=effective_query_text,
             row_marker=row_marker,
             row_limit=candidate_limit,
         )
@@ -1444,6 +1571,8 @@ def execute_retrieval_query(
                 "union_pool_size": len(lexical_rows),
             },
             "query_text": query_text,
+            "effective_query_text": effective_query_text,
+            "query_rewrite": rewrite,
             "row_marker": row_marker,
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
@@ -1492,6 +1621,8 @@ def execute_retrieval_query(
             },
             "preflight": preflight,
             "query_text": query_text,
+            "effective_query_text": effective_query_text,
+            "query_rewrite": rewrite,
             "row_marker": row_marker,
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
@@ -1509,7 +1640,7 @@ def execute_retrieval_query(
             retrieval_contract=retrieval_contract,
             config=semantic_config,
             retries=semantic_retries,
-            query_text=query_text,
+            query_text=effective_query_text,
             corpus_rows=corpus_rows,
             top_k=top_k,
             candidate_limit=candidate_limit,
@@ -1554,6 +1685,8 @@ def execute_retrieval_query(
             },
             "preflight": preflight,
             "query_text": query_text,
+            "effective_query_text": effective_query_text,
+            "query_rewrite": rewrite,
             "row_marker": row_marker,
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
@@ -1598,6 +1731,8 @@ def execute_retrieval_query(
             },
             "preflight": preflight,
             "query_text": query_text,
+            "effective_query_text": effective_query_text,
+            "query_rewrite": rewrite,
             "row_marker": row_marker,
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
@@ -1664,6 +1799,8 @@ def execute_retrieval_query(
         },
         "preflight": preflight,
         "query_text": query_text,
+        "effective_query_text": effective_query_text,
+        "query_rewrite": rewrite,
         "row_marker": row_marker,
         "row_count": len(rows),
         "duration_ms": round(duration_ms, 3),
@@ -1735,6 +1872,8 @@ def main() -> int:
                 semantic_retries=int(args.semantic_retries),
                 persist_semantic_cache=bool(args.persist_semantic_cache),
                 allow_online_corpus_embedding=bool(args.allow_online_corpus_embedding),
+                rewrite_mode=str(args.rewrite_mode),
+                rewrite_rules_path=(root / str(args.rewrite_rules_path)).resolve(),
             )
             if not bool(args.include_score_breakdown):
                 result = _without_score_breakdown(result)

@@ -1,0 +1,24 @@
+version: 1
+strategy: rust-reference-rewrite-v1
+
+token_expansions:
+  error: [result, option, failure]
+  typing: [type, struct, enum, trait]
+  concurrency: [thread, send, sync, atomic]
+  unsafe: [invariant, boundary, review]
+  diagnostics: [lint, warning, policy]
+
+row_marker_terms:
+  1a: [architecture, abstraction, trait, interface]
+  1b: [match, branch, pattern, exhaustive]
+  1c: [type, struct, enum, invariant]
+  1d: [defensive, result, option, error]
+  1e: [ownership, borrowing, lifetime, alias]
+  1f: [unsafe, boundary, invariant, review]
+  1g: [style, consistency, analyzability, convention]
+  1h: [concurrency, thread, send, sync]
+  1i: [subset, diagnostic, lint, verification]
+
+mode_terms:
+  semantic: [intent, semantics]
+  hybrid: [intent, semantics]

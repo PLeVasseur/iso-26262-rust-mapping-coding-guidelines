@@ -29,6 +29,7 @@ from sqlite_build_rust_reference import (  # noqa: E402
 from sqlite_query_guardrails import GuardrailError, execute_contract_query  # noqa: E402
 from sqlite_query_rust_reference import (  # noqa: E402
     ModeExecutionError,
+    _rewrite_query_text,
     build_review_artifact_payload,
     execute_retrieval_query,
     persist_review_artifact,
@@ -79,6 +80,9 @@ class _MockSemanticHandler(BaseHTTPRequestHandler):
 
 
 class QueryRustReferenceTests(unittest.TestCase):
+    def _rewrite_rules_path(self) -> Path:
+        return ROOT / "config" / "sqlite_query_rewrite" / "rust_reference_rewrite.yaml"
+
     def _start_mock_backend(self) -> tuple[HTTPServer, threading.Thread, str]:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.bind(("127.0.0.1", 0))
@@ -257,6 +261,72 @@ class QueryRustReferenceTests(unittest.TestCase):
             self.assertTrue(bool(abstain.get("active", False)))
             self.assertEqual(str(abstain.get("reason_code", "")), "NO_ROW_SIGNAL")
             self.assertEqual(list(result.get("row_projection", [])), [])
+
+    def test_query_rewrite_is_deterministic_and_additive(self) -> None:
+        rewrite_rules_path = self._rewrite_rules_path()
+        first = _rewrite_query_text(
+            query_text="unsafe diagnostics",
+            row_marker="1a",
+            mode="hybrid",
+            rewrite_mode="auto",
+            rewrite_rules_path=rewrite_rules_path,
+        )
+        second = _rewrite_query_text(
+            query_text="unsafe diagnostics",
+            row_marker="1a",
+            mode="hybrid",
+            rewrite_mode="auto",
+            rewrite_rules_path=rewrite_rules_path,
+        )
+
+        self.assertEqual(first, second)
+        self.assertTrue(bool(first.get("enabled", False)))
+        self.assertEqual(first.get("original_query"), "unsafe diagnostics")
+        self.assertEqual(first.get("rewritten_query"), "unsafe diagnostics invariant boundary review lint warning policy architecture abstraction trait interface intent semantics")
+        self.assertEqual(
+            first.get("added_terms"),
+            [
+                "invariant",
+                "boundary",
+                "review",
+                "lint",
+                "warning",
+                "policy",
+                "architecture",
+                "abstraction",
+                "trait",
+                "interface",
+                "intent",
+                "semantics",
+            ],
+        )
+        self.assertIn("token-expansion", list(first.get("strategy_tags", [])))
+        self.assertIn("row-marker-terms", list(first.get("strategy_tags", [])))
+        self.assertIn("mode-terms", list(first.get("strategy_tags", [])))
+
+    def test_query_rewrite_off_and_noop_behaviors(self) -> None:
+        rewrite_rules_path = self._rewrite_rules_path()
+
+        disabled = _rewrite_query_text(
+            query_text="Send sync thread",
+            row_marker="",
+            mode="lexical",
+            rewrite_mode="off",
+            rewrite_rules_path=rewrite_rules_path,
+        )
+        self.assertFalse(bool(disabled.get("enabled", True)))
+        self.assertEqual(disabled.get("rewritten_query"), "Send sync thread")
+
+        noop = _rewrite_query_text(
+            query_text="Send sync thread",
+            row_marker="",
+            mode="lexical",
+            rewrite_mode="auto",
+            rewrite_rules_path=rewrite_rules_path,
+        )
+        self.assertTrue(bool(noop.get("enabled", False)))
+        self.assertEqual(noop.get("rewritten_query"), "send sync thread")
+        self.assertEqual(list(noop.get("added_terms", [])), [])
 
     def test_review_artifact_path_conflict_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
