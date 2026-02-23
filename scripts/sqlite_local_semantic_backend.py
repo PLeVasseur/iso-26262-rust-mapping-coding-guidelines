@@ -228,8 +228,10 @@ def _python_worker_command(
     port: int,
     model_id: str,
     cache_dir: Path,
+    service_role: str,
+    request_span_log_path: Path | None,
 ) -> list[str]:
-    return [
+    command = [
         sys.executable,
         str(worker_script),
         "--mode",
@@ -242,7 +244,12 @@ def _python_worker_command(
         model_id,
         "--cache-dir",
         str(cache_dir),
+        "--service-role",
+        service_role,
     ]
+    if request_span_log_path is not None:
+        command.extend(["--request-span-log-path", str(request_span_log_path)])
+    return command
 
 
 def _python_logs(runtime_dir: Path) -> dict[str, str]:
@@ -355,6 +362,7 @@ def _start_python_processes(
     embed_model_id: str,
     rerank_model_id: str,
     model_cache_dir: Path,
+    worker_span_log_path: Path | None,
 ) -> dict[str, object]:
     if not worker_script.exists():
         raise RuntimeError(f"Python worker script does not exist: {worker_script}")
@@ -389,6 +397,8 @@ def _start_python_processes(
         port=embed_port,
         model_id=embed_model_id,
         cache_dir=model_cache_dir,
+        service_role="embed",
+        request_span_log_path=worker_span_log_path,
     )
     rerank_cmd = _python_worker_command(
         worker_script=worker_script,
@@ -397,6 +407,8 @@ def _start_python_processes(
         port=rerank_port,
         model_id=rerank_model_id,
         cache_dir=model_cache_dir,
+        service_role="rerank",
+        request_span_log_path=worker_span_log_path,
     )
 
     with embed_log.open("w", encoding="utf-8") as embed_handle:
@@ -427,6 +439,7 @@ def _start_python_processes(
             "engine": "python",
             "worker_script": str(worker_script),
             "cache_dir": str(model_cache_dir),
+            "worker_span_log_path": str(worker_span_log_path) if worker_span_log_path else "",
             "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "embed": {
                 "pid": int(embed_proc.pid),
@@ -486,6 +499,11 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--python-worker-script",
         default=os.environ.get("RUST_REF_LOCAL_BACKEND_WORKER_SCRIPT", DEFAULT_WORKER_SCRIPT),
         help="Python worker script path for engine=python",
+    )
+    parser.add_argument(
+        "--worker-span-log-path",
+        default=os.environ.get("RUST_REF_WORKER_SPAN_LOG_PATH", ""),
+        help="Optional JSONL path for worker request span telemetry",
     )
     parser.add_argument(
         "--embed-container",
@@ -555,6 +573,11 @@ def _command_start(args: argparse.Namespace) -> dict[str, object]:
     liveness_probe: Callable[[], bool] | None = None
     if engine == "python":
         worker_script = Path(str(args.python_worker_script)).resolve()
+        worker_span_log_path = (
+            Path(str(args.worker_span_log_path)).resolve()
+            if str(args.worker_span_log_path).strip()
+            else None
+        )
         actions = _start_python_processes(
             runtime_dir=runtime_dir,
             worker_script=worker_script,
@@ -565,6 +588,7 @@ def _command_start(args: argparse.Namespace) -> dict[str, object]:
             embed_model_id=str(args.embed_model_id),
             rerank_model_id=str(args.rerank_model_id),
             model_cache_dir=cache_dir,
+            worker_span_log_path=worker_span_log_path,
         )
         def _python_diagnostics() -> dict[str, str]:
             return _python_logs(runtime_dir)
@@ -636,6 +660,7 @@ def _command_start(args: argparse.Namespace) -> dict[str, object]:
         "rerank_container": str(args.rerank_container),
         "runtime_dir": str(runtime_dir),
         "model_cache_dir": str(cache_dir),
+        "worker_span_log_path": str(args.worker_span_log_path),
         "readiness": readiness,
     }
 

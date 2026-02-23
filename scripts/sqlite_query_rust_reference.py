@@ -698,6 +698,21 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     return _dot(left, right) / (left_norm * right_norm)
 
 
+def _classify_semantic_error(detail: str) -> str:
+    text = str(detail).strip().lower()
+    if "timed out" in text:
+        return "timeout"
+    if "http 404" in text:
+        return "http_404"
+    if "http " in text:
+        return "http"
+    if "non-json" in text or "payload" in text:
+        return "payload"
+    if "request failed" in text:
+        return "connection"
+    return "unknown"
+
+
 def _with_semantic_retries(
     description: str,
     retries: int,
@@ -706,9 +721,20 @@ def _with_semantic_retries(
 ) -> Any:
     attempts = max(0, int(retries)) + 1
     last_error: SemanticBackendError | None = None
+    attempt_events: list[dict[str, Any]] = []
+    total_started = time.perf_counter()
     for attempt in range(attempts):
+        attempt_started = time.perf_counter()
         try:
             value = call()
+            attempt_duration_ms = (time.perf_counter() - attempt_started) * 1000.0
+            attempt_events.append(
+                {
+                    "attempt": attempt + 1,
+                    "status": "pass",
+                    "duration_ms": round(float(attempt_duration_ms), 3),
+                }
+            )
             if telemetry is not None:
                 telemetry.append(
                     {
@@ -717,11 +743,27 @@ def _with_semantic_retries(
                         "max_attempts": attempts,
                         "attempts_used": attempt + 1,
                         "retry_count": attempt,
+                        "total_duration_ms": round(
+                            float((time.perf_counter() - total_started) * 1000.0),
+                            3,
+                        ),
+                        "attempt_events": attempt_events,
                     }
                 )
             return value
         except SemanticBackendError as exc:
             last_error = exc
+            attempt_duration_ms = (time.perf_counter() - attempt_started) * 1000.0
+            detail = str(exc)
+            attempt_events.append(
+                {
+                    "attempt": attempt + 1,
+                    "status": "fail",
+                    "duration_ms": round(float(attempt_duration_ms), 3),
+                    "error": detail,
+                    "error_class": _classify_semantic_error(detail),
+                }
+            )
             if attempt + 1 >= attempts:
                 break
             time.sleep(0.2 * (attempt + 1))
@@ -735,6 +777,9 @@ def _with_semantic_retries(
                 "attempts_used": attempts,
                 "retry_count": max(0, attempts - 1),
                 "error": message,
+                "error_class": _classify_semantic_error(message),
+                "total_duration_ms": round(float((time.perf_counter() - total_started) * 1000.0), 3),
+                "attempt_events": attempt_events,
             }
         )
     raise ModeExecutionError(
@@ -1185,16 +1230,23 @@ def _semantic_candidates(
     persist_cache: bool,
     allow_online_corpus_embedding: bool,
     retry_events: list[dict[str, Any]] | None = None,
+    timing: dict[str, float] | None = None,
+    workload: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     if not corpus_rows:
         return []
 
+    query_embed_started = time.perf_counter()
     query_embedding = _with_semantic_retries(
         "query embedding",
         retries,
         lambda: embed_texts(config, [query_text]),
         telemetry=retry_events,
     )[0]
+    if timing is not None:
+        timing["semantic_embed_ms"] = timing.get("semantic_embed_ms", 0.0) + (
+            (time.perf_counter() - query_embed_started) * 1000.0
+        )
 
     embeddings_by_statement_id = _load_embedding_cache(
         db_path=db_path,
@@ -1224,12 +1276,17 @@ def _semantic_candidates(
         for offset in range(0, len(missing_rows), batch_size):
             batch_rows = missing_rows[offset : offset + batch_size]
             batch_texts = [str(row["statement_text"]) for row in batch_rows]
+            statement_embed_started = time.perf_counter()
             vectors = _with_semantic_retries(
                 "statement embedding",
                 retries,
                 lambda batch_texts=batch_texts: embed_texts(config, batch_texts),
                 telemetry=retry_events,
             )
+            if timing is not None:
+                timing["semantic_embed_ms"] = timing.get("semantic_embed_ms", 0.0) + (
+                    (time.perf_counter() - statement_embed_started) * 1000.0
+                )
             if len(vectors) != len(batch_rows):
                 raise ModeExecutionError(
                     code="SEMANTIC_BACKEND_UNAVAILABLE",
@@ -1259,6 +1316,7 @@ def _semantic_candidates(
                 rows=persisted_payloads,
             )
 
+    score_started = time.perf_counter()
     scored_rows: list[dict[str, Any]] = []
     semantic_scores: list[float] = []
     for row in corpus_rows:
@@ -1292,6 +1350,16 @@ def _semantic_candidates(
     rerank_pool_limit = min(len(semantic_pool), max(top_k * 8, 64))
     rerank_pool = semantic_pool[:rerank_pool_limit]
     rerank_texts_input = [str(row["statement_text"]) for row in rerank_pool]
+    if timing is not None:
+        timing["semantic_score_ms"] = timing.get("semantic_score_ms", 0.0) + (
+            (time.perf_counter() - score_started) * 1000.0
+        )
+    if workload is not None:
+        workload["semantic_pool_size"] = int(len(semantic_pool))
+        workload["rerank_pool_size"] = int(len(rerank_pool))
+        workload["rerank_doc_count"] = int(len(rerank_texts_input))
+
+    rerank_started = time.perf_counter()
     reranker_scores_raw = _with_semantic_retries(
         "reranker scoring",
         retries,
@@ -1302,6 +1370,10 @@ def _semantic_candidates(
         ),
         telemetry=retry_events,
     )
+    if timing is not None:
+        timing["rerank_ms"] = timing.get("rerank_ms", 0.0) + (
+            (time.perf_counter() - rerank_started) * 1000.0
+        )
     reranker_scores = _min_max_normalize([float(value) for value in reranker_scores_raw])
 
     reranker_by_id: dict[str, float] = {}
@@ -1498,6 +1570,27 @@ def execute_retrieval_query(
     top_k = max(1, int(top_k))
     candidate_limit = max(top_k, int(candidate_limit))
 
+    timing: dict[str, float] = {
+        "preflight_ms": 0.0,
+        "lexical_ms": 0.0,
+        "semantic_embed_ms": 0.0,
+        "semantic_score_ms": 0.0,
+        "rerank_ms": 0.0,
+        "projection_ms": 0.0,
+    }
+    workload: dict[str, int] = {
+        "lexical_pool_size": 0,
+        "semantic_pool_size": 0,
+        "union_pool_size": 0,
+        "rerank_pool_size": 0,
+        "rerank_doc_count": 0,
+    }
+
+    def _timing_payload(total_case_ms: float) -> dict[str, float]:
+        payload = {name: round(float(value), 3) for name, value in timing.items()}
+        payload["total_case_ms"] = round(float(total_case_ms), 3)
+        return payload
+
     rewrite_path = rewrite_rules_path or (Path(__file__).resolve().parents[1] / DEFAULT_REWRITE_RULES_PATH)
     rewrite = _rewrite_query_text(
         query_text=query_text,
@@ -1547,7 +1640,11 @@ def execute_retrieval_query(
     }
 
     if mode == "lexical":
+        lexical_started = time.perf_counter()
         lexical_rows = _run_lexical()
+        timing["lexical_ms"] += (time.perf_counter() - lexical_started) * 1000.0
+        workload["lexical_pool_size"] = int(len(lexical_rows))
+        workload["union_pool_size"] = int(len(lexical_rows))
         for row in lexical_rows:
             _apply_component_scores(
                 row,
@@ -1556,8 +1653,10 @@ def execute_retrieval_query(
                 reranker_score=0.0,
             )
         rows = lexical_rows[:top_k]
+        projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
         row_projection, abstain = _apply_abstain_policy(row_projection_all)
+        timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
             "requested_mode": mode,
@@ -1566,9 +1665,11 @@ def execute_retrieval_query(
             "semantic_retry_events": semantic_retry_events,
             "score_definitions": score_definitions,
             "candidate_generation": {
-                "lexical_pool_size": len(lexical_rows),
-                "semantic_pool_size": 0,
-                "union_pool_size": len(lexical_rows),
+                "lexical_pool_size": int(workload["lexical_pool_size"]),
+                "semantic_pool_size": int(workload["semantic_pool_size"]),
+                "union_pool_size": int(workload["union_pool_size"]),
+                "rerank_pool_size": int(workload["rerank_pool_size"]),
+                "rerank_doc_count": int(workload["rerank_doc_count"]),
             },
             "query_text": query_text,
             "effective_query_text": effective_query_text,
@@ -1576,13 +1677,16 @@ def execute_retrieval_query(
             "row_marker": row_marker,
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
+            "timing": _timing_payload(duration_ms),
             "row_projection": row_projection,
             "row_projection_all": row_projection_all,
             "abstain": abstain,
             "rows": rows,
         }
 
+    preflight_started = time.perf_counter()
     preflight = check_semantic_backend(semantic_config)
+    timing["preflight_ms"] += (time.perf_counter() - preflight_started) * 1000.0
     if not bool(preflight.get("ok", False)):
         error_code = "SEMANTIC_BACKEND_UNAVAILABLE"
         if mode == "hybrid":
@@ -1595,7 +1699,11 @@ def execute_retrieval_query(
                 message=f"Semantic backend preflight failed: {detail}",
             )
 
+        lexical_started = time.perf_counter()
         lexical_rows = _run_lexical()
+        timing["lexical_ms"] += (time.perf_counter() - lexical_started) * 1000.0
+        workload["lexical_pool_size"] = int(len(lexical_rows))
+        workload["union_pool_size"] = int(len(lexical_rows))
         for row in lexical_rows:
             _apply_component_scores(
                 row,
@@ -1604,8 +1712,10 @@ def execute_retrieval_query(
                 reranker_score=0.0,
             )
         rows = lexical_rows[:top_k]
+        projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
         row_projection, abstain = _apply_abstain_policy(row_projection_all)
+        timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
             "requested_mode": mode,
@@ -1615,9 +1725,11 @@ def execute_retrieval_query(
             "semantic_retry_events": semantic_retry_events,
             "score_definitions": score_definitions,
             "candidate_generation": {
-                "lexical_pool_size": len(lexical_rows),
-                "semantic_pool_size": 0,
-                "union_pool_size": len(lexical_rows),
+                "lexical_pool_size": int(workload["lexical_pool_size"]),
+                "semantic_pool_size": int(workload["semantic_pool_size"]),
+                "union_pool_size": int(workload["union_pool_size"]),
+                "rerank_pool_size": int(workload["rerank_pool_size"]),
+                "rerank_doc_count": int(workload["rerank_doc_count"]),
             },
             "preflight": preflight,
             "query_text": query_text,
@@ -1626,6 +1738,7 @@ def execute_retrieval_query(
             "row_marker": row_marker,
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
+            "timing": _timing_payload(duration_ms),
             "row_projection": row_projection,
             "row_projection_all": row_projection_all,
             "abstain": abstain,
@@ -1647,6 +1760,8 @@ def execute_retrieval_query(
             persist_cache=persist_semantic_cache,
             allow_online_corpus_embedding=allow_online_corpus_embedding,
             retry_events=semantic_retry_events,
+            timing=timing,
+            workload=workload,
         )
     except ModeExecutionError as exc:
         mapped_code = str(exc.code)
@@ -1659,7 +1774,11 @@ def execute_retrieval_query(
         if not allow_degraded:
             raise ModeExecutionError(code=mapped_code, message=str(exc)) from exc
 
+        lexical_started = time.perf_counter()
         lexical_rows = _run_lexical()
+        timing["lexical_ms"] += (time.perf_counter() - lexical_started) * 1000.0
+        workload["lexical_pool_size"] = int(len(lexical_rows))
+        workload["union_pool_size"] = int(len(lexical_rows))
         for row in lexical_rows:
             _apply_component_scores(
                 row,
@@ -1668,8 +1787,10 @@ def execute_retrieval_query(
                 reranker_score=0.0,
             )
         rows = lexical_rows[:top_k]
+        projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
         row_projection, abstain = _apply_abstain_policy(row_projection_all)
+        timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
             "requested_mode": mode,
@@ -1679,9 +1800,11 @@ def execute_retrieval_query(
             "semantic_retry_events": semantic_retry_events,
             "score_definitions": score_definitions,
             "candidate_generation": {
-                "lexical_pool_size": len(lexical_rows),
-                "semantic_pool_size": 0,
-                "union_pool_size": len(lexical_rows),
+                "lexical_pool_size": int(workload["lexical_pool_size"]),
+                "semantic_pool_size": int(workload["semantic_pool_size"]),
+                "union_pool_size": int(workload["union_pool_size"]),
+                "rerank_pool_size": int(workload["rerank_pool_size"]),
+                "rerank_doc_count": int(workload["rerank_doc_count"]),
             },
             "preflight": preflight,
             "query_text": query_text,
@@ -1690,6 +1813,7 @@ def execute_retrieval_query(
             "row_marker": row_marker,
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
+            "timing": _timing_payload(duration_ms),
             "row_projection": row_projection,
             "row_projection_all": row_projection_all,
             "abstain": abstain,
@@ -1698,6 +1822,7 @@ def execute_retrieval_query(
 
     _annotate_rows_with_row_markers(semantic_rows, row_profiles)
     semantic_rows = _filter_rows_by_row_marker(semantic_rows, row_marker)
+    workload["semantic_pool_size"] = int(len(semantic_rows))
 
     if mode == "semantic":
         for row in semantic_rows:
@@ -1715,8 +1840,11 @@ def execute_retrieval_query(
             )
         )
         rows = semantic_rows[:top_k]
+        workload["union_pool_size"] = int(len(semantic_rows))
+        projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
         row_projection, abstain = _apply_abstain_policy(row_projection_all)
+        timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
             "requested_mode": mode,
@@ -1725,9 +1853,11 @@ def execute_retrieval_query(
             "semantic_retry_events": semantic_retry_events,
             "score_definitions": score_definitions,
             "candidate_generation": {
-                "lexical_pool_size": 0,
-                "semantic_pool_size": len(semantic_rows),
-                "union_pool_size": len(semantic_rows),
+                "lexical_pool_size": int(workload["lexical_pool_size"]),
+                "semantic_pool_size": int(workload["semantic_pool_size"]),
+                "union_pool_size": int(workload["union_pool_size"]),
+                "rerank_pool_size": int(workload["rerank_pool_size"]),
+                "rerank_doc_count": int(workload["rerank_doc_count"]),
             },
             "preflight": preflight,
             "query_text": query_text,
@@ -1736,15 +1866,20 @@ def execute_retrieval_query(
             "row_marker": row_marker,
             "row_count": len(rows),
             "duration_ms": round(duration_ms, 3),
+            "timing": _timing_payload(duration_ms),
             "row_projection": row_projection,
             "row_projection_all": row_projection_all,
             "abstain": abstain,
             "rows": rows,
         }
 
+    lexical_started = time.perf_counter()
     lexical_rows = _run_lexical()
+    timing["lexical_ms"] += (time.perf_counter() - lexical_started) * 1000.0
     lexical_rows = lexical_rows[:candidate_limit]
     semantic_rows = semantic_rows[:candidate_limit]
+    workload["lexical_pool_size"] = int(len(lexical_rows))
+    workload["semantic_pool_size"] = int(len(semantic_rows))
 
     lexical_ids = [_row_identity(row) for row in lexical_rows]
     lexical_values = [float(row.get("lexical_score", 0.0)) for row in lexical_rows]
@@ -1783,8 +1918,11 @@ def execute_retrieval_query(
         )
     )
     rows = hybrid_rows[:top_k]
+    workload["union_pool_size"] = int(len(merged))
+    projection_started = time.perf_counter()
     row_projection_all = _build_row_projection(rows)
     row_projection, abstain = _apply_abstain_policy(row_projection_all)
+    timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
     duration_ms = (time.perf_counter() - started) * 1000.0
     return {
         "requested_mode": mode,
@@ -1793,9 +1931,11 @@ def execute_retrieval_query(
         "semantic_retry_events": semantic_retry_events,
         "score_definitions": score_definitions,
         "candidate_generation": {
-            "lexical_pool_size": len(lexical_rows),
-            "semantic_pool_size": len(semantic_rows),
-            "union_pool_size": len(merged),
+            "lexical_pool_size": int(workload["lexical_pool_size"]),
+            "semantic_pool_size": int(workload["semantic_pool_size"]),
+            "union_pool_size": int(workload["union_pool_size"]),
+            "rerank_pool_size": int(workload["rerank_pool_size"]),
+            "rerank_doc_count": int(workload["rerank_doc_count"]),
         },
         "preflight": preflight,
         "query_text": query_text,
@@ -1804,6 +1944,7 @@ def execute_retrieval_query(
         "row_marker": row_marker,
         "row_count": len(rows),
         "duration_ms": round(duration_ms, 3),
+        "timing": _timing_payload(duration_ms),
         "row_projection": row_projection,
         "row_projection_all": row_projection_all,
         "abstain": abstain,

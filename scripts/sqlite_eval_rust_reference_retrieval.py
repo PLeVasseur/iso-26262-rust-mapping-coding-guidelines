@@ -8,6 +8,8 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -353,6 +355,30 @@ def _aggregate_projection_metrics(case_rows: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+def _aggregate_duration_metrics(case_rows: list[dict[str, Any]]) -> dict[str, float]:
+    if not case_rows:
+        return {
+            "total_ms": 0.0,
+            "avg_ms": 0.0,
+            "p50_ms": 0.0,
+            "p95_ms": 0.0,
+            "max_ms": 0.0,
+        }
+
+    durations = sorted(float(case.get("duration_ms", 0.0)) for case in case_rows)
+    total = sum(durations)
+    count = len(durations)
+    p50_index = int((count - 1) * 0.50)
+    p95_index = int((count - 1) * 0.95)
+    return {
+        "total_ms": round(float(total), 3),
+        "avg_ms": round(float(total) / float(count), 3),
+        "p50_ms": round(float(durations[p50_index]), 3),
+        "p95_ms": round(float(durations[p95_index]), 3),
+        "max_ms": round(float(durations[-1]), 3),
+    }
+
+
 def _mode_skew_alarm(case_rows: list[dict[str, Any]]) -> dict[str, Any]:
     predicted_markers = [
         str(case.get("top_projected_row_marker", "")).strip().lower()
@@ -450,6 +476,42 @@ def _load_build_provenance(db_path: Path) -> dict[str, Any]:
     }
 
 
+def _load_trace_ids_by_context(path: Path | None) -> dict[str, list[str]]:
+    if path is None or not path.exists():
+        return {}
+
+    by_context: dict[str, list[str]] = {}
+    seen_by_context: dict[str, set[str]] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+
+        context = str(payload.get("context", "")).strip()
+        trace_id = str(payload.get("trace_id", "")).strip()
+        if not context or not trace_id:
+            continue
+
+        seen = seen_by_context.setdefault(context, set())
+        if trace_id in seen:
+            continue
+        seen.add(trace_id)
+        by_context.setdefault(context, []).append(trace_id)
+
+    return by_context
+
+
 def evaluate_retrieval_prompts(
     *,
     db_path: Path,
@@ -464,11 +526,29 @@ def evaluate_retrieval_prompts(
     enforce_gates: bool = True,
     model_cache_dir: str = "",
     backend_profile: str = "python-local",
+    backend_attempt_log_path: Path | None = None,
+    root_cause_run_id: str = "",
+    root_cause_cell_id: str = "",
 ) -> dict[str, Any]:
     case_results: list[dict[str, Any]] = []
 
     for prompt in prompts:
         for mode in prompt["modes"]:
+            case_started = time.perf_counter()
+            attempt_context = f"{prompt['prompt_id']}::{mode}"
+            case_semantic_config = replace(
+                semantic_config,
+                attempt_log_path=(
+                    str(backend_attempt_log_path)
+                    if backend_attempt_log_path is not None
+                    else semantic_config.attempt_log_path
+                ),
+                attempt_context=attempt_context,
+                attempt_run_id=str(root_cause_run_id).strip(),
+                attempt_cell_id=str(root_cause_cell_id).strip(),
+                attempt_prompt_id=str(prompt["prompt_id"]).strip(),
+                attempt_mode=str(mode).strip(),
+            )
             try:
                 query_result = execute_retrieval_query(
                     mode=mode,
@@ -480,7 +560,7 @@ def evaluate_retrieval_prompts(
                     top_k=top_k,
                     candidate_limit=candidate_limit,
                     allow_degraded=allow_degraded,
-                    semantic_config=semantic_config,
+                    semantic_config=case_semantic_config,
                     semantic_retries=semantic_retries,
                     persist_semantic_cache=True,
                 )
@@ -500,6 +580,8 @@ def evaluate_retrieval_prompts(
                 status = "fail"
                 reason = str(exc)
 
+            case_duration_ms = (time.perf_counter() - case_started) * 1000.0
+
             rows = list(query_result.get("rows", []))
             relevance = [1 if _is_relevant(row, prompt) else 0 for row in rows[:top_k]]
             hard_negative_set = set(prompt["hard_negative_statement_ids"])
@@ -508,6 +590,13 @@ def evaluate_retrieval_prompts(
                 for row in rows[:top_k]
                 if str(row.get("statement_id", "")) in hard_negative_set
             )
+
+            case_timing = query_result.get("timing")
+            if not isinstance(case_timing, dict):
+                case_timing = {}
+            candidate_generation = query_result.get("candidate_generation")
+            if not isinstance(candidate_generation, dict):
+                candidate_generation = {}
 
             case_result = {
                 "prompt_id": prompt["prompt_id"],
@@ -521,6 +610,19 @@ def evaluate_retrieval_prompts(
                 "executed_mode": query_result.get("executed_mode", mode),
                 "degraded": bool(query_result.get("degraded", False)),
                 "error_code": str(query_result.get("error_code", "")),
+                "duration_ms": round(float(query_result.get("duration_ms", case_duration_ms)), 3),
+                "total_case_ms": round(float(case_timing.get("total_case_ms", case_duration_ms)), 3),
+                "preflight_ms": round(float(case_timing.get("preflight_ms", 0.0)), 3),
+                "lexical_ms": round(float(case_timing.get("lexical_ms", 0.0)), 3),
+                "semantic_embed_ms": round(float(case_timing.get("semantic_embed_ms", 0.0)), 3),
+                "semantic_score_ms": round(float(case_timing.get("semantic_score_ms", 0.0)), 3),
+                "rerank_ms": round(float(case_timing.get("rerank_ms", 0.0)), 3),
+                "projection_ms": round(float(case_timing.get("projection_ms", 0.0)), 3),
+                "lexical_pool_size": int(candidate_generation.get("lexical_pool_size", 0)),
+                "semantic_pool_size": int(candidate_generation.get("semantic_pool_size", 0)),
+                "union_pool_size": int(candidate_generation.get("union_pool_size", 0)),
+                "rerank_pool_size": int(candidate_generation.get("rerank_pool_size", 0)),
+                "rerank_doc_count": int(candidate_generation.get("rerank_doc_count", 0)),
                 "precision_at_k": round(_precision_at_k(relevance, top_k), 6),
                 "mrr_at_k": round(_mrr_at_k(relevance, top_k), 6),
                 "ndcg_at_k": round(_ndcg_at_k(relevance, top_k), 6),
@@ -535,7 +637,24 @@ def evaluate_retrieval_prompts(
                 "hard_negative_rate": round(float(hard_negative_hits) / float(max(1, top_k)), 6),
                 "top_statement_ids": [str(row.get("statement_id", "")) for row in rows[:top_k]],
                 "semantic_retry_events": list(query_result.get("semantic_retry_events", [])),
+                "attempt_context": attempt_context,
                 "min_metric_overrides": dict(prompt.get("min_metrics", {}).get(mode, {})),
+                "timing": {
+                    "preflight_ms": round(float(case_timing.get("preflight_ms", 0.0)), 3),
+                    "lexical_ms": round(float(case_timing.get("lexical_ms", 0.0)), 3),
+                    "semantic_embed_ms": round(float(case_timing.get("semantic_embed_ms", 0.0)), 3),
+                    "semantic_score_ms": round(float(case_timing.get("semantic_score_ms", 0.0)), 3),
+                    "rerank_ms": round(float(case_timing.get("rerank_ms", 0.0)), 3),
+                    "projection_ms": round(float(case_timing.get("projection_ms", 0.0)), 3),
+                    "total_case_ms": round(float(case_timing.get("total_case_ms", case_duration_ms)), 3),
+                },
+                "candidate_generation": {
+                    "lexical_pool_size": int(candidate_generation.get("lexical_pool_size", 0)),
+                    "semantic_pool_size": int(candidate_generation.get("semantic_pool_size", 0)),
+                    "union_pool_size": int(candidate_generation.get("union_pool_size", 0)),
+                    "rerank_pool_size": int(candidate_generation.get("rerank_pool_size", 0)),
+                    "rerank_doc_count": int(candidate_generation.get("rerank_doc_count", 0)),
+                },
             }
 
             row_projection = [
@@ -575,6 +694,14 @@ def evaluate_retrieval_prompts(
                 else ""
             )
             case_results.append(case_result)
+
+    trace_ids_by_context = _load_trace_ids_by_context(backend_attempt_log_path)
+    for case in case_results:
+        context = str(case.get("attempt_context", "")).strip()
+        trace_ids = list(trace_ids_by_context.get(context, []))
+        case["trace_ids"] = trace_ids
+        case["trace_id_count"] = int(len(trace_ids))
+        case["primary_trace_id"] = str(trace_ids[0]) if trace_ids else ""
 
     by_mode: dict[str, list[dict[str, Any]]] = {mode: [] for mode in sorted(MODES)}
     by_mode_retrieval: dict[str, list[dict[str, Any]]] = {mode: [] for mode in sorted(MODES)}
@@ -620,6 +747,15 @@ def evaluate_retrieval_prompts(
     }
     summary_projection = {
         mode: _aggregate_projection_metrics(rows) for mode, rows in by_mode.items()
+    }
+    summary_durations = {
+        mode: _aggregate_duration_metrics(rows) for mode, rows in by_mode.items()
+    }
+    summary_durations_failed = {
+        mode: _aggregate_duration_metrics(
+            [case for case in rows if case.get("status") == "fail"]
+        )
+        for mode, rows in by_mode.items()
     }
     skew_alarms = {
         mode: _mode_skew_alarm(rows) for mode, rows in by_mode.items()
@@ -769,6 +905,11 @@ def evaluate_retrieval_prompts(
             "contract_path": str(contract_path),
             "top_k": int(top_k),
             "candidate_limit": int(candidate_limit),
+            "backend_attempt_log_path": (
+                str(backend_attempt_log_path)
+                if backend_attempt_log_path is not None
+                else ""
+            ),
         },
         "backend": {
             "profile": str(backend_profile).strip(),
@@ -789,6 +930,8 @@ def evaluate_retrieval_prompts(
             "slices": summary_slices,
             "semantic_focus": summary_semantic_focus,
             "projection": summary_projection,
+            "durations": summary_durations,
+            "durations_failed": summary_durations_failed,
             "skew_alarms": skew_alarms,
         },
         "provenance": provenance,
@@ -801,6 +944,24 @@ def evaluate_retrieval_prompts(
 def _default_report_path(root: Path) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return root / ".cache/sqlite_kb/reports/rust_reference" / f"retrieval_eval_{stamp}.json"
+
+
+def _infer_root_cause_run_and_cell(report_path: Path) -> tuple[str, str]:
+    parts = list(report_path.parts)
+    run_id = ""
+    cell_id = ""
+
+    if "root_cause" in parts:
+        idx = parts.index("root_cause")
+        if idx + 1 < len(parts):
+            run_id = str(parts[idx + 1]).strip()
+
+    if "matrix" in parts:
+        idx = parts.index("matrix")
+        if idx + 1 < len(parts):
+            cell_id = str(parts[idx + 1]).strip()
+
+    return run_id, cell_id
 
 
 def parse_args() -> argparse.Namespace:
@@ -831,6 +992,11 @@ def parse_args() -> argparse.Namespace:
         "--report-path",
         default=None,
         help="Optional output path for evaluation report",
+    )
+    parser.add_argument(
+        "--backend-attempt-log-path",
+        default=None,
+        help="Optional JSONL path for semantic/rerank backend attempt traces",
     )
     parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     parser.add_argument("--candidate-limit", type=int, default=DEFAULT_CANDIDATE_LIMIT)
@@ -915,6 +1081,17 @@ def main() -> int:
     report_path = (
         (root / args.report_path).resolve() if args.report_path else _default_report_path(root)
     )
+    root_cause_run_id, root_cause_cell_id = _infer_root_cause_run_and_cell(report_path)
+    backend_attempt_log_path = (
+        (root / args.backend_attempt_log_path).resolve()
+        if args.backend_attempt_log_path
+        else None
+    )
+
+    if backend_attempt_log_path is not None:
+        backend_attempt_log_path.parent.mkdir(parents=True, exist_ok=True)
+        if backend_attempt_log_path.exists():
+            backend_attempt_log_path.unlink()
 
     semantic_config = SemanticBackendConfig(
         base_url=str(args.semantic_base_url),
@@ -978,6 +1155,9 @@ def main() -> int:
             enforce_gates=bool(args.enforce_gates),
             model_cache_dir=str(args.local_model_cache_dir),
             backend_profile=str(args.semantic_backend_profile),
+            backend_attempt_log_path=backend_attempt_log_path,
+            root_cause_run_id=root_cause_run_id,
+            root_cause_cell_id=root_cause_cell_id,
         )
     except (RuntimeError, GuardrailError, OSError) as exc:
         print(f"[eval-rust-reference-retrieval][error] {exc}")

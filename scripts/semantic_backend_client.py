@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import json
+import time
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
 
@@ -19,6 +23,50 @@ class SemanticBackendConfig:
     timeout_sec: float = 10.0
     embed_base_url: str | None = None
     rerank_base_url: str | None = None
+    attempt_log_path: str | None = None
+    attempt_context: str = ""
+    attempt_run_id: str = ""
+    attempt_cell_id: str = ""
+    attempt_prompt_id: str = ""
+    attempt_mode: str = ""
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
+
+
+def _classify_attempt_error(detail: str) -> str:
+    text = str(detail).strip().lower()
+    if "timed out" in text:
+        return "timeout"
+    if "http 404" in text:
+        return "http_404"
+    if "http " in text:
+        return "http"
+    if "non-json" in text or "payload" in text:
+        return "payload"
+    if "request failed" in text:
+        return "connection"
+    return "unknown"
+
+
+def _append_attempt_log(config: SemanticBackendConfig, payload: dict[str, Any]) -> None:
+    target = str(config.attempt_log_path or "").strip()
+    if not target:
+        return
+
+    path = Path(target)
+    entry = dict(payload)
+    entry["timestamp_utc"] = _utc_now()
+    entry["context"] = str(config.attempt_context).strip()
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            json.dump(entry, handle, sort_keys=True)
+            handle.write("\n")
+    except OSError:
+        return
 
 
 def _normalize_base_url(raw: str) -> str:
@@ -45,12 +93,13 @@ def _json_request(
     url: str,
     timeout_sec: float,
     payload: dict[str, Any] | None = None,
+    request_headers: dict[str, str] | None = None,
 ) -> Any:
     data: bytes | None = None
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = dict(request_headers or {})
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
-        headers["Content-Type"] = "application/json"
+        headers.setdefault("Content-Type", "application/json")
 
     req = request.Request(url=url, data=data, method=method, headers=headers)
     try:
@@ -70,6 +119,33 @@ def _json_request(
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise SemanticBackendError(f"Non-JSON response from {url}") from exc
+
+
+def _build_attempt_headers(
+    config: SemanticBackendConfig,
+    *,
+    operation: str,
+    trace_id: str,
+    attempt_index: int,
+    max_attempts: int,
+) -> dict[str, str]:
+    headers: dict[str, str] = {
+        "X-Trace-Id": trace_id,
+        "X-Operation": operation,
+        "X-Attempt-Index": str(int(attempt_index)),
+        "X-Max-Attempts": str(int(max_attempts)),
+        "X-Timeout-Sec": str(float(config.timeout_sec)),
+        "X-Attempt-Context": str(config.attempt_context).strip(),
+    }
+    if str(config.attempt_run_id).strip():
+        headers["X-Run-Id"] = str(config.attempt_run_id).strip()
+    if str(config.attempt_cell_id).strip():
+        headers["X-Cell-Id"] = str(config.attempt_cell_id).strip()
+    if str(config.attempt_prompt_id).strip():
+        headers["X-Prompt-Id"] = str(config.attempt_prompt_id).strip()
+    if str(config.attempt_mode).strip():
+        headers["X-Mode"] = str(config.attempt_mode).strip()
+    return headers
 
 
 def _extract_embeddings(payload: Any) -> list[list[float]]:
@@ -160,22 +236,73 @@ def _try_embedding_request(config: SemanticBackendConfig, texts: list[str]) -> l
         ),
     ]
     errors: list[str] = []
-    for url, payload in variants:
+    for attempt_index, (url, payload) in enumerate(variants, start=1):
+        started = time.perf_counter()
+        trace_id = uuid.uuid4().hex
+        headers = _build_attempt_headers(
+            config,
+            operation="embed",
+            trace_id=trace_id,
+            attempt_index=attempt_index,
+            max_attempts=len(variants),
+        )
         try:
             response = _json_request(
                 "POST",
                 url=url,
                 timeout_sec=config.timeout_sec,
                 payload=payload,
+                request_headers=headers,
             )
             vectors = _extract_embeddings(response)
             if len(vectors) != len(texts):
                 raise SemanticBackendError(
                     f"Embedding count mismatch ({len(vectors)} != {len(texts)})"
                 )
+            _append_attempt_log(
+                config,
+                {
+                    "operation": "embed",
+                    "status": "pass",
+                    "endpoint": url,
+                    "attempt_index": attempt_index,
+                    "max_attempts": len(variants),
+                    "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                    "timeout_sec": float(config.timeout_sec),
+                    "input_count": len(texts),
+                    "trace_id": trace_id,
+                    "request_id": trace_id,
+                    "run_id": str(config.attempt_run_id).strip(),
+                    "cell_id": str(config.attempt_cell_id).strip(),
+                    "prompt_id": str(config.attempt_prompt_id).strip(),
+                    "mode": str(config.attempt_mode).strip(),
+                },
+            )
             return vectors
         except SemanticBackendError as exc:
-            errors.append(str(exc))
+            detail = str(exc)
+            errors.append(detail)
+            _append_attempt_log(
+                config,
+                {
+                    "operation": "embed",
+                    "status": "fail",
+                    "endpoint": url,
+                    "attempt_index": attempt_index,
+                    "max_attempts": len(variants),
+                    "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                    "timeout_sec": float(config.timeout_sec),
+                    "input_count": len(texts),
+                    "error": detail,
+                    "error_class": _classify_attempt_error(detail),
+                    "trace_id": trace_id,
+                    "request_id": trace_id,
+                    "run_id": str(config.attempt_run_id).strip(),
+                    "cell_id": str(config.attempt_cell_id).strip(),
+                    "prompt_id": str(config.attempt_prompt_id).strip(),
+                    "mode": str(config.attempt_mode).strip(),
+                },
+            )
     raise SemanticBackendError("Embedding request failed: " + " | ".join(errors))
 
 
@@ -211,17 +338,70 @@ def _try_rerank_request(
         ),
     ]
     errors: list[str] = []
-    for url, payload in variants:
+    for attempt_index, (url, payload) in enumerate(variants, start=1):
+        started = time.perf_counter()
+        trace_id = uuid.uuid4().hex
+        headers = _build_attempt_headers(
+            config,
+            operation="rerank",
+            trace_id=trace_id,
+            attempt_index=attempt_index,
+            max_attempts=len(variants),
+        )
         try:
             response = _json_request(
                 "POST",
                 url=url,
                 timeout_sec=config.timeout_sec,
                 payload=payload,
+                request_headers=headers,
             )
-            return _extract_reranker_scores(response, expected_count=len(documents))
+            scores = _extract_reranker_scores(response, expected_count=len(documents))
+            _append_attempt_log(
+                config,
+                {
+                    "operation": "rerank",
+                    "status": "pass",
+                    "endpoint": url,
+                    "attempt_index": attempt_index,
+                    "max_attempts": len(variants),
+                    "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                    "timeout_sec": float(config.timeout_sec),
+                    "document_count": len(documents),
+                    "score_count": len(scores),
+                    "trace_id": trace_id,
+                    "request_id": trace_id,
+                    "run_id": str(config.attempt_run_id).strip(),
+                    "cell_id": str(config.attempt_cell_id).strip(),
+                    "prompt_id": str(config.attempt_prompt_id).strip(),
+                    "mode": str(config.attempt_mode).strip(),
+                },
+            )
+            return scores
         except SemanticBackendError as exc:
-            errors.append(str(exc))
+            detail = str(exc)
+            errors.append(detail)
+            _append_attempt_log(
+                config,
+                {
+                    "operation": "rerank",
+                    "status": "fail",
+                    "endpoint": url,
+                    "attempt_index": attempt_index,
+                    "max_attempts": len(variants),
+                    "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+                    "timeout_sec": float(config.timeout_sec),
+                    "document_count": len(documents),
+                    "error": detail,
+                    "error_class": _classify_attempt_error(detail),
+                    "trace_id": trace_id,
+                    "request_id": trace_id,
+                    "run_id": str(config.attempt_run_id).strip(),
+                    "cell_id": str(config.attempt_cell_id).strip(),
+                    "prompt_id": str(config.attempt_prompt_id).strip(),
+                    "mode": str(config.attempt_mode).strip(),
+                },
+            )
     raise SemanticBackendError("Reranker request failed: " + " | ".join(errors))
 
 
