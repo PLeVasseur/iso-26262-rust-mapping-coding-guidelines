@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--contract-path",
-        default="config/sqlite_query_contracts/rust_reference.yaml",
+        default="config/sqlite_query_contracts/rust_reference_chunk.yaml",
         help="Path to rust_reference query contract",
     )
     parser.add_argument(
@@ -368,8 +368,7 @@ def run_smoke(
 
     if corpus_count != statement_count:
         return False, (
-            "statement_corpus_v3_all coverage mismatch: "
-            f"{corpus_count} != {statement_count}"
+            f"statement_corpus_v3_all coverage mismatch: {corpus_count} != {statement_count}"
         )
 
     return True, "rank-1 rust_reference smoke checks passed"

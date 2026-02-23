@@ -1,19 +1,19 @@
 version: 1
-updated_at: '2026-02-22T23:18:21+00:00'
+updated_at: '2026-02-23T21:28:52+00:00'
 databases:
   rust_reference:
     db_name: rust_reference.sqlite
-    current_path: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/current/rust_reference.sqlite
-    snapshot_id: rust-reference-20260222T231820Z
-    snapshot_path: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/snapshots/rust_reference/rust-reference-20260222T231820Z.sqlite
+    current_path: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/current/rust_reference.sqlite
+    snapshot_id: rust-reference-20260223T212852Z
+    snapshot_path: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/snapshots/rust_reference/rust-reference-20260223T212852Z.sqlite
     source:
       kind: rust-reference
       ref: https://doc.rust-lang.org/reference/
       commit_sha: 442cbef9105662887d5eae2882ca551f3726bf28
-      fetched_at: '2026-02-22T23:18:19+00:00'
+      fetched_at: '2026-02-23T21:28:52+00:00'
     query_contract: config/sqlite_query_contracts/rust_reference_chunk.yaml
-    validation_report: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/restart_phase0/20260222T231818Z/reports/rust-reference-20260222T231820Z.json
-    row_metadata_report: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/restart_phase0/20260222T231818Z/reports/rust-reference-20260222T231820Z_table1_row_metadata.json
+    validation_report: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260223T212852Z.json
+    row_metadata_report: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260223T212852Z_table1_row_metadata.json
     semantic_retrieval:
       retrieval_mode: hybrid
       retrieval_corpus: chunk

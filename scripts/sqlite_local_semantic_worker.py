@@ -82,6 +82,7 @@ class _SemanticModelRuntime:
         normalize_embeddings: bool,
         request_span_log_path: Path | None,
         service_role: str,
+        device: str,
     ) -> None:
         self.mode = mode
         self.model_id = model_id
@@ -90,6 +91,7 @@ class _SemanticModelRuntime:
         self.normalize_embeddings = bool(normalize_embeddings)
         self.request_span_log_path = request_span_log_path
         self.service_role = str(service_role).strip() or mode
+        self.requested_device = str(device).strip().lower() or "auto"
 
         self._lock = threading.Lock()
         self._log_lock = threading.Lock()
@@ -97,6 +99,8 @@ class _SemanticModelRuntime:
         self._model: Any | None = None
         self._torch: Any | None = None
         self._device: Any | None = None
+        self._device_label: str = ""
+        self._dtype_label: str = ""
 
     def log_request_span(self, payload: dict[str, Any]) -> None:
         entry = dict(payload)
@@ -111,6 +115,29 @@ class _SemanticModelRuntime:
             return min(int(self.max_length), int(tokenizer_limit))
         return int(self.max_length)
 
+    def _resolve_device(self, torch: Any) -> Any:
+        choice = str(self.requested_device).strip().lower()
+        if choice not in {"auto", "cpu", "mps", "cuda"}:
+            raise RuntimeError(f"Unsupported device selector: {self.requested_device}")
+        if choice == "cpu":
+            return torch.device("cpu")
+        if choice == "cuda":
+            if not bool(torch.cuda.is_available()):
+                raise RuntimeError("Requested device 'cuda' is unavailable")
+            return torch.device("cuda")
+        if choice == "mps":
+            if not bool(torch.backends.mps.is_built()) or not bool(
+                torch.backends.mps.is_available()
+            ):
+                raise RuntimeError("Requested device 'mps' is unavailable")
+            return torch.device("mps")
+
+        if bool(torch.cuda.is_available()):
+            return torch.device("cuda")
+        if bool(torch.backends.mps.is_built()) and bool(torch.backends.mps.is_available()):
+            return torch.device("mps")
+        return torch.device("cpu")
+
     def load(self) -> None:
         try:
             import torch
@@ -124,7 +151,8 @@ class _SemanticModelRuntime:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         self._torch = torch
-        self._device = torch.device("cpu")
+        self._device = self._resolve_device(torch)
+        self._device_label = str(getattr(self._device, "type", self._device)).strip().lower()
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.model_id,
             cache_dir=str(self.cache_dir),
@@ -150,6 +178,19 @@ class _SemanticModelRuntime:
         model.eval()
         model.to(self._device)
 
+        dtype = ""
+        parameters = getattr(model, "parameters", None)
+        if callable(parameters):
+            params = parameters()
+            first_param: Any | None = None
+            try:
+                first_param = next(params)  # type: ignore[arg-type]
+            except (StopIteration, TypeError):
+                first_param = None
+            if first_param is not None:
+                dtype = str(getattr(first_param, "dtype", ""))
+        self._dtype_label = dtype
+
     def embed(self, texts: list[str]) -> tuple[list[list[float]], dict[str, Any]]:
         if self._tokenizer is None or self._model is None or self._torch is None:
             raise RuntimeError("Embedding runtime not loaded")
@@ -171,7 +212,9 @@ class _SemanticModelRuntime:
             tokenize_ms = (time.perf_counter() - tokenize_started) * 1000.0
             input_ids = encoded.get("input_ids")
             effective_seq_len = (
-                int(input_ids.shape[1]) if input_ids is not None and hasattr(input_ids, "shape") else 0
+                int(input_ids.shape[1])
+                if input_ids is not None and hasattr(input_ids, "shape")
+                else 0
             )
 
             model_started = time.perf_counter()
@@ -201,6 +244,8 @@ class _SemanticModelRuntime:
                 "operation": "embed",
                 "doc_count": int(len(texts)),
                 "effective_seq_len": int(effective_seq_len),
+                "device": str(self._device_label),
+                "dtype": str(self._dtype_label),
                 "queue_wait_ms": 0.0,
                 "lock_wait_ms": round(float(lock_wait_ms), 3),
                 "tokenize_ms": round(float(tokenize_ms), 3),
@@ -235,7 +280,9 @@ class _SemanticModelRuntime:
             tokenize_ms = (time.perf_counter() - tokenize_started) * 1000.0
             input_ids = encoded.get("input_ids")
             effective_seq_len = (
-                int(input_ids.shape[1]) if input_ids is not None and hasattr(input_ids, "shape") else 0
+                int(input_ids.shape[1])
+                if input_ids is not None and hasattr(input_ids, "shape")
+                else 0
             )
 
             model_started = time.perf_counter()
@@ -258,6 +305,8 @@ class _SemanticModelRuntime:
                 "operation": "rerank",
                 "doc_count": int(len(documents)),
                 "effective_seq_len": int(effective_seq_len),
+                "device": str(self._device_label),
+                "dtype": str(self._dtype_label),
                 "queue_wait_ms": 0.0,
                 "lock_wait_ms": round(float(lock_wait_ms), 3),
                 "tokenize_ms": round(float(tokenize_ms), 3),
@@ -283,6 +332,8 @@ class _Handler(BaseHTTPRequestHandler):
                     "status": "ok",
                     "mode": self.runtime.mode,
                     "model_id": self.runtime.model_id,
+                    "device": str(self.runtime._device_label),
+                    "dtype": str(self.runtime._dtype_label),
                 },
             )
             return
@@ -334,7 +385,9 @@ class _Handler(BaseHTTPRequestHandler):
             payload = _parse_json_body(self)
             if self.path == "/v1/embeddings":
                 if self.runtime.mode != "embeddings":
-                    _log_failure("endpoint_unavailable", "embed endpoint disabled", operation="embed")
+                    _log_failure(
+                        "endpoint_unavailable", "embed endpoint disabled", operation="embed"
+                    )
                     _json_response(self, 404, {"error": "endpoint_unavailable"})
                     return
 
@@ -375,7 +428,9 @@ class _Handler(BaseHTTPRequestHandler):
 
             if self.path == "/v1/rerank":
                 if self.runtime.mode != "rerank":
-                    _log_failure("endpoint_unavailable", "rerank endpoint disabled", operation="rerank")
+                    _log_failure(
+                        "endpoint_unavailable", "rerank endpoint disabled", operation="rerank"
+                    )
                     _json_response(self, 404, {"error": "endpoint_unavailable"})
                     return
 
@@ -436,7 +491,13 @@ def parse_args() -> argparse.Namespace:
         "--cache-dir",
         default=".cache/sqlite_kb/models/hf",
     )
-    parser.add_argument("--max-length", type=int, default=1024)
+    parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default="auto",
+        help="Device selector (auto resolves cuda -> mps -> cpu)",
+    )
     parser.add_argument(
         "--normalize-embeddings",
         action=argparse.BooleanOptionalAction,
@@ -470,6 +531,7 @@ def main() -> int:
             else None
         ),
         service_role=str(args.service_role),
+        device=str(args.device),
     )
 
     try:

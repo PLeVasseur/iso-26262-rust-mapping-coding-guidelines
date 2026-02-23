@@ -12,9 +12,7 @@ EXIT_RUNTIME_FAIL = 3
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Run semantic/hybrid retrieval CI lane checks"
-    )
+    parser = argparse.ArgumentParser(description="Run semantic/hybrid retrieval CI lane checks")
     parser.add_argument(
         "--semantic-base-url",
         default=os.environ.get("RUST_REF_TEI_BASE_URL", "http://127.0.0.1:8080"),
@@ -43,15 +41,15 @@ def parse_args() -> argparse.Namespace:
         help="Do not stop locally-started backend after checks complete",
     )
     parser.add_argument(
-        "--local-backend-engine",
-        default=os.environ.get("RUST_REF_LOCAL_BACKEND_ENGINE", "python"),
+        "--local-embed-device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default=os.environ.get("RUST_REF_LOCAL_EMBED_DEVICE", "auto"),
     )
     parser.add_argument(
-        "--local-backend-image",
-        default="ghcr.io/huggingface/text-embeddings-inference:cpu-latest",
+        "--local-rerank-device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default=os.environ.get("RUST_REF_LOCAL_RERANK_DEVICE", "auto"),
     )
-    parser.add_argument("--local-embed-container", default="rust-ref-tei-embed")
-    parser.add_argument("--local-rerank-container", default="rust-ref-tei-rerank")
     parser.add_argument(
         "--local-model-cache-dir",
         default=os.environ.get(
@@ -81,9 +79,6 @@ def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
     base_url, embed_url, rerank_url = _resolve_urls(args)
-    backend_profile = "python-local"
-    if str(args.local_backend_engine).strip().lower() == "docker":
-        backend_profile = "tei-docker"
 
     preflight_command = [
         "uv",
@@ -112,10 +107,6 @@ def main() -> int:
                 "python",
                 "scripts/sqlite_local_semantic_backend.py",
                 "start",
-                "--engine",
-                str(args.local_backend_engine),
-                "--image",
-                str(args.local_backend_image),
                 "--embed-base-url",
                 embed_url,
                 "--rerank-base-url",
@@ -124,10 +115,10 @@ def main() -> int:
                 str(args.embed_model_id),
                 "--rerank-model-id",
                 str(args.reranker_model_id),
-                "--embed-container",
-                str(args.local_embed_container),
-                "--rerank-container",
-                str(args.local_rerank_container),
+                "--embed-device",
+                str(args.local_embed_device),
+                "--rerank-device",
+                str(args.local_rerank_device),
                 "--model-cache-dir",
                 str(args.local_model_cache_dir),
                 "--startup-timeout-sec",
@@ -153,6 +144,8 @@ def main() -> int:
             str(args.embed_model_id),
             "--reranker-model-id",
             str(args.reranker_model_id),
+            "--semantic-retries",
+            "0",
         ],
         [
             "uv",
@@ -173,8 +166,8 @@ def main() -> int:
             str(args.top_k),
             "--candidate-limit",
             str(args.candidate_limit),
-            "--semantic-backend-profile",
-            backend_profile,
+            "--semantic-retries",
+            "0",
         ],
     ]
 
@@ -193,12 +186,6 @@ def main() -> int:
                     "python",
                     "scripts/sqlite_local_semantic_backend.py",
                     "stop",
-                    "--engine",
-                    str(args.local_backend_engine),
-                    "--embed-container",
-                    str(args.local_embed_container),
-                    "--rerank-container",
-                    str(args.local_rerank_container),
                 ],
                 root=root,
                 check=False,

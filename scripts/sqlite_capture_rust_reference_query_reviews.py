@@ -83,7 +83,9 @@ def _load_prompt_pack(path: Path) -> list[dict[str, Any]]:
         seen_ids.add(prompt_id)
 
         modes_raw = raw.get("modes")
-        modes = [str(mode).strip().lower() for mode in modes_raw] if isinstance(modes_raw, list) else []
+        modes = (
+            [str(mode).strip().lower() for mode in modes_raw] if isinstance(modes_raw, list) else []
+        )
         modes = [mode for mode in modes if mode in VALID_MODES]
 
         normalized.append(
@@ -135,7 +137,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--contract-path",
-        default="config/sqlite_query_contracts/rust_reference.yaml",
+        default="config/sqlite_query_contracts/rust_reference_chunk.yaml",
         help="Path to rust_reference query contract YAML",
     )
     parser.add_argument(
@@ -176,7 +178,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=float(os.environ.get("RUST_REF_SEMANTIC_TIMEOUT_SEC", "60.0")),
     )
-    parser.add_argument("--semantic-retries", type=int, default=2)
+    parser.add_argument("--semantic-retries", type=int, default=0)
     parser.add_argument(
         "--persist-semantic-cache",
         action=argparse.BooleanOptionalAction,

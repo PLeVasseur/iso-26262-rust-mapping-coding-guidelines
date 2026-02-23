@@ -226,14 +226,6 @@ def _try_embedding_request(config: SemanticBackendConfig, texts: list[str]) -> l
             f"{base}/v1/embeddings",
             {"model": config.embed_model_id, "input": texts},
         ),
-        (
-            f"{base}/embed",
-            {"model": config.embed_model_id, "inputs": texts},
-        ),
-        (
-            f"{base}/embed",
-            {"inputs": texts},
-        ),
     ]
     errors: list[str] = []
     for attempt_index, (url, payload) in enumerate(variants, start=1):
@@ -276,6 +268,10 @@ def _try_embedding_request(config: SemanticBackendConfig, texts: list[str]) -> l
                     "cell_id": str(config.attempt_cell_id).strip(),
                     "prompt_id": str(config.attempt_prompt_id).strip(),
                     "mode": str(config.attempt_mode).strip(),
+                    "fallback_attempted": bool(attempt_index > 1),
+                    "fallback_endpoint": ""
+                    if attempt_index <= 1
+                    else str(variants[attempt_index - 1][0]),
                 },
             )
             return vectors
@@ -301,6 +297,10 @@ def _try_embedding_request(config: SemanticBackendConfig, texts: list[str]) -> l
                     "cell_id": str(config.attempt_cell_id).strip(),
                     "prompt_id": str(config.attempt_prompt_id).strip(),
                     "mode": str(config.attempt_mode).strip(),
+                    "fallback_attempted": bool(attempt_index > 1),
+                    "fallback_endpoint": ""
+                    if attempt_index <= 1
+                    else str(variants[attempt_index - 1][0]),
                 },
             )
     raise SemanticBackendError("Embedding request failed: " + " | ".join(errors))
@@ -317,21 +317,6 @@ def _try_rerank_request(
             f"{base}/v1/rerank",
             {
                 "model": config.reranker_model_id,
-                "query": query_text,
-                "documents": documents,
-            },
-        ),
-        (
-            f"{base}/rerank",
-            {
-                "model": config.reranker_model_id,
-                "query": query_text,
-                "texts": documents,
-            },
-        ),
-        (
-            f"{base}/rerank",
-            {
                 "query": query_text,
                 "documents": documents,
             },
@@ -375,6 +360,10 @@ def _try_rerank_request(
                     "cell_id": str(config.attempt_cell_id).strip(),
                     "prompt_id": str(config.attempt_prompt_id).strip(),
                     "mode": str(config.attempt_mode).strip(),
+                    "fallback_attempted": bool(attempt_index > 1),
+                    "fallback_endpoint": ""
+                    if attempt_index <= 1
+                    else str(variants[attempt_index - 1][0]),
                 },
             )
             return scores
@@ -400,6 +389,10 @@ def _try_rerank_request(
                     "cell_id": str(config.attempt_cell_id).strip(),
                     "prompt_id": str(config.attempt_prompt_id).strip(),
                     "mode": str(config.attempt_mode).strip(),
+                    "fallback_attempted": bool(attempt_index > 1),
+                    "fallback_endpoint": ""
+                    if attempt_index <= 1
+                    else str(variants[attempt_index - 1][0]),
                 },
             )
     raise SemanticBackendError("Reranker request failed: " + " | ".join(errors))

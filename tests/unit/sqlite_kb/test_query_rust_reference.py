@@ -282,7 +282,11 @@ class QueryRustReferenceTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertTrue(bool(first.get("enabled", False)))
         self.assertEqual(first.get("original_query"), "unsafe diagnostics")
-        self.assertEqual(first.get("rewritten_query"), "unsafe diagnostics invariant boundary review lint warning policy architecture abstraction trait interface intent semantics")
+        self.assertEqual(
+            first.get("rewritten_query"),
+            "unsafe diagnostics invariant boundary review lint warning policy "
+            "architecture abstraction trait interface intent semantics",
+        )
         self.assertEqual(
             first.get("added_terms"),
             [

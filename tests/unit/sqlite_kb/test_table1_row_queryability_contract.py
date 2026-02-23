@@ -69,7 +69,8 @@ class Table1RowQueryabilityContractTests(unittest.TestCase):
                 try:
                     req_len = int(
                         connection.execute(
-                            "SELECT LENGTH(requirement_text) FROM table1_rows WHERE row_node_id = ?",
+                            "SELECT LENGTH(requirement_text) "
+                            "FROM table1_rows WHERE row_node_id = ?",
                             (row["row_node_id"],),
                         ).fetchone()[0]
                     )

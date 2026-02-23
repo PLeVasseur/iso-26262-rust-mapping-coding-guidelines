@@ -20,9 +20,9 @@ from sqlite_query_rust_reference import (
     _ensure_embedding_cache_table,
     _filter_rows_by_row_marker,
     _load_embedding_cache,
-    _resolve_retrieval_contract_profile,
     _load_statement_corpus,
     _load_table1_row_requirements,
+    _resolve_retrieval_contract_profile,
     _sha256_text,
     _with_semantic_retries,
 )
@@ -105,7 +105,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--contract-path",
-        default="config/sqlite_query_contracts/rust_reference.yaml",
+        default="config/sqlite_query_contracts/rust_reference_chunk.yaml",
         help="Path to rust_reference query contract",
     )
     parser.add_argument(
@@ -158,7 +158,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--semantic-retries",
         type=int,
-        default=2,
+        default=0,
         help="Retry count for embedding calls",
     )
     parser.add_argument(
@@ -338,9 +338,7 @@ def main() -> int:
             model_id=config.embed_model_id,
             corpus_rows=corpus_rows,
         )
-        missing_rows = [
-            row for row in corpus_rows if str(row["statement_id"]) not in cached
-        ]
+        missing_rows = [row for row in corpus_rows if str(row["statement_id"]) not in cached]
 
         _append_progress_event(
             progress_log_path,
@@ -390,9 +388,8 @@ def main() -> int:
 
             now = time.perf_counter()
             batch_index = (offset // max(1, int(args.batch_size))) + 1
-            batch_count = (
-                (len(missing_rows) + max(1, int(args.batch_size)) - 1)
-                // max(1, int(args.batch_size))
+            batch_count = (len(missing_rows) + max(1, int(args.batch_size)) - 1) // max(
+                1, int(args.batch_size)
             )
             is_final_batch = offset + len(batch_rows) >= len(missing_rows)
             if is_final_batch or (now - last_progress_emit) >= progress_interval_sec:

@@ -323,10 +323,12 @@ def _aggregate_projection_metrics(case_rows: list[dict[str, Any]]) -> dict[str, 
             "abstain_recall": 0.0,
         }
 
-    macro_f1 = sum(float(case.get("projection_f1", 0.0)) for case in case_rows) / float(len(case_rows))
-    macro_precision = sum(float(case.get("projection_precision", 0.0)) for case in case_rows) / float(
+    macro_f1 = sum(float(case.get("projection_f1", 0.0)) for case in case_rows) / float(
         len(case_rows)
     )
+    macro_precision = sum(
+        float(case.get("projection_precision", 0.0)) for case in case_rows
+    ) / float(len(case_rows))
     macro_recall = sum(float(case.get("projection_recall", 0.0)) for case in case_rows) / float(
         len(case_rows)
     )
@@ -349,7 +351,9 @@ def _aggregate_projection_metrics(case_rows: list[dict[str, Any]]) -> dict[str, 
             6,
         ),
         "abstain_recall": round(
-            float(abstain_tp) / float(abstain_expected_count) if abstain_expected_count > 0 else 1.0,
+            float(abstain_tp) / float(abstain_expected_count)
+            if abstain_expected_count > 0
+            else 1.0,
             6,
         ),
     }
@@ -387,8 +391,7 @@ def _mode_skew_alarm(case_rows: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     total = len(predicted_markers)
     distribution = {
-        marker: predicted_markers.count(marker)
-        for marker in sorted(set(predicted_markers))
+        marker: predicted_markers.count(marker) for marker in sorted(set(predicted_markers))
     }
 
     max_row_share = 0.0
@@ -403,22 +406,19 @@ def _mode_skew_alarm(case_rows: list[dict[str, Any]]) -> dict[str, Any]:
             row_entropy = row_entropy / max_entropy
         row_gini = 1.0 - sum(p * p for p in probabilities)
 
-    abstain_rate = (
-        float(sum(1 for case in case_rows if bool(case.get("abstain_active", False))))
-        / float(max(1, len(case_rows)))
-    )
+    abstain_rate = float(
+        sum(1 for case in case_rows if bool(case.get("abstain_active", False)))
+    ) / float(max(1, len(case_rows)))
     expected_abstain_count = sum(1 for case in case_rows if bool(case.get("expect_abstain", False)))
 
     alerts: list[str] = []
     if max_row_share > float(SKEW_THRESHOLDS["max_row_share"]):
-        alerts.append(
-            f"max_row_share>{SKEW_THRESHOLDS['max_row_share']}: {max_row_share:.4f}"
-        )
+        alerts.append(f"max_row_share>{SKEW_THRESHOLDS['max_row_share']}: {max_row_share:.4f}")
     if total > 1 and row_entropy < float(SKEW_THRESHOLDS["min_row_entropy"]):
-        alerts.append(
-            f"row_entropy<{SKEW_THRESHOLDS['min_row_entropy']}: {row_entropy:.4f}"
-        )
-    if expected_abstain_count > 0 and abstain_rate < float(SKEW_THRESHOLDS["min_abstain_rate_with_expected"]):
+        alerts.append(f"row_entropy<{SKEW_THRESHOLDS['min_row_entropy']}: {row_entropy:.4f}")
+    if expected_abstain_count > 0 and abstain_rate < float(
+        SKEW_THRESHOLDS["min_abstain_rate_with_expected"]
+    ):
         alerts.append(
             "abstain_rate_collapse: "
             f"{abstain_rate:.4f} < {SKEW_THRESHOLDS['min_abstain_rate_with_expected']}"
@@ -448,13 +448,16 @@ def _load_build_provenance(db_path: Path) -> dict[str, Any]:
     try:
         connection.row_factory = sqlite3.Row
         kb_metadata = connection.execute(
-            "SELECT kb_id, source_name, source_revision, extractor_version, built_at, notes FROM kb_metadata LIMIT 1"
+            "SELECT kb_id, source_name, source_revision, extractor_version, "
+            "built_at, notes FROM kb_metadata LIMIT 1"
         ).fetchone()
         snapshot = connection.execute(
             "SELECT snapshot_id, commit_sha, source_url, fetched_at, sha256 FROM snapshots LIMIT 1"
         ).fetchone()
         counts = connection.execute(
-            "SELECT (SELECT COUNT(*) FROM chunks) AS chunk_count, (SELECT COUNT(*) FROM statements) AS statement_count, (SELECT COUNT(*) FROM docs) AS doc_count"
+            "SELECT (SELECT COUNT(*) FROM chunks) AS chunk_count, "
+            "(SELECT COUNT(*) FROM statements) AS statement_count, "
+            "(SELECT COUNT(*) FROM docs) AS doc_count"
         ).fetchone()
     except sqlite3.Error:
         return {
@@ -529,6 +532,9 @@ def evaluate_retrieval_prompts(
     backend_attempt_log_path: Path | None = None,
     root_cause_run_id: str = "",
     root_cause_cell_id: str = "",
+    hybrid_fusion_method: str = "weighted-v1",
+    hybrid_rrf_k: int = 60,
+    hybrid_rrf_window: int = 0,
 ) -> dict[str, Any]:
     case_results: list[dict[str, Any]] = []
 
@@ -563,6 +569,9 @@ def evaluate_retrieval_prompts(
                     semantic_config=case_semantic_config,
                     semantic_retries=semantic_retries,
                     persist_semantic_cache=True,
+                    hybrid_fusion_method=hybrid_fusion_method,
+                    hybrid_rrf_k=hybrid_rrf_k,
+                    hybrid_rrf_window=hybrid_rrf_window,
                 )
                 status = "pass"
                 reason = ""
@@ -586,9 +595,7 @@ def evaluate_retrieval_prompts(
             relevance = [1 if _is_relevant(row, prompt) else 0 for row in rows[:top_k]]
             hard_negative_set = set(prompt["hard_negative_statement_ids"])
             hard_negative_hits = sum(
-                1
-                for row in rows[:top_k]
-                if str(row.get("statement_id", "")) in hard_negative_set
+                1 for row in rows[:top_k] if str(row.get("statement_id", "")) in hard_negative_set
             )
 
             case_timing = query_result.get("timing")
@@ -611,7 +618,9 @@ def evaluate_retrieval_prompts(
                 "degraded": bool(query_result.get("degraded", False)),
                 "error_code": str(query_result.get("error_code", "")),
                 "duration_ms": round(float(query_result.get("duration_ms", case_duration_ms)), 3),
-                "total_case_ms": round(float(case_timing.get("total_case_ms", case_duration_ms)), 3),
+                "total_case_ms": round(
+                    float(case_timing.get("total_case_ms", case_duration_ms)), 3
+                ),
                 "preflight_ms": round(float(case_timing.get("preflight_ms", 0.0)), 3),
                 "lexical_ms": round(float(case_timing.get("lexical_ms", 0.0)), 3),
                 "semantic_embed_ms": round(float(case_timing.get("semantic_embed_ms", 0.0)), 3),
@@ -646,7 +655,9 @@ def evaluate_retrieval_prompts(
                     "semantic_score_ms": round(float(case_timing.get("semantic_score_ms", 0.0)), 3),
                     "rerank_ms": round(float(case_timing.get("rerank_ms", 0.0)), 3),
                     "projection_ms": round(float(case_timing.get("projection_ms", 0.0)), 3),
-                    "total_case_ms": round(float(case_timing.get("total_case_ms", case_duration_ms)), 3),
+                    "total_case_ms": round(
+                        float(case_timing.get("total_case_ms", case_duration_ms)), 3
+                    ),
                 },
                 "candidate_generation": {
                     "lexical_pool_size": int(candidate_generation.get("lexical_pool_size", 0)),
@@ -658,9 +669,7 @@ def evaluate_retrieval_prompts(
             }
 
             row_projection = [
-                row
-                for row in list(query_result.get("row_projection", []))
-                if isinstance(row, dict)
+                row for row in list(query_result.get("row_projection", [])) if isinstance(row, dict)
             ]
             predicted_markers = {
                 str(row.get("row_marker", "")).strip().lower()
@@ -711,9 +720,7 @@ def evaluate_retrieval_prompts(
     by_slice_mode_retrieval: dict[str, dict[str, list[dict[str, Any]]]] = {
         slice_name: {mode: [] for mode in sorted(MODES)} for slice_name in sorted(SLICES)
     }
-    semantic_focus_by_mode: dict[str, list[dict[str, Any]]] = {
-        mode: [] for mode in sorted(MODES)
-    }
+    semantic_focus_by_mode: dict[str, list[dict[str, Any]]] = {mode: [] for mode in sorted(MODES)}
     semantic_focus_by_mode_retrieval: dict[str, list[dict[str, Any]]] = {
         mode: [] for mode in sorted(MODES)
     }
@@ -732,12 +739,11 @@ def evaluate_retrieval_prompts(
         if case["status"] == "fail":
             failures += 1
 
-    summary_modes = {mode: _aggregate_mode_metrics(rows) for mode, rows in by_mode_retrieval.items()}
+    summary_modes = {
+        mode: _aggregate_mode_metrics(rows) for mode, rows in by_mode_retrieval.items()
+    }
     summary_slices = {
-        slice_name: {
-            mode: _aggregate_mode_metrics(rows)
-            for mode, rows in per_mode.items()
-        }
+        slice_name: {mode: _aggregate_mode_metrics(rows) for mode, rows in per_mode.items()}
         for slice_name, per_mode in by_slice_mode_retrieval.items()
     }
 
@@ -748,18 +754,12 @@ def evaluate_retrieval_prompts(
     summary_projection = {
         mode: _aggregate_projection_metrics(rows) for mode, rows in by_mode.items()
     }
-    summary_durations = {
-        mode: _aggregate_duration_metrics(rows) for mode, rows in by_mode.items()
-    }
+    summary_durations = {mode: _aggregate_duration_metrics(rows) for mode, rows in by_mode.items()}
     summary_durations_failed = {
-        mode: _aggregate_duration_metrics(
-            [case for case in rows if case.get("status") == "fail"]
-        )
+        mode: _aggregate_duration_metrics([case for case in rows if case.get("status") == "fail"])
         for mode, rows in by_mode.items()
     }
-    skew_alarms = {
-        mode: _mode_skew_alarm(rows) for mode, rows in by_mode.items()
-    }
+    skew_alarms = {mode: _mode_skew_alarm(rows) for mode, rows in by_mode.items()}
 
     degraded_counts = {
         mode: sum(1 for case in rows if bool(case.get("degraded", False)))
@@ -905,10 +905,11 @@ def evaluate_retrieval_prompts(
             "contract_path": str(contract_path),
             "top_k": int(top_k),
             "candidate_limit": int(candidate_limit),
+            "hybrid_fusion_method": str(hybrid_fusion_method).strip(),
+            "hybrid_rrf_k": int(hybrid_rrf_k),
+            "hybrid_rrf_window": int(hybrid_rrf_window),
             "backend_attempt_log_path": (
-                str(backend_attempt_log_path)
-                if backend_attempt_log_path is not None
-                else ""
+                str(backend_attempt_log_path) if backend_attempt_log_path is not None else ""
             ),
         },
         "backend": {
@@ -1000,6 +1001,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     parser.add_argument("--candidate-limit", type=int, default=DEFAULT_CANDIDATE_LIMIT)
+    parser.add_argument(
+        "--hybrid-fusion-method",
+        choices=("weighted-v1", "weighted-v2", "rrf-v1"),
+        default=os.environ.get("RUST_REF_HYBRID_FUSION_METHOD", "weighted-v1"),
+    )
+    parser.add_argument(
+        "--hybrid-rrf-k",
+        type=int,
+        default=int(os.environ.get("RUST_REF_HYBRID_RRF_K", "60")),
+    )
+    parser.add_argument(
+        "--hybrid-rrf-window",
+        type=int,
+        default=0,
+        help="Optional rank window for RRF (0 means auto)",
+    )
     parser.add_argument("--allow-degraded", action="store_true")
     parser.add_argument(
         "--semantic-base-url",
@@ -1026,7 +1043,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=float(os.environ.get("RUST_REF_SEMANTIC_TIMEOUT_SEC", "60.0")),
     )
-    parser.add_argument("--semantic-retries", type=int, default=2)
+    parser.add_argument("--semantic-retries", type=int, default=0)
     parser.add_argument(
         "--enforce-gates",
         action=argparse.BooleanOptionalAction,
@@ -1045,15 +1062,15 @@ def parse_args() -> argparse.Namespace:
         help="Do not stop locally-started backend after evaluation",
     )
     parser.add_argument(
-        "--local-backend-engine",
-        default=os.environ.get("RUST_REF_LOCAL_BACKEND_ENGINE", "python"),
+        "--local-embed-device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default=os.environ.get("RUST_REF_LOCAL_EMBED_DEVICE", "auto"),
     )
     parser.add_argument(
-        "--local-backend-image",
-        default="ghcr.io/huggingface/text-embeddings-inference:cpu-latest",
+        "--local-rerank-device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default=os.environ.get("RUST_REF_LOCAL_RERANK_DEVICE", "auto"),
     )
-    parser.add_argument("--local-embed-container", default="rust-ref-tei-embed")
-    parser.add_argument("--local-rerank-container", default="rust-ref-tei-rerank")
     parser.add_argument(
         "--local-model-cache-dir",
         default=os.environ.get(
@@ -1062,11 +1079,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--local-startup-timeout-sec", type=float, default=180.0)
-    parser.add_argument(
-        "--semantic-backend-profile",
-        default=os.environ.get("RUST_REF_SEMANTIC_BACKEND_PROFILE", "python-local"),
-        help="Semantic backend profile label written to reports",
-    )
     return parser.parse_args()
 
 
@@ -1083,9 +1095,7 @@ def main() -> int:
     )
     root_cause_run_id, root_cause_cell_id = _infer_root_cause_run_and_cell(report_path)
     backend_attempt_log_path = (
-        (root / args.backend_attempt_log_path).resolve()
-        if args.backend_attempt_log_path
-        else None
+        (root / args.backend_attempt_log_path).resolve() if args.backend_attempt_log_path else None
     )
 
     if backend_attempt_log_path is not None:
@@ -1110,10 +1120,6 @@ def main() -> int:
                 sys.executable,
                 str(root / "scripts/sqlite_local_semantic_backend.py"),
                 "start",
-                "--engine",
-                str(args.local_backend_engine),
-                "--image",
-                str(args.local_backend_image),
                 "--embed-base-url",
                 resolve_embed_base_url(semantic_config),
                 "--rerank-base-url",
@@ -1122,10 +1128,10 @@ def main() -> int:
                 str(args.embed_model_id),
                 "--rerank-model-id",
                 str(args.reranker_model_id),
-                "--embed-container",
-                str(args.local_embed_container),
-                "--rerank-container",
-                str(args.local_rerank_container),
+                "--embed-device",
+                str(args.local_embed_device),
+                "--rerank-device",
+                str(args.local_rerank_device),
                 "--model-cache-dir",
                 str(args.local_model_cache_dir),
                 "--startup-timeout-sec",
@@ -1154,10 +1160,13 @@ def main() -> int:
             semantic_retries=int(args.semantic_retries),
             enforce_gates=bool(args.enforce_gates),
             model_cache_dir=str(args.local_model_cache_dir),
-            backend_profile=str(args.semantic_backend_profile),
+            backend_profile="python-local",
             backend_attempt_log_path=backend_attempt_log_path,
             root_cause_run_id=root_cause_run_id,
             root_cause_cell_id=root_cause_cell_id,
+            hybrid_fusion_method=str(args.hybrid_fusion_method),
+            hybrid_rrf_k=int(args.hybrid_rrf_k),
+            hybrid_rrf_window=int(args.hybrid_rrf_window),
         )
     except (RuntimeError, GuardrailError, OSError) as exc:
         print(f"[eval-rust-reference-retrieval][error] {exc}")
@@ -1169,12 +1178,6 @@ def main() -> int:
                     sys.executable,
                     str(root / "scripts/sqlite_local_semantic_backend.py"),
                     "stop",
-                    "--engine",
-                    str(args.local_backend_engine),
-                    "--embed-container",
-                    str(args.local_embed_container),
-                    "--rerank-container",
-                    str(args.local_rerank_container),
                 ],
                 check=False,
             )

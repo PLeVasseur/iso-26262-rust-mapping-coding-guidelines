@@ -17,10 +17,6 @@ from semantic_backend_client import SemanticBackendConfig, check_semantic_backen
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
 
-DEFAULT_ENGINE = "python"
-DEFAULT_IMAGE = "ghcr.io/huggingface/text-embeddings-inference:cpu-latest"
-DEFAULT_EMBED_CONTAINER = "rust-ref-tei-embed"
-DEFAULT_RERANK_CONTAINER = "rust-ref-tei-rerank"
 DEFAULT_RUNTIME_DIR = ".cache/sqlite_kb/runtime"
 DEFAULT_WORKER_SCRIPT = "scripts/sqlite_local_semantic_worker.py"
 
@@ -54,8 +50,7 @@ def _require_loopback_url(raw_url: str) -> tuple[str, int]:
     host = str(parsed.hostname or "").lower()
     if host not in {"127.0.0.1", "localhost"}:
         raise RuntimeError(
-            "Local backend URLs must use loopback host (127.0.0.1 or localhost): "
-            f"{raw_url}"
+            f"Local backend URLs must use loopback host (127.0.0.1 or localhost): {raw_url}"
         )
 
     port = parsed.port
@@ -122,75 +117,6 @@ def _stop_pid(pid: int, timeout_sec: float = 8.0) -> str:
     return "killed"
 
 
-def _container_state(engine: str, name: str) -> dict[str, bool]:
-    completed = _run(
-        [engine, "container", "inspect", "--format", "{{.State.Running}}", name],
-        check=False,
-        capture_output=True,
-    )
-    if completed.returncode != 0:
-        return {"exists": False, "running": False}
-
-    return {
-        "exists": True,
-        "running": str(completed.stdout).strip().lower() == "true",
-    }
-
-
-def _docker_run_command(
-    *,
-    engine: str,
-    image: str,
-    container_name: str,
-    model_id: str,
-    host_port: int,
-    cache_dir: Path,
-) -> list[str]:
-    return [
-        engine,
-        "run",
-        "-d",
-        "--name",
-        container_name,
-        "--pull",
-        "missing",
-        "-p",
-        f"127.0.0.1:{host_port}:80",
-        "-v",
-        f"{cache_dir.resolve()}:/data",
-        image,
-        "--model-id",
-        model_id,
-    ]
-
-
-def _start_container(
-    *,
-    engine: str,
-    image: str,
-    container_name: str,
-    model_id: str,
-    host_port: int,
-    cache_dir: Path,
-) -> str:
-    state = _container_state(engine, container_name)
-    if state["running"]:
-        return "already_running"
-    if state["exists"]:
-        _run([engine, "rm", "-f", container_name], check=False)
-
-    command = _docker_run_command(
-        engine=engine,
-        image=image,
-        container_name=container_name,
-        model_id=model_id,
-        host_port=host_port,
-        cache_dir=cache_dir,
-    )
-    _run(command)
-    return "started"
-
-
 def _python_state_file(runtime_dir: Path) -> Path:
     return runtime_dir / "local_semantic_backend_state.json"
 
@@ -230,6 +156,7 @@ def _python_worker_command(
     cache_dir: Path,
     service_role: str,
     request_span_log_path: Path | None,
+    device: str,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -246,6 +173,8 @@ def _python_worker_command(
         str(cache_dir),
         "--service-role",
         service_role,
+        "--device",
+        str(device).strip().lower(),
     ]
     if request_span_log_path is not None:
         command.extend(["--request-span-log-path", str(request_span_log_path)])
@@ -277,19 +206,6 @@ def _python_workers_running(runtime_dir: Path) -> bool:
     except (TypeError, ValueError):
         return False
     return _pid_is_running(embed_pid) and _pid_is_running(rerank_pid)
-
-
-def _docker_logs(engine: str, embed_container: str, rerank_container: str) -> dict[str, str]:
-    diagnostics: dict[str, str] = {}
-    for name in (embed_container, rerank_container):
-        logs = _run(
-            [engine, "logs", "--tail", "40", name],
-            check=False,
-            capture_output=True,
-        )
-        payload = (logs.stdout or "") + ("\n" + logs.stderr if logs.stderr else "")
-        diagnostics[name] = payload.strip()
-    return diagnostics
 
 
 def _wait_until_ready(
@@ -363,6 +279,8 @@ def _start_python_processes(
     rerank_model_id: str,
     model_cache_dir: Path,
     worker_span_log_path: Path | None,
+    embed_device: str,
+    rerank_device: str,
 ) -> dict[str, object]:
     if not worker_script.exists():
         raise RuntimeError(f"Python worker script does not exist: {worker_script}")
@@ -399,6 +317,7 @@ def _start_python_processes(
         cache_dir=model_cache_dir,
         service_role="embed",
         request_span_log_path=worker_span_log_path,
+        device=embed_device,
     )
     rerank_cmd = _python_worker_command(
         worker_script=worker_script,
@@ -409,6 +328,7 @@ def _start_python_processes(
         cache_dir=model_cache_dir,
         service_role="rerank",
         request_span_log_path=worker_span_log_path,
+        device=rerank_device,
     )
 
     with embed_log.open("w", encoding="utf-8") as embed_handle:
@@ -447,6 +367,7 @@ def _start_python_processes(
                 "host": embed_host,
                 "port": embed_port,
                 "model_id": embed_model_id,
+                "device": str(embed_device).strip().lower(),
             },
             "rerank": {
                 "pid": int(rerank_proc.pid),
@@ -454,6 +375,7 @@ def _start_python_processes(
                 "host": rerank_host,
                 "port": rerank_port,
                 "model_id": rerank_model_id,
+                "device": str(rerank_device).strip().lower(),
             },
         },
     )
@@ -465,11 +387,6 @@ def _start_python_processes(
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--engine",
-        default=os.environ.get("RUST_REF_LOCAL_BACKEND_ENGINE", DEFAULT_ENGINE),
-        help="Local backend engine: python (default) or docker",
-    )
     parser.add_argument(
         "--embed-base-url",
         default=os.environ.get("RUST_REF_TEI_EMBED_BASE_URL", "http://127.0.0.1:8080"),
@@ -506,14 +423,16 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help="Optional JSONL path for worker request span telemetry",
     )
     parser.add_argument(
-        "--embed-container",
-        default=DEFAULT_EMBED_CONTAINER,
-        help="Container name for embedding service (docker engine)",
+        "--embed-device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default="auto",
+        help="Device selector for embedding worker",
     )
     parser.add_argument(
-        "--rerank-container",
-        default=DEFAULT_RERANK_CONTAINER,
-        help="Container name for reranker service (docker engine)",
+        "--rerank-device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default="auto",
+        help="Device selector for reranker worker",
     )
 
 
@@ -525,7 +444,6 @@ def parse_args() -> argparse.Namespace:
 
     start_parser = subparsers.add_parser("start", help="Start local embedding/reranker services")
     _add_common_args(start_parser)
-    start_parser.add_argument("--image", default=DEFAULT_IMAGE, help="TEI image for docker engine")
     start_parser.add_argument(
         "--model-cache-dir",
         default=os.environ.get(
@@ -556,7 +474,6 @@ def parse_args() -> argparse.Namespace:
 
 
 def _command_start(args: argparse.Namespace) -> dict[str, object]:
-    engine = str(args.engine).strip().lower() or DEFAULT_ENGINE
     embed_host, embed_port = _require_loopback_url(str(args.embed_base_url))
     rerank_host, rerank_port = _require_loopback_url(str(args.rerank_base_url))
     if embed_port == rerank_port:
@@ -571,66 +488,36 @@ def _command_start(args: argparse.Namespace) -> dict[str, object]:
 
     diagnostics_provider: Callable[[], dict[str, str]] | None = None
     liveness_probe: Callable[[], bool] | None = None
-    if engine == "python":
-        worker_script = Path(str(args.python_worker_script)).resolve()
-        worker_span_log_path = (
-            Path(str(args.worker_span_log_path)).resolve()
-            if str(args.worker_span_log_path).strip()
-            else None
-        )
-        actions = _start_python_processes(
-            runtime_dir=runtime_dir,
-            worker_script=worker_script,
-            embed_host=embed_host,
-            embed_port=embed_port,
-            rerank_host=rerank_host,
-            rerank_port=rerank_port,
-            embed_model_id=str(args.embed_model_id),
-            rerank_model_id=str(args.rerank_model_id),
-            model_cache_dir=cache_dir,
-            worker_span_log_path=worker_span_log_path,
-        )
-        def _python_diagnostics() -> dict[str, str]:
-            return _python_logs(runtime_dir)
+    worker_script = Path(str(args.python_worker_script)).resolve()
+    worker_span_log_path = (
+        Path(str(args.worker_span_log_path)).resolve()
+        if str(args.worker_span_log_path).strip()
+        else None
+    )
+    actions = _start_python_processes(
+        runtime_dir=runtime_dir,
+        worker_script=worker_script,
+        embed_host=embed_host,
+        embed_port=embed_port,
+        rerank_host=rerank_host,
+        rerank_port=rerank_port,
+        embed_model_id=str(args.embed_model_id),
+        rerank_model_id=str(args.rerank_model_id),
+        model_cache_dir=cache_dir,
+        worker_span_log_path=worker_span_log_path,
+        embed_device=str(args.embed_device),
+        rerank_device=str(args.rerank_device),
+    )
 
-        diagnostics_provider = _python_diagnostics
+    def _python_diagnostics() -> dict[str, str]:
+        return _python_logs(runtime_dir)
 
-        def _python_liveness() -> bool:
-            return _python_workers_running(runtime_dir)
+    diagnostics_provider = _python_diagnostics
 
-        liveness_probe = _python_liveness
-        image = ""
-    elif engine == "docker":
-        _run([engine, "--version"])
-        actions = {
-            "embed_action": _start_container(
-                engine=engine,
-                image=str(args.image),
-                container_name=str(args.embed_container),
-                model_id=str(args.embed_model_id),
-                host_port=embed_port,
-                cache_dir=cache_dir,
-            ),
-            "rerank_action": _start_container(
-                engine=engine,
-                image=str(args.image),
-                container_name=str(args.rerank_container),
-                model_id=str(args.rerank_model_id),
-                host_port=rerank_port,
-                cache_dir=cache_dir,
-            ),
-        }
-        def _docker_diagnostics() -> dict[str, str]:
-            return _docker_logs(
-                engine,
-                str(args.embed_container),
-                str(args.rerank_container),
-            )
+    def _python_liveness() -> bool:
+        return _python_workers_running(runtime_dir)
 
-        diagnostics_provider = _docker_diagnostics
-        image = str(args.image)
-    else:
-        raise RuntimeError(f"Unsupported local backend engine: {engine}")
+    liveness_probe = _python_liveness
 
     try:
         readiness = _wait_until_ready(
@@ -643,21 +530,19 @@ def _command_start(args: argparse.Namespace) -> dict[str, object]:
             liveness_probe=liveness_probe,
         )
     except RuntimeError:
-        if engine == "python":
-            _stop_python_processes(runtime_dir)
+        _stop_python_processes(runtime_dir)
         raise
 
     return {
         "ok": True,
-        "engine": engine,
-        "backend_profile": "python-local" if engine == "python" else "tei-docker",
-        "image": image,
+        "engine": "python",
+        "backend_profile": "python-local",
         "embed_action": str(actions.get("embed_action", "unknown")),
         "rerank_action": str(actions.get("rerank_action", "unknown")),
         "embed_base_url": str(args.embed_base_url),
         "rerank_base_url": str(args.rerank_base_url),
-        "embed_container": str(args.embed_container),
-        "rerank_container": str(args.rerank_container),
+        "embed_device": str(args.embed_device).strip().lower(),
+        "rerank_device": str(args.rerank_device).strip().lower(),
         "runtime_dir": str(runtime_dir),
         "model_cache_dir": str(cache_dir),
         "worker_span_log_path": str(args.worker_span_log_path),
@@ -666,67 +551,46 @@ def _command_start(args: argparse.Namespace) -> dict[str, object]:
 
 
 def _command_stop(args: argparse.Namespace) -> dict[str, object]:
-    engine = str(args.engine).strip().lower() or DEFAULT_ENGINE
     runtime_dir = Path(str(args.runtime_dir)).resolve()
-
-    if engine == "python":
-        actions = _stop_python_processes(runtime_dir)
-    elif engine == "docker":
-        actions = {}
-        for name in (str(args.embed_container), str(args.rerank_container)):
-            state = _container_state(engine, name)
-            if not state["exists"]:
-                actions[name] = "not_found"
-                continue
-            _run([engine, "rm", "-f", name], check=False)
-            actions[name] = "removed"
-    else:
-        raise RuntimeError(f"Unsupported local backend engine: {engine}")
+    actions = _stop_python_processes(runtime_dir)
 
     return {
         "ok": True,
-        "engine": engine,
+        "engine": "python",
         "actions": actions,
     }
 
 
 def _command_status(args: argparse.Namespace) -> dict[str, object]:
-    engine = str(args.engine).strip().lower() or DEFAULT_ENGINE
     payload: dict[str, object] = {
         "ok": True,
-        "engine": engine,
+        "engine": "python",
         "embed_base_url": str(args.embed_base_url),
         "rerank_base_url": str(args.rerank_base_url),
+        "embed_device": str(args.embed_device).strip().lower(),
+        "rerank_device": str(args.rerank_device).strip().lower(),
     }
-
-    if engine == "python":
-        runtime_dir = Path(str(args.runtime_dir)).resolve()
-        state = _load_python_state(runtime_dir)
-        processes: dict[str, dict[str, object]] = {}
-        for role in ("embed", "rerank"):
-            entry = state.get(role)
-            if not isinstance(entry, dict):
-                processes[role] = {"running": False}
-                continue
-            try:
-                pid = int(entry.get("pid", 0))
-            except (TypeError, ValueError):
-                pid = 0
-            processes[role] = {
-                "pid": pid,
-                "running": _pid_is_running(pid),
-                "model_id": str(entry.get("model_id", "")),
-                "log_path": str(entry.get("log_path", "")),
-            }
-        payload["processes"] = processes
-        payload["state_file"] = str(_python_state_file(runtime_dir))
-    elif engine == "docker":
-        payload["containers"] = {
-            str(args.embed_container): _container_state(engine, str(args.embed_container)),
-            str(args.rerank_container): _container_state(engine, str(args.rerank_container)),
+    runtime_dir = Path(str(args.runtime_dir)).resolve()
+    state = _load_python_state(runtime_dir)
+    processes: dict[str, dict[str, object]] = {}
+    for role in ("embed", "rerank"):
+        entry = state.get(role)
+        if not isinstance(entry, dict):
+            processes[role] = {"running": False}
+            continue
+        try:
+            pid = int(entry.get("pid", 0))
+        except (TypeError, ValueError):
+            pid = 0
+        processes[role] = {
+            "pid": pid,
+            "running": _pid_is_running(pid),
+            "model_id": str(entry.get("model_id", "")),
+            "log_path": str(entry.get("log_path", "")),
+            "device": str(entry.get("device", "")),
         }
-    else:
-        raise RuntimeError(f"Unsupported local backend engine: {engine}")
+    payload["processes"] = processes
+    payload["state_file"] = str(_python_state_file(runtime_dir))
 
     if bool(args.check_backend):
         payload["backend"] = check_semantic_backend(

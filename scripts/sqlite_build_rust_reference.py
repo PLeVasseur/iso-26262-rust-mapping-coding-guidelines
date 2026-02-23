@@ -897,27 +897,21 @@ def _build_concept_chunks_from_sections(
         current_start = int(block_payloads[0]["start"])
         current_end = int(block_payloads[0]["end"])
 
-        def _flush_current() -> None:
-            nonlocal current_raw, current_clean, current_tokens, current_start, current_end
-            if not current_clean:
-                return
-            staged_chunks.append(
-                {
-                    "raw": "\n\n".join(current_raw).strip(),
-                    "clean": " ".join(current_clean).strip(),
-                    "tokens": int(current_tokens),
-                    "start": int(current_start),
-                    "end": int(current_end),
-                }
-            )
-            current_raw = []
-            current_clean = []
-            current_tokens = 0
-
         for block in block_payloads:
             block_tokens = int(block["tokens"])
             if current_clean and (current_tokens + block_tokens) > target_max:
-                _flush_current()
+                staged_chunks.append(
+                    {
+                        "raw": "\n\n".join(current_raw).strip(),
+                        "clean": " ".join(current_clean).strip(),
+                        "tokens": int(current_tokens),
+                        "start": int(current_start),
+                        "end": int(current_end),
+                    }
+                )
+                current_raw = []
+                current_clean = []
+                current_tokens = 0
                 current_start = int(block["start"])
                 current_end = int(block["end"])
 
@@ -929,9 +923,29 @@ def _build_concept_chunks_from_sections(
             current_tokens += block_tokens
 
             if current_tokens >= target_min:
-                _flush_current()
+                staged_chunks.append(
+                    {
+                        "raw": "\n\n".join(current_raw).strip(),
+                        "clean": " ".join(current_clean).strip(),
+                        "tokens": int(current_tokens),
+                        "start": int(current_start),
+                        "end": int(current_end),
+                    }
+                )
+                current_raw = []
+                current_clean = []
+                current_tokens = 0
 
-        _flush_current()
+        if current_clean:
+            staged_chunks.append(
+                {
+                    "raw": "\n\n".join(current_raw).strip(),
+                    "clean": " ".join(current_clean).strip(),
+                    "tokens": int(current_tokens),
+                    "start": int(current_start),
+                    "end": int(current_end),
+                }
+            )
 
         exploded_chunks: list[dict[str, Any]] = []
         for staged in staged_chunks:
@@ -1445,9 +1459,7 @@ def _build_row_queryability(
                 hybrid_score = lexical_score
             else:
                 hybrid_score = (
-                    (0.20 * lexical_score)
-                    + (0.45 * best_semantic_score)
-                    + (0.35 * reranker_score)
+                    (0.20 * lexical_score) + (0.45 * best_semantic_score) + (0.35 * reranker_score)
                 )
 
             candidates.append(
@@ -2353,11 +2365,18 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _read_previous_snapshot_path(manifest_payload: dict[str, Any]) -> Path | None:
+def _read_previous_snapshot_path(
+    manifest_payload: dict[str, Any],
+    *,
+    manifest_path: Path,
+) -> Path | None:
     rust_ref = (manifest_payload.get("databases") or {}).get("rust_reference") or {}
     snapshot_path = rust_ref.get("snapshot_path")
     if isinstance(snapshot_path, str) and snapshot_path:
-        return Path(snapshot_path)
+        candidate = Path(snapshot_path)
+        if candidate.is_absolute():
+            return candidate
+        return (manifest_path.parent / candidate).resolve()
     return None
 
 
@@ -2602,6 +2621,15 @@ def _update_manifest(
     embedding_model_id: str,
     reranker_model_id: str,
 ) -> None:
+    base_dir = manifest_path.resolve().parent
+
+    def _repo_relative(path: Path) -> str:
+        resolved = path.resolve()
+        try:
+            return str(resolved.relative_to(base_dir))
+        except ValueError:
+            return str(resolved)
+
     manifest = _load_manifest(manifest_path)
     manifest.setdefault("databases", {})
     manifest["updated_at"] = utc_now()
@@ -2612,9 +2640,9 @@ def _update_manifest(
     )
     manifest["databases"]["rust_reference"] = {
         "db_name": "rust_reference.sqlite",
-        "current_path": str(current_db_path),
+        "current_path": _repo_relative(current_db_path),
         "snapshot_id": snapshot_id,
-        "snapshot_path": str(snapshot_db_path),
+        "snapshot_path": _repo_relative(snapshot_db_path),
         "source": {
             "kind": "rust-reference",
             "ref": DEFAULT_REFERENCE_SOURCE_URL,
@@ -2622,8 +2650,8 @@ def _update_manifest(
             "fetched_at": source_fetched_at,
         },
         "query_contract": query_contract_path,
-        "validation_report": str(report_path),
-        "row_metadata_report": str(row_metadata_report_path),
+        "validation_report": _repo_relative(report_path),
+        "row_metadata_report": _repo_relative(row_metadata_report_path),
         "semantic_retrieval": {
             "retrieval_mode": retrieval_mode,
             "retrieval_corpus": retrieval_corpus,
@@ -2680,12 +2708,12 @@ def build_rust_reference_db(
             f"'{retrieval_corpus}'; expected one of {sorted(RETRIEVAL_CORPUS_VALUES)}"
         )
     if not str(reference_revision or "").strip():
-        raise ValueError(
-            "Pinned source revision is required; pass --reference-revision explicitly"
-        )
+        raise ValueError("Pinned source revision is required; pass --reference-revision explicitly")
 
     existing_manifest = _load_manifest(manifest_path)
-    previous_snapshot_path = _read_previous_snapshot_path(existing_manifest)
+    previous_snapshot_path = _read_previous_snapshot_path(
+        existing_manifest, manifest_path=manifest_path
+    )
 
     source_dir, commit_sha, source_fetched_at = _resolve_reference_checkout(
         reference_source_dir=reference_source_dir,

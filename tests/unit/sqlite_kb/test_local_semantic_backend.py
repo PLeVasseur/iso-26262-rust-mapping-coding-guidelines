@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -14,7 +13,6 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from sqlite_local_semantic_backend import (  # noqa: E402
-    _docker_run_command,
     _python_worker_command,
     _require_loopback_url,
 )
@@ -30,21 +28,6 @@ class LocalSemanticBackendTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _require_loopback_url("https://example.com:443")
 
-    def test_docker_run_command_binds_loopback_port(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            command = _docker_run_command(
-                engine="docker",
-                image="ghcr.io/huggingface/text-embeddings-inference:cpu-latest",
-                container_name="rust-ref-tei-embed",
-                model_id="Qwen/Qwen3-Embedding-4B",
-                host_port=8080,
-                cache_dir=Path(temp_dir),
-            )
-
-        self.assertEqual(command[0], "docker")
-        self.assertIn("127.0.0.1:8080:80", command)
-        self.assertIn("--model-id", command)
-
     def test_python_worker_command_targets_mode_and_model(self) -> None:
         command = _python_worker_command(
             worker_script=ROOT / "scripts/sqlite_local_semantic_worker.py",
@@ -53,12 +36,17 @@ class LocalSemanticBackendTests(unittest.TestCase):
             port=8080,
             model_id="Qwen/Qwen3-Embedding-4B",
             cache_dir=ROOT / ".cache/sqlite_kb/models/hf",
+            service_role="embed",
+            request_span_log_path=None,
+            device="mps",
         )
 
         self.assertEqual(command[0], sys.executable)
         self.assertIn("--mode", command)
         self.assertIn("embeddings", command)
         self.assertIn("Qwen/Qwen3-Embedding-4B", command)
+        self.assertIn("--device", command)
+        self.assertIn("mps", command)
 
 
 if __name__ == "__main__":

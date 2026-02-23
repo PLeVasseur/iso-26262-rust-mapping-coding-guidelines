@@ -148,7 +148,9 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
 
             connection = sqlite3.connect(db_path)
             try:
-                statement_count = int(connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0])
+                statement_count = int(
+                    connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0]
+                )
             finally:
                 connection.close()
 
@@ -184,7 +186,9 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
                     ).fetchall()
                 }
                 chunk_count = int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
-                span_count = int(connection.execute("SELECT COUNT(*) FROM chunk_spans").fetchone()[0])
+                span_count = int(
+                    connection.execute("SELECT COUNT(*) FROM chunk_spans").fetchone()[0]
+                )
                 docs_count = int(connection.execute("SELECT COUNT(*) FROM docs").fetchone()[0])
             finally:
                 connection.close()
@@ -468,9 +472,13 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
 
             connection = sqlite3.connect(db_path)
             try:
-                row_count = int(connection.execute("SELECT COUNT(*) FROM table1_rows").fetchone()[0])
+                row_count = int(
+                    connection.execute("SELECT COUNT(*) FROM table1_rows").fetchone()[0]
+                )
                 profile_term_count = int(
-                    connection.execute("SELECT COUNT(*) FROM table1_row_profile_terms").fetchone()[0]
+                    connection.execute("SELECT COUNT(*) FROM table1_row_profile_terms").fetchone()[
+                        0
+                    ]
                 )
             finally:
                 connection.close()

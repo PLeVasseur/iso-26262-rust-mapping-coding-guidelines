@@ -58,7 +58,13 @@ def _safe_pct(numerator: float, denominator: float) -> float:
     return _round((float(numerator) / float(denominator)) * 100.0)
 
 
-def _classify_fix_lane(*, python_pct: float, model_pct: float, timeout_pct: float, lock_pct: float) -> str:
+def _classify_fix_lane(
+    *,
+    python_pct: float,
+    model_pct: float,
+    timeout_pct: float,
+    lock_pct: float,
+) -> str:
     if python_pct > 35.0:
         return "python_overhead_dominant"
     if model_pct > 60.0:
@@ -91,7 +97,9 @@ def _tool_status() -> dict[str, bool]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate reproducible root-cause attribution summary")
+    parser = argparse.ArgumentParser(
+        description="Generate reproducible root-cause attribution summary"
+    )
     parser.add_argument("--eval-path", required=True, help="Path to eval.json")
     parser.add_argument(
         "--backend-attempts-path",
@@ -137,7 +145,9 @@ def main() -> int:
         for row in cases
     )
 
-    backend_attempt_total_ms = sum(_to_float(row.get("duration_ms", 0.0)) for row in backend_attempt_rows)
+    backend_attempt_total_ms = sum(
+        _to_float(row.get("duration_ms", 0.0)) for row in backend_attempt_rows
+    )
     backend_timeout_ms = sum(
         _to_float(row.get("duration_ms", 0.0))
         for row in backend_attempt_rows
@@ -148,8 +158,12 @@ def main() -> int:
     worker_queue_wait_ms = sum(_to_float(row.get("queue_wait_ms", 0.0)) for row in worker_span_rows)
     worker_lock_wait_ms = sum(_to_float(row.get("lock_wait_ms", 0.0)) for row in worker_span_rows)
     worker_tokenize_ms = sum(_to_float(row.get("tokenize_ms", 0.0)) for row in worker_span_rows)
-    worker_model_forward_ms = sum(_to_float(row.get("model_forward_ms", 0.0)) for row in worker_span_rows)
-    worker_postprocess_ms = sum(_to_float(row.get("postprocess_ms", 0.0)) for row in worker_span_rows)
+    worker_model_forward_ms = sum(
+        _to_float(row.get("model_forward_ms", 0.0)) for row in worker_span_rows
+    )
+    worker_postprocess_ms = sum(
+        _to_float(row.get("postprocess_ms", 0.0)) for row in worker_span_rows
+    )
     worker_serialize_ms = sum(_to_float(row.get("serialize_ms", 0.0)) for row in worker_span_rows)
 
     python_overhead_ms = (
@@ -235,7 +249,10 @@ def main() -> int:
             "worker_trace_id_count": int(len(worker_trace_ids)),
             "joined_trace_id_count": int(len(joined_trace_ids)),
             "trace_id_join_rate_pct": _safe_pct(len(joined_trace_ids), len(attempt_trace_ids)),
-            "attempt_row_join_rate_pct": _safe_pct(correlated_attempt_rows, len(backend_attempt_rows)),
+            "attempt_row_join_rate_pct": _safe_pct(
+                correlated_attempt_rows,
+                len(backend_attempt_rows),
+            ),
         },
         "hotspots": hotspot_components[:3],
         "recommended_fix_lane": _classify_fix_lane(
@@ -248,7 +265,10 @@ def main() -> int:
 
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        output_path.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     except OSError as exc:
         print(f"[root-cause-summary][error] {exc}")
         return EXIT_RUNTIME_FAIL

@@ -126,11 +126,27 @@ SCORE_FIELDS = {
     "reranker_score",
     "relevance_score",
     "row_marker_scores",
+    "rrf_score",
+    "lexical_rank",
+    "semantic_rank",
+    "reranker_rank",
 }
 
 LEXICAL_WEIGHT = 0.30
 SEMANTIC_WEIGHT = 0.25
 RERANK_WEIGHT = 0.45
+HYBRID_FUSION_WEIGHTED_V1 = "weighted-v1"
+HYBRID_FUSION_WEIGHTED_V2 = "weighted-v2"
+HYBRID_FUSION_RRF_V1 = "rrf-v1"
+HYBRID_FUSION_METHODS = (
+    HYBRID_FUSION_WEIGHTED_V1,
+    HYBRID_FUSION_WEIGHTED_V2,
+    HYBRID_FUSION_RRF_V1,
+)
+DEFAULT_HYBRID_RRF_K = 60
+WEIGHTED_V2_LEXICAL_WEIGHT = 0.55
+WEIGHTED_V2_SEMANTIC_WEIGHT = 0.15
+WEIGHTED_V2_RERANK_WEIGHT = 0.30
 
 ROW_PROJECTION_THRESHOLDS = {
     "1a": 0.015,
@@ -364,6 +380,24 @@ def parse_args() -> argparse.Namespace:
         help="Maximum candidate statement rows considered during retrieval",
     )
     parser.add_argument(
+        "--hybrid-fusion-method",
+        choices=HYBRID_FUSION_METHODS,
+        default=os.environ.get("RUST_REF_HYBRID_FUSION_METHOD", HYBRID_FUSION_WEIGHTED_V1),
+        help="Hybrid fusion method",
+    )
+    parser.add_argument(
+        "--hybrid-rrf-k",
+        type=int,
+        default=int(os.environ.get("RUST_REF_HYBRID_RRF_K", str(DEFAULT_HYBRID_RRF_K))),
+        help="RRF rank constant k for --hybrid-fusion-method rrf-v1",
+    )
+    parser.add_argument(
+        "--hybrid-rrf-window",
+        type=int,
+        default=0,
+        help="Optional rank window for RRF (0 means auto max(top_k*8,64))",
+    )
+    parser.add_argument(
         "--include-score-breakdown",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -426,7 +460,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--semantic-retries",
         type=int,
-        default=2,
+        default=0,
         help="Retry count for transient semantic backend failures",
     )
     parser.add_argument(
@@ -451,7 +485,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--contract-path",
-        default="config/sqlite_query_contracts/rust_reference.yaml",
+        default="config/sqlite_query_contracts/rust_reference_chunk.yaml",
         help="Path to rust_reference query contract YAML",
     )
     parser.add_argument(
@@ -526,6 +560,107 @@ def _apply_component_scores(
     row["reranker_score"] = float(reranker_score)
     row["final_score"] = float(final_score)
     row["relevance_score"] = float(final_score)
+
+
+def _apply_component_scores_with_weights(
+    row: dict[str, Any],
+    *,
+    lexical_score: float,
+    semantic_score: float,
+    reranker_score: float,
+    lexical_weight: float,
+    semantic_weight: float,
+    reranker_weight: float,
+) -> None:
+    final_score = (
+        (float(lexical_weight) * float(lexical_score))
+        + (float(semantic_weight) * float(semantic_score))
+        + (float(reranker_weight) * float(reranker_score))
+    )
+    row["lexical_score"] = float(lexical_score)
+    row["semantic_score"] = float(semantic_score)
+    row["reranker_score"] = float(reranker_score)
+    row["final_score"] = float(final_score)
+    row["relevance_score"] = float(final_score)
+
+
+def _build_rank_map(rows: list[dict[str, Any]], *, window: int) -> dict[str, int]:
+    rank_map: dict[str, int] = {}
+    if window <= 0:
+        return rank_map
+    for rank, row in enumerate(rows[:window], start=1):
+        row_id = _row_identity(row)
+        if not row_id or row_id in rank_map:
+            continue
+        rank_map[row_id] = int(rank)
+    return rank_map
+
+
+def _apply_rrf_hybrid_scores(
+    *,
+    merged_rows: dict[str, dict[str, Any]],
+    lexical_rows: list[dict[str, Any]],
+    semantic_rows: list[dict[str, Any]],
+    rrf_k: int,
+    rrf_window: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    lexical_rank_map = _build_rank_map(lexical_rows, window=rrf_window)
+    semantic_rank_map = _build_rank_map(semantic_rows, window=rrf_window)
+
+    reranker_ranked = sorted(
+        semantic_rows,
+        key=lambda row: (
+            -float(row.get("reranker_score", 0.0)),
+            -float(row.get("semantic_score", 0.0)),
+            _row_identity(row),
+        ),
+    )
+    reranker_rank_map = _build_rank_map(reranker_ranked, window=rrf_window)
+
+    contribution_counts = {"0": 0, "1": 0, "2": 0, "3": 0}
+    hybrid_rows: list[dict[str, Any]] = []
+    rank_constant = max(1, int(rrf_k))
+
+    for row in merged_rows.values():
+        row_id = _row_identity(row)
+        lexical_rank = lexical_rank_map.get(row_id, 0)
+        semantic_rank = semantic_rank_map.get(row_id, 0)
+        reranker_rank = reranker_rank_map.get(row_id, 0)
+
+        contribution_count = (
+            int(bool(lexical_rank)) + int(bool(semantic_rank)) + int(bool(reranker_rank))
+        )
+        contribution_counts[str(contribution_count)] += 1
+
+        rrf_score = 0.0
+        if lexical_rank:
+            rrf_score += 1.0 / float(rank_constant + lexical_rank)
+        if semantic_rank:
+            rrf_score += 1.0 / float(rank_constant + semantic_rank)
+        if reranker_rank:
+            rrf_score += 1.0 / float(rank_constant + reranker_rank)
+
+        row["lexical_rank"] = int(lexical_rank)
+        row["semantic_rank"] = int(semantic_rank)
+        row["reranker_rank"] = int(reranker_rank)
+        row["rrf_score"] = float(rrf_score)
+        row["final_score"] = float(rrf_score)
+        row["relevance_score"] = float(rrf_score)
+        hybrid_rows.append(row)
+
+    hybrid_rows.sort(
+        key=lambda row: (
+            -float(row.get("rrf_score", 0.0)),
+            int(row.get("reranker_rank", 0)) or 10**9,
+            int(row.get("lexical_rank", 0)) or 10**9,
+            _row_identity(row),
+        )
+    )
+
+    return hybrid_rows, {
+        "lists_fused": ["lexical", "semantic", "reranker"],
+        "contribution_counts": contribution_counts,
+    }
 
 
 def _to_fts_query(query_text: str) -> str:
@@ -655,7 +790,9 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _ensure_embedding_cache_table(db_path: Path, retrieval_contract: RetrievalContractProfile) -> None:
+def _ensure_embedding_cache_table(
+    db_path: Path, retrieval_contract: RetrievalContractProfile
+) -> None:
     connection = sqlite3.connect(db_path)
     try:
         if retrieval_contract.embedding_table == "chunk_embeddings":
@@ -778,7 +915,9 @@ def _with_semantic_retries(
                 "retry_count": max(0, attempts - 1),
                 "error": message,
                 "error_class": _classify_semantic_error(message),
-                "total_duration_ms": round(float((time.perf_counter() - total_started) * 1000.0), 3),
+                "total_duration_ms": round(
+                    float((time.perf_counter() - total_started) * 1000.0), 3
+                ),
                 "attempt_events": attempt_events,
             }
         )
@@ -1112,9 +1251,7 @@ def _load_embedding_cache(
                 sql = (
                     "SELECT statement_id AS cache_id, text_sha256, vector_json "
                     "FROM statement_embeddings "
-                    "WHERE model_id = ? AND statement_id IN ("
-                    + placeholders
-                    + ")"
+                    "WHERE model_id = ? AND statement_id IN (" + placeholders + ")"
                 )
                 rows = connection.execute(sql, [model_id, *chunk]).fetchall()
             for row in rows:
@@ -1510,8 +1647,7 @@ def _apply_abstain_policy(
                 "active": True,
                 "reason_code": "LOW_CONFIDENCE_MARGIN",
                 "detail": (
-                    f"Top-vs-second margin={margin:.6f} "
-                    f"required>={ROW_PROJECTION_MARGIN:.6f}"
+                    f"Top-vs-second margin={margin:.6f} required>={ROW_PROJECTION_MARGIN:.6f}"
                 ),
                 "thresholds": ROW_PROJECTION_THRESHOLDS,
             }
@@ -1563,12 +1699,27 @@ def execute_retrieval_query(
     allow_online_corpus_embedding: bool = False,
     rewrite_mode: str = "auto",
     rewrite_rules_path: Path | None = None,
+    hybrid_fusion_method: str = HYBRID_FUSION_WEIGHTED_V1,
+    hybrid_rrf_k: int = DEFAULT_HYBRID_RRF_K,
+    hybrid_rrf_window: int = 0,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     semantic_retry_events: list[dict[str, Any]] = []
     row_marker = row_marker.strip().lower()
     top_k = max(1, int(top_k))
     candidate_limit = max(top_k, int(candidate_limit))
+    normalized_fusion_method = (
+        str(hybrid_fusion_method).strip().lower() or HYBRID_FUSION_WEIGHTED_V1
+    )
+    if normalized_fusion_method not in HYBRID_FUSION_METHODS:
+        raise GuardrailError(
+            f"Unsupported hybrid fusion method: {hybrid_fusion_method}. "
+            f"Expected one of {', '.join(HYBRID_FUSION_METHODS)}"
+        )
+    resolved_rrf_k = max(1, int(hybrid_rrf_k))
+    resolved_rrf_window = int(hybrid_rrf_window)
+    if resolved_rrf_window <= 0:
+        resolved_rrf_window = max(top_k * 8, 64)
 
     timing: dict[str, float] = {
         "preflight_ms": 0.0,
@@ -1591,7 +1742,9 @@ def execute_retrieval_query(
         payload["total_case_ms"] = round(float(total_case_ms), 3)
         return payload
 
-    rewrite_path = rewrite_rules_path or (Path(__file__).resolve().parents[1] / DEFAULT_REWRITE_RULES_PATH)
+    rewrite_path = rewrite_rules_path or (
+        Path(__file__).resolve().parents[1] / DEFAULT_REWRITE_RULES_PATH
+    )
     rewrite = _rewrite_query_text(
         query_text=query_text,
         row_marker=row_marker,
@@ -1633,11 +1786,30 @@ def execute_retrieval_query(
         "lexical_score": "Normalized lexical relevance from FTS and token overlap",
         "semantic_score": "Normalized embedding cosine similarity to query",
         "reranker_score": "Normalized cross-encoder reranker relevance",
-        "final_score": (
+        "final_score": "",
+    }
+    fusion_params = {
+        "method": normalized_fusion_method,
+        "rrf_k": int(resolved_rrf_k),
+        "rrf_window": int(resolved_rrf_window),
+    }
+    fusion_debug: dict[str, Any] = {}
+    if normalized_fusion_method == HYBRID_FUSION_RRF_V1:
+        score_definitions["final_score"] = (
+            "Reciprocal rank fusion score across lexical/semantic/reranker lists"
+        )
+    elif normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2:
+        score_definitions["final_score"] = (
+            "Weighted-v2 score "
+            f"({WEIGHTED_V2_LEXICAL_WEIGHT:.2f}*lexical + "
+            f"{WEIGHTED_V2_SEMANTIC_WEIGHT:.2f}*semantic + "
+            f"{WEIGHTED_V2_RERANK_WEIGHT:.2f}*reranker)"
+        )
+    else:
+        score_definitions["final_score"] = (
             f"Weighted score ({LEXICAL_WEIGHT:.2f}*lexical + "
             f"{SEMANTIC_WEIGHT:.2f}*semantic + {RERANK_WEIGHT:.2f}*reranker)"
-        ),
-    }
+        )
 
     if mode == "lexical":
         lexical_started = time.perf_counter()
@@ -1901,22 +2073,43 @@ def execute_retrieval_query(
         merged[row_id]["lexical_score"] = lexical_score_by_id.get(row_id, 0.0)
 
     hybrid_rows: list[dict[str, Any]] = []
-    for row in merged.values():
-        _apply_component_scores(
-            row,
-            lexical_score=float(row.get("lexical_score", 0.0)),
-            semantic_score=float(row.get("semantic_score", 0.0)),
-            reranker_score=float(row.get("reranker_score", 0.0)),
+    if normalized_fusion_method == HYBRID_FUSION_RRF_V1:
+        hybrid_rows, fusion_debug = _apply_rrf_hybrid_scores(
+            merged_rows=merged,
+            lexical_rows=lexical_rows,
+            semantic_rows=semantic_rows,
+            rrf_k=resolved_rrf_k,
+            rrf_window=resolved_rrf_window,
         )
-        hybrid_rows.append(row)
+    else:
+        use_weighted_v2 = normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
+        for row in merged.values():
+            if use_weighted_v2:
+                _apply_component_scores_with_weights(
+                    row,
+                    lexical_score=float(row.get("lexical_score", 0.0)),
+                    semantic_score=float(row.get("semantic_score", 0.0)),
+                    reranker_score=float(row.get("reranker_score", 0.0)),
+                    lexical_weight=WEIGHTED_V2_LEXICAL_WEIGHT,
+                    semantic_weight=WEIGHTED_V2_SEMANTIC_WEIGHT,
+                    reranker_weight=WEIGHTED_V2_RERANK_WEIGHT,
+                )
+            else:
+                _apply_component_scores(
+                    row,
+                    lexical_score=float(row.get("lexical_score", 0.0)),
+                    semantic_score=float(row.get("semantic_score", 0.0)),
+                    reranker_score=float(row.get("reranker_score", 0.0)),
+                )
+            hybrid_rows.append(row)
 
-    hybrid_rows.sort(
-        key=lambda row: (
-            -float(row.get("final_score", 0.0)),
-            -float(row.get("reranker_score", 0.0)),
-            _row_identity(row),
+        hybrid_rows.sort(
+            key=lambda row: (
+                -float(row.get("final_score", 0.0)),
+                -float(row.get("reranker_score", 0.0)),
+                _row_identity(row),
+            )
         )
-    )
     rows = hybrid_rows[:top_k]
     workload["union_pool_size"] = int(len(merged))
     projection_started = time.perf_counter()
@@ -1941,6 +2134,26 @@ def execute_retrieval_query(
         "query_text": query_text,
         "effective_query_text": effective_query_text,
         "query_rewrite": rewrite,
+        "fusion_method": normalized_fusion_method,
+        "fusion_params": fusion_params,
+        "fusion_debug": fusion_debug,
+        "fusion_weights": {
+            "lexical": (
+                WEIGHTED_V2_LEXICAL_WEIGHT
+                if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
+                else LEXICAL_WEIGHT
+            ),
+            "semantic": (
+                WEIGHTED_V2_SEMANTIC_WEIGHT
+                if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
+                else SEMANTIC_WEIGHT
+            ),
+            "reranker": (
+                WEIGHTED_V2_RERANK_WEIGHT
+                if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
+                else RERANK_WEIGHT
+            ),
+        },
         "row_marker": row_marker,
         "row_count": len(rows),
         "duration_ms": round(duration_ms, 3),
@@ -2015,6 +2228,9 @@ def main() -> int:
                 allow_online_corpus_embedding=bool(args.allow_online_corpus_embedding),
                 rewrite_mode=str(args.rewrite_mode),
                 rewrite_rules_path=(root / str(args.rewrite_rules_path)).resolve(),
+                hybrid_fusion_method=str(args.hybrid_fusion_method),
+                hybrid_rrf_k=int(args.hybrid_rrf_k),
+                hybrid_rrf_window=int(args.hybrid_rrf_window),
             )
             if not bool(args.include_score_breakdown):
                 result = _without_score_breakdown(result)

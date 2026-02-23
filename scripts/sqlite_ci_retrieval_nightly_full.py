@@ -43,15 +43,15 @@ def parse_args() -> argparse.Namespace:
         default=True,
     )
     parser.add_argument(
-        "--local-backend-engine",
-        default=os.environ.get("RUST_REF_LOCAL_BACKEND_ENGINE", "python"),
+        "--local-embed-device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default=os.environ.get("RUST_REF_LOCAL_EMBED_DEVICE", "auto"),
     )
     parser.add_argument(
-        "--local-backend-image",
-        default="ghcr.io/huggingface/text-embeddings-inference:cpu-latest",
+        "--local-rerank-device",
+        choices=("auto", "cpu", "mps", "cuda"),
+        default=os.environ.get("RUST_REF_LOCAL_RERANK_DEVICE", "auto"),
     )
-    parser.add_argument("--local-embed-container", default="rust-ref-tei-embed")
-    parser.add_argument("--local-rerank-container", default="rust-ref-tei-rerank")
     parser.add_argument(
         "--local-model-cache-dir",
         default=os.environ.get(
@@ -94,14 +94,10 @@ def main() -> int:
             str(args.top_k),
             "--candidate-limit",
             str(args.candidate_limit),
-            "--local-backend-engine",
-            str(args.local_backend_engine),
-            "--local-backend-image",
-            str(args.local_backend_image),
-            "--local-embed-container",
-            str(args.local_embed_container),
-            "--local-rerank-container",
-            str(args.local_rerank_container),
+            "--local-embed-device",
+            str(args.local_embed_device),
+            "--local-rerank-device",
+            str(args.local_rerank_device),
             "--local-model-cache-dir",
             str(args.local_model_cache_dir),
             "--local-startup-timeout-sec",
