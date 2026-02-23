@@ -1,20 +1,22 @@
 version: 1
-updated_at: '2026-02-20T19:26:07+00:00'
+updated_at: '2026-02-22T23:18:21+00:00'
 databases:
   rust_reference:
     db_name: rust_reference.sqlite
     current_path: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/current/rust_reference.sqlite
-    snapshot_id: rust-reference-20260220T192606Z
-    snapshot_path: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/snapshots/rust_reference/rust-reference-20260220T192606Z.sqlite
+    snapshot_id: rust-reference-20260222T231820Z
+    snapshot_path: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/snapshots/rust_reference/rust-reference-20260222T231820Z.sqlite
     source:
       kind: rust-reference
       ref: https://doc.rust-lang.org/reference/
-      commit_sha: 38b7384f73950f2a35df99bc74419b3ced6d5212
-      fetched_at: '2026-02-20T19:26:06+00:00'
-    query_contract: config/sqlite_query_contracts/rust_reference.yaml
-    validation_report: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260220T192606Z.json
+      commit_sha: 442cbef9105662887d5eae2882ca551f3726bf28
+      fetched_at: '2026-02-22T23:18:19+00:00'
+    query_contract: config/sqlite_query_contracts/rust_reference_chunk.yaml
+    validation_report: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/restart_phase0/20260222T231818Z/reports/rust-reference-20260222T231820Z.json
+    row_metadata_report: /home/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/restart_phase0/20260222T231818Z/reports/rust-reference-20260222T231820Z_table1_row_metadata.json
     semantic_retrieval:
       retrieval_mode: hybrid
+      retrieval_corpus: chunk
       profile_version: semantic-hybrid-v1
       embedding_model_id: Qwen/Qwen3-Embedding-4B
       reranker_model_id: BAAI/bge-reranker-v2-m3
@@ -22,3 +24,5 @@ databases:
       rows_total: 9
       applicable: 9
       not_applicable: 0
+    chunk_stats:
+      chunk_count: 1418
