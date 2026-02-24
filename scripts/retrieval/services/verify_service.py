@@ -17,6 +17,6 @@ def run(args: Namespace, *, root: Path) -> int:
             operation="verify",
             reason="corpus configuration disables verify",
         )
-    argv = ["sqlite_verify.py"]
+    argv = ["sqlite_verify.py", "--corpus", defaults.corpus, "--operation", "verify"]
     argv.extend(list(args.extra_args or []))
     return run_main(verify_main, argv)

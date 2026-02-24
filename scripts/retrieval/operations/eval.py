@@ -560,6 +560,8 @@ def evaluate_retrieval_prompts(
     hybrid_rerank_pool_size: int = 0,
     hybrid_lexical_min: int = 0,
     hybrid_semantic_min: int = 0,
+    suite_id: str = "",
+    operation: str = "eval",
 ) -> dict[str, Any]:
     case_results: list[dict[str, Any]] = []
 
@@ -938,7 +940,8 @@ def evaluate_retrieval_prompts(
     provenance = _load_build_provenance(db_path)
 
     report = {
-        "suite_id": "rust_reference_table1_retrieval_eval_v1",
+        "suite_id": str(suite_id).strip() or "retrieval_eval_v1",
+        "operation": str(operation).strip() or "eval",
         "checked_at": _utc_now(),
         "inputs": {
             "db_path": str(db_path),
@@ -1016,6 +1019,12 @@ def parse_args() -> argparse.Namespace:
         choices=list_supported_corpora(),
         default="rust_reference",
         help="Corpus adapter used to resolve default DB/contract paths",
+    )
+    parser.add_argument(
+        "--operation",
+        choices=("eval", "verify"),
+        default="eval",
+        help="Operation tag included in eval report payload",
     )
     parser.add_argument(
         "--db-path",
@@ -1277,6 +1286,8 @@ def main() -> int:
 
     try:
         prompts = eval_load_eval_prompts(eval_path)
+        eval_payload = _load_yaml(eval_path)
+        suite_id = str(eval_payload.get("suite_id", "")).strip() or eval_path.stem
         report = evaluate_retrieval_prompts(
             db_path=db_path,
             contract_path=contract_path,
@@ -1303,6 +1314,8 @@ def main() -> int:
             hybrid_rerank_pool_size=int(args.hybrid_rerank_pool_size),
             hybrid_lexical_min=int(args.hybrid_lexical_min),
             hybrid_semantic_min=int(args.hybrid_semantic_min),
+            suite_id=suite_id,
+            operation=str(args.operation),
         )
     except (RuntimeError, GuardrailError, OSError) as exc:
         print(f"[eval-rust-reference-retrieval][error] {exc}")
