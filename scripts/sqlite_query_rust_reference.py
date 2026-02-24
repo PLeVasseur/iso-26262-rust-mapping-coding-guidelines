@@ -18,6 +18,17 @@ from typing import Any
 
 import yaml
 
+from retrieval.core.candidate_policy import (
+    apply_hybrid_candidate_policy_v2_rerank as core_apply_hybrid_candidate_policy_v2_rerank,
+)
+from retrieval.core.candidate_policy import (
+    apply_hybrid_lexical_floor_rerank as core_apply_hybrid_lexical_floor_rerank,
+)
+from retrieval.core.engine import build_runtime_config
+from retrieval.core.fusion import (
+    apply_component_scores as core_apply_component_scores,
+)
+from retrieval.core.fusion import apply_rrf_hybrid_scores as core_apply_rrf_hybrid_scores
 from retrieval.core.profile import (
     DEFAULT_HYBRID_RRF_K,
     HYBRID_CANDIDATE_POLICIES,
@@ -32,6 +43,14 @@ from retrieval.core.profile_loader import (
     apply_profile_defaults,
     enforce_profile_corpus,
     load_retrieval_profile,
+)
+from retrieval.core.rewrite import rewrite_query_text as core_rewrite_query_text
+from retrieval.core.telemetry import (
+    init_retrieval_timing,
+    init_retrieval_workload,
+)
+from retrieval.core.telemetry import (
+    timing_payload as core_timing_payload,
 )
 from retrieval.corpora.registry import list_supported_corpora
 from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
@@ -1974,65 +1993,54 @@ def execute_retrieval_query(
     started = time.perf_counter()
     semantic_retry_events: list[dict[str, Any]] = []
     row_marker = row_marker.strip().lower()
-    top_k = max(1, int(top_k))
-    candidate_limit = max(top_k, int(candidate_limit))
-    normalized_fusion_method = (
-        str(hybrid_fusion_method).strip().lower() or HYBRID_FUSION_WEIGHTED_V1
-    )
-    if normalized_fusion_method not in HYBRID_FUSION_METHODS:
-        raise GuardrailError(
-            f"Unsupported hybrid fusion method: {hybrid_fusion_method}. "
-            f"Expected one of {', '.join(HYBRID_FUSION_METHODS)}"
+    try:
+        runtime_config = build_runtime_config(
+            top_k=top_k,
+            candidate_limit=candidate_limit,
+            hybrid_fusion_method=hybrid_fusion_method,
+            hybrid_rrf_k=hybrid_rrf_k,
+            hybrid_rrf_window=hybrid_rrf_window,
+            hybrid_lexical_floor_count=hybrid_lexical_floor_count,
+            hybrid_lexical_floor_share=hybrid_lexical_floor_share,
+            hybrid_candidate_policy=hybrid_candidate_policy,
+            hybrid_rerank_pool_size=hybrid_rerank_pool_size,
+            hybrid_lexical_min=hybrid_lexical_min,
+            hybrid_semantic_min=hybrid_semantic_min,
         )
-    resolved_rrf_k = max(1, int(hybrid_rrf_k))
-    resolved_rrf_window = int(hybrid_rrf_window)
-    if resolved_rrf_window <= 0:
-        resolved_rrf_window = max(top_k * 8, 64)
-    resolved_lexical_floor_count = max(0, int(hybrid_lexical_floor_count))
-    resolved_lexical_floor_share = max(0.0, min(1.0, float(hybrid_lexical_floor_share)))
-    normalized_candidate_policy = (
-        str(hybrid_candidate_policy).strip().lower() or HYBRID_CANDIDATE_POLICY_LEGACY
-    )
-    if normalized_candidate_policy not in HYBRID_CANDIDATE_POLICIES:
-        raise GuardrailError(
-            f"Unsupported hybrid candidate policy: {hybrid_candidate_policy}. "
-            f"Expected one of {', '.join(HYBRID_CANDIDATE_POLICIES)}"
-        )
-    resolved_hybrid_rerank_pool_size = max(0, int(hybrid_rerank_pool_size))
-    resolved_hybrid_lexical_min = max(0, int(hybrid_lexical_min))
-    resolved_hybrid_semantic_min = max(0, int(hybrid_semantic_min))
+    except ValueError as exc:
+        raise GuardrailError(str(exc)) from exc
 
-    timing: dict[str, float] = {
-        "preflight_ms": 0.0,
-        "lexical_ms": 0.0,
-        "semantic_embed_ms": 0.0,
-        "semantic_score_ms": 0.0,
-        "rerank_ms": 0.0,
-        "projection_ms": 0.0,
-    }
-    workload: dict[str, int] = {
-        "lexical_pool_size": 0,
-        "semantic_pool_size": 0,
-        "union_pool_size": 0,
-        "rerank_pool_size": 0,
-        "rerank_doc_count": 0,
-    }
+    top_k = runtime_config.top_k
+    candidate_limit = runtime_config.candidate_limit
+    normalized_fusion_method = runtime_config.hybrid_fusion_method
+    resolved_rrf_k = runtime_config.hybrid_rrf_k
+    resolved_rrf_window = runtime_config.hybrid_rrf_window
+    resolved_lexical_floor_count = runtime_config.hybrid_lexical_floor_count
+    resolved_lexical_floor_share = runtime_config.hybrid_lexical_floor_share
+    normalized_candidate_policy = runtime_config.hybrid_candidate_policy
+    resolved_hybrid_rerank_pool_size = runtime_config.hybrid_rerank_pool_size
+    resolved_hybrid_lexical_min = runtime_config.hybrid_lexical_min
+    resolved_hybrid_semantic_min = runtime_config.hybrid_semantic_min
+
+    timing = init_retrieval_timing()
+    workload = init_retrieval_workload()
 
     def _timing_payload(total_case_ms: float) -> dict[str, float]:
-        payload = {name: round(float(value), 3) for name, value in timing.items()}
-        payload["total_case_ms"] = round(float(total_case_ms), 3)
-        return payload
+        return core_timing_payload(timing, total_case_ms)
 
     rewrite_path = rewrite_rules_path or (
         Path(__file__).resolve().parents[1] / DEFAULT_REWRITE_RULES_PATH
     )
-    rewrite = _rewrite_query_text(
-        query_text=query_text,
-        row_marker=row_marker,
-        mode=mode,
-        rewrite_mode=rewrite_mode,
-        rewrite_rules_path=rewrite_path,
-    )
+    try:
+        rewrite = core_rewrite_query_text(
+            query_text=query_text,
+            row_marker=row_marker,
+            mode=mode,
+            rewrite_mode=rewrite_mode,
+            rewrite_rules_path=rewrite_path,
+        )
+    except ValueError as exc:
+        raise GuardrailError(str(exc)) from exc
     effective_query_text = str(rewrite.get("rewritten_query", query_text)).strip() or query_text
 
     retrieval_contract = _resolve_retrieval_contract_profile(contract_path)
@@ -2105,11 +2113,14 @@ def execute_retrieval_query(
         workload["lexical_pool_size"] = int(len(lexical_rows))
         workload["union_pool_size"] = int(len(lexical_rows))
         for row in lexical_rows:
-            _apply_component_scores(
+            core_apply_component_scores(
                 row,
                 lexical_score=float(row.get("lexical_score", 0.0)),
                 semantic_score=0.0,
                 reranker_score=0.0,
+                lexical_weight=LEXICAL_WEIGHT,
+                semantic_weight=SEMANTIC_WEIGHT,
+                reranker_weight=RERANK_WEIGHT,
             )
         rows = lexical_rows[:top_k]
         projection_started = time.perf_counter()
@@ -2164,11 +2175,14 @@ def execute_retrieval_query(
         workload["lexical_pool_size"] = int(len(lexical_rows))
         workload["union_pool_size"] = int(len(lexical_rows))
         for row in lexical_rows:
-            _apply_component_scores(
+            core_apply_component_scores(
                 row,
                 lexical_score=float(row.get("lexical_score", 0.0)),
                 semantic_score=0.0,
                 reranker_score=0.0,
+                lexical_weight=LEXICAL_WEIGHT,
+                semantic_weight=SEMANTIC_WEIGHT,
+                reranker_weight=RERANK_WEIGHT,
             )
         rows = lexical_rows[:top_k]
         projection_started = time.perf_counter()
@@ -2239,11 +2253,14 @@ def execute_retrieval_query(
         workload["lexical_pool_size"] = int(len(lexical_rows))
         workload["union_pool_size"] = int(len(lexical_rows))
         for row in lexical_rows:
-            _apply_component_scores(
+            core_apply_component_scores(
                 row,
                 lexical_score=float(row.get("lexical_score", 0.0)),
                 semantic_score=0.0,
                 reranker_score=0.0,
+                lexical_weight=LEXICAL_WEIGHT,
+                semantic_weight=SEMANTIC_WEIGHT,
+                reranker_weight=RERANK_WEIGHT,
             )
         rows = lexical_rows[:top_k]
         projection_started = time.perf_counter()
@@ -2285,11 +2302,14 @@ def execute_retrieval_query(
 
     if mode == "semantic":
         for row in semantic_rows:
-            _apply_component_scores(
+            core_apply_component_scores(
                 row,
                 lexical_score=0.0,
                 semantic_score=float(row.get("semantic_score", 0.0)),
                 reranker_score=float(row.get("reranker_score", 0.0)),
+                lexical_weight=LEXICAL_WEIGHT,
+                semantic_weight=SEMANTIC_WEIGHT,
+                reranker_weight=RERANK_WEIGHT,
             )
         semantic_rows.sort(
             key=lambda row: (
@@ -2363,53 +2383,67 @@ def execute_retrieval_query(
         "policy": normalized_candidate_policy,
         "enabled": False,
     }
+
+    def _rerank_with_retries(query: str, documents: list[str]) -> list[float]:
+        return _with_semantic_retries(
+            "hybrid reranker scoring",
+            semantic_retries,
+            lambda: rerank_texts(
+                config=semantic_config,
+                query_text=query,
+                documents=documents,
+            ),
+            telemetry=semantic_retry_events,
+        )
+
     if normalized_candidate_policy == HYBRID_CANDIDATE_POLICY_V2:
-        candidate_policy_debug = _apply_hybrid_candidate_policy_v2_rerank(
+        candidate_policy_debug = core_apply_hybrid_candidate_policy_v2_rerank(
             merged_rows=merged,
             lexical_rows=lexical_rows,
             semantic_rows=semantic_rows,
             query_text=effective_query_text,
-            config=semantic_config,
-            retries=semantic_retries,
             top_k=top_k,
             rerank_pool_size=resolved_hybrid_rerank_pool_size,
             lexical_min=resolved_hybrid_lexical_min,
             semantic_min=resolved_hybrid_semantic_min,
-            retry_events=semantic_retry_events,
+            row_identity=_row_identity,
+            rerank_documents=_rerank_with_retries,
+            normalize_scores=_min_max_normalize,
             timing=timing,
             workload=workload,
         )
     else:
-        candidate_policy_debug = _apply_hybrid_lexical_floor_rerank(
+        candidate_policy_debug = core_apply_hybrid_lexical_floor_rerank(
             merged_rows=merged,
             lexical_rows=lexical_rows,
             semantic_rows=semantic_rows,
             query_text=effective_query_text,
-            config=semantic_config,
-            retries=semantic_retries,
             top_k=top_k,
             floor_count=resolved_lexical_floor_count,
             floor_share=resolved_lexical_floor_share,
-            retry_events=semantic_retry_events,
+            row_identity=_row_identity,
+            rerank_documents=_rerank_with_retries,
+            normalize_scores=_min_max_normalize,
             timing=timing,
             workload=workload,
         )
 
     hybrid_rows: list[dict[str, Any]] = []
     if normalized_fusion_method == HYBRID_FUSION_RRF_V1:
-        hybrid_rows, fusion_debug = _apply_rrf_hybrid_scores(
+        hybrid_rows, fusion_debug = core_apply_rrf_hybrid_scores(
             merged_rows=merged,
             lexical_rows=lexical_rows,
             semantic_rows=semantic_rows,
             rrf_k=resolved_rrf_k,
             rrf_window=resolved_rrf_window,
+            row_identity=_row_identity,
         )
         fusion_debug["candidate_policy"] = candidate_policy_debug
     else:
         use_weighted_v2 = normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
         for row in merged.values():
             if use_weighted_v2:
-                _apply_component_scores_with_weights(
+                core_apply_component_scores(
                     row,
                     lexical_score=float(row.get("lexical_score", 0.0)),
                     semantic_score=float(row.get("semantic_score", 0.0)),
@@ -2419,11 +2453,14 @@ def execute_retrieval_query(
                     reranker_weight=WEIGHTED_V2_RERANK_WEIGHT,
                 )
             else:
-                _apply_component_scores(
+                core_apply_component_scores(
                     row,
                     lexical_score=float(row.get("lexical_score", 0.0)),
                     semantic_score=float(row.get("semantic_score", 0.0)),
                     reranker_score=float(row.get("reranker_score", 0.0)),
+                    lexical_weight=LEXICAL_WEIGHT,
+                    semantic_weight=SEMANTIC_WEIGHT,
+                    reranker_weight=RERANK_WEIGHT,
                 )
             hybrid_rows.append(row)
 
