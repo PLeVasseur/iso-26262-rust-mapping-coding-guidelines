@@ -26,6 +26,7 @@ class CorpusConfigLoaderTests(unittest.TestCase):
         self.assertEqual(cfg.corpus, "core_docs")
         self.assertEqual(cfg.profile_name, "core_docs_control")
         self.assertTrue(str(cfg.contract_path).endswith("core_docs.yaml"))
+        self.assertFalse(cfg.supports_eval)
 
 
 if __name__ == "__main__":

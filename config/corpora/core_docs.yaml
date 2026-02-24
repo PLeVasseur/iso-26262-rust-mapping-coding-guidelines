@@ -25,12 +25,12 @@ runtime:
     candidate_limit: 5000
 
 capabilities:
-  query: true
-  eval: true
-  build: true
-  materialize: true
-  smoke: true
-  capture: true
-  verify: true
-  validate: true
-  migrate: true
+  query: false
+  eval: false
+  build: false
+  materialize: false
+  smoke: false
+  capture: false
+  verify: false
+  validate: false
+  migrate: false
