@@ -4,3 +4,5 @@ migrations:
     file: config/sqlite_migrations/20260224_001_provenance_core.sql
   - id: 20260224_002_core_docs_schema
     file: config/sqlite_migrations/20260224_002_core_docs_schema.sql
+  - id: 20260224_003_core_docs_chunk_metadata
+    file: config/sqlite_migrations/20260224_003_core_docs_chunk_metadata.sql

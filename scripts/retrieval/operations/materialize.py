@@ -9,6 +9,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
 from retrieval.operations.query import (
     ModeExecutionError,
@@ -68,6 +69,102 @@ def _append_progress_event(path: Path, payload: dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True))
         handle.write("\n")
+
+
+def _health_device(base_url: str) -> str:
+    endpoint = str(base_url).rstrip("/") + "/health"
+    try:
+        with urlopen(endpoint, timeout=5.0) as response:  # noqa: S310
+            payload = json.loads(response.read().decode("utf-8"))
+    except OSError as exc:
+        raise RuntimeError(f"Failed to fetch backend health from {endpoint}: {exc}") from exc
+    device = str(payload.get("device", "")).strip().lower()
+    if not device:
+        raise RuntimeError(f"Backend health endpoint {endpoint} did not report device")
+    return device
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
+def _row_text_sha(row: dict[str, Any]) -> str:
+    return _sha256_text(str(row.get("statement_text", "")).lower())
+
+
+def _dedupe_key(row: dict[str, Any], text_sha: str) -> tuple[str, str, str, str]:
+    return (
+        text_sha,
+        str(row.get("target_triple", "") or ""),
+        str(row.get("target_env", "") or ""),
+        str(row.get("cfg_signature_sha256", "") or ""),
+    )
+
+
+def _load_embedding_key_cache(
+    db_path: Path,
+    retrieval_contract: RetrievalContractProfile,
+    *,
+    model_id: str,
+) -> dict[tuple[str, str, str, str], tuple[list[float], float]]:
+    cache: dict[tuple[str, str, str, str], tuple[list[float], float]] = {}
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA busy_timeout = 1500")
+        if retrieval_contract.embedding_table == "chunk_embeddings":
+            has_core_docs_meta = _table_exists(connection, "core_docs_chunk_metadata")
+            if has_core_docs_meta:
+                rows = connection.execute(
+                    """
+                    SELECT
+                        e.text_sha256,
+                        COALESCE(m.target_triple, ''),
+                        COALESCE(m.target_env, ''),
+                        COALESCE(m.cfg_signature_sha256, ''),
+                        e.vector_json,
+                        e.vector_norm
+                    FROM chunk_embeddings AS e
+                    LEFT JOIN core_docs_chunk_metadata AS m ON m.chunk_uid = e.chunk_uid
+                    WHERE e.model_id = ? AND e.embed_version = ?
+                    """,
+                    (model_id, retrieval_contract.embed_version),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT text_sha256, '', '', '', vector_json, vector_norm
+                    FROM chunk_embeddings
+                    WHERE model_id = ? AND embed_version = ?
+                    """,
+                    (model_id, retrieval_contract.embed_version),
+                ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT text_sha256, '', '', '', vector_json, vector_norm
+                FROM statement_embeddings
+                WHERE model_id = ?
+                """,
+                (model_id,),
+            ).fetchall()
+        for text_sha, target_triple, target_env, cfg_sha, vector_json, vector_norm in rows:
+            key = (
+                str(text_sha),
+                str(target_triple),
+                str(target_env),
+                str(cfg_sha),
+            )
+            cache[key] = (
+                [float(value) for value in json.loads(str(vector_json))],
+                float(vector_norm),
+            )
+    finally:
+        connection.close()
+    return cache
 
 
 def _progress_metrics(
@@ -161,12 +258,29 @@ def parse_args() -> argparse.Namespace:
         help="Retry count for embedding calls",
     )
     parser.add_argument(
+        "--require-mps",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require effective embed backend device to be mps (fail-closed when enabled)",
+    )
+    parser.add_argument(
+        "--allow-cpu-fallback",
+        action="store_true",
+        help="Allow CPU fallback with loud warning payload",
+    )
+    parser.add_argument(
         "--allow-partial-corpus",
         action="store_true",
         help=(
             "Allow scoped/partial corpus materialization without full-corpus parity checks "
             "(for local experimentation)"
         ),
+    )
+    parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=0,
+        help="Optional cap on corpus rows for calibration sweeps (0 disables cap)",
     )
     parser.add_argument(
         "--progress-log-path",
@@ -303,6 +417,55 @@ def main() -> int:
     try:
         progress_log_path = _resolve_progress_log_path(root, str(args.progress_log_path))
 
+        effective_embed_device = _health_device(str(config.embed_base_url or config.base_url))
+        effective_rerank_device = _health_device(str(config.rerank_base_url or config.base_url))
+        if bool(args.require_mps) and effective_embed_device != "mps":
+            cpu_override = bool(args.allow_cpu_fallback) and effective_embed_device == "cpu"
+            mismatch = {
+                "requested": {"embed": "mps", "rerank": "mps"},
+                "effective": {
+                    "embed": effective_embed_device,
+                    "rerank": effective_rerank_device,
+                },
+                "allow_cpu_fallback": bool(args.allow_cpu_fallback),
+            }
+            if not cpu_override:
+                raise RuntimeError(
+                    "Effective backend device mismatch for materialize (fail-closed): "
+                    + json.dumps(mismatch, sort_keys=True)
+                )
+            warning_payload = {
+                "status": "cpu_fallback_override",
+                "requested": mismatch["requested"],
+                "effective": mismatch["effective"],
+                "note": (
+                    "CPU fallback override active; throughput and quality comparisons may be "
+                    "non-comparable without explicit approval"
+                ),
+            }
+            print(
+                "[materialize-rust-reference-embeddings][warning] "
+                + json.dumps(warning_payload, sort_keys=True),
+                file=sys.stderr,
+            )
+        elif effective_embed_device == "cpu":
+            warning_payload = {
+                "status": "cpu_effective_device",
+                "requested": {"embed": "mps", "rerank": "mps"},
+                "effective": {
+                    "embed": effective_embed_device,
+                    "rerank": effective_rerank_device,
+                },
+                "note": (
+                    "Embedding backend is running on CPU; throughput may be significantly slower"
+                ),
+            }
+            print(
+                "[materialize-rust-reference-embeddings][warning] "
+                + json.dumps(warning_payload, sort_keys=True),
+                file=sys.stderr,
+            )
+
         corpus_rows = _load_statement_corpus(
             db_path=db_path,
             contract_path=contract_path,
@@ -322,7 +485,14 @@ def main() -> int:
             _annotate_rows_with_row_markers(corpus_rows, row_profiles)
             corpus_rows = _filter_rows_by_row_marker(corpus_rows, scoped_row_marker)
 
-        require_full_corpus = (not scoped_row_marker) and (not bool(args.allow_partial_corpus))
+        if int(args.max_rows) > 0:
+            corpus_rows = corpus_rows[: int(args.max_rows)]
+
+        require_full_corpus = (
+            (not scoped_row_marker)
+            and (not bool(args.allow_partial_corpus))
+            and int(args.max_rows) <= 0
+        )
         target_corpus_count = expected_corpus_count if require_full_corpus else len(corpus_rows)
         if require_full_corpus and len(corpus_rows) != expected_corpus_count:
             raise GuardrailError(
@@ -337,7 +507,26 @@ def main() -> int:
             model_id=config.embed_model_id,
             corpus_rows=corpus_rows,
         )
+        key_cache = _load_embedding_key_cache(
+            db_path,
+            retrieval_contract,
+            model_id=config.embed_model_id,
+        )
         missing_rows = [row for row in corpus_rows if str(row["statement_id"]) not in cached]
+
+        missing_grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+        for row in missing_rows:
+            text_sha = _row_text_sha(row)
+            key = _dedupe_key(row, text_sha)
+            missing_grouped.setdefault(key, []).append(row)
+
+        unique_missing_keys = list(missing_grouped.keys())
+        duplicate_text_count = max(0, len(missing_rows) - len(unique_missing_keys))
+        dedupe_ratio = (
+            float(duplicate_text_count) / float(max(1, len(missing_rows))) if missing_rows else 0.0
+        )
+
+        embed_calls_made = 0
 
         _append_progress_event(
             progress_log_path,
@@ -354,43 +543,56 @@ def main() -> int:
                 "target_corpus_rows": target_corpus_count,
                 "already_cached": len(cached),
                 "missing_before": len(missing_rows),
+                "unique_text_count": len(unique_missing_keys),
+                "duplicate_text_count": duplicate_text_count,
+                "dedupe_ratio": round(dedupe_ratio, 6),
                 "db_path": str(db_path),
                 "corpus_query_id": retrieval_contract.corpus_query_id,
+                "effective_embed_device": effective_embed_device,
+                "effective_rerank_device": effective_rerank_device,
             },
         )
 
         last_progress_emit = time.perf_counter()
-        for offset in range(0, len(missing_rows), max(1, int(args.batch_size))):
-            batch_rows = missing_rows[offset : offset + max(1, int(args.batch_size))]
-            texts = [str(row["statement_text"]) for row in batch_rows]
-            vectors = _with_semantic_retries(
-                "statement embedding",
-                int(args.semantic_retries),
-                lambda texts=texts: embed_texts(config, texts),
-            )
-            payload_rows: list[dict[str, Any]] = []
-            for row, vector in zip(batch_rows, vectors, strict=False):
-                normalized = [float(value) for value in vector]
-                norm = sum(value * value for value in normalized) ** 0.5
-                payload_rows.append(
-                    {
-                        "statement_id": str(row["statement_id"]),
-                        "text_sha256": _sha256_text(str(row["statement_text"]).lower()),
-                        "embedding": normalized,
-                        "vector_norm": float(norm),
-                        "source_fetched_at": str(row.get("source_fetched_at", "")),
-                    }
+        batch_size = max(1, int(args.batch_size))
+        for offset in range(0, len(unique_missing_keys), batch_size):
+            batch_keys = unique_missing_keys[offset : offset + batch_size]
+            pending_keys = [key for key in batch_keys if key not in key_cache]
+            if pending_keys:
+                texts = [str(missing_grouped[key][0]["statement_text"]) for key in pending_keys]
+                vectors = _with_semantic_retries(
+                    "statement embedding",
+                    int(args.semantic_retries),
+                    lambda texts=texts: embed_texts(config, texts),
                 )
+                embed_calls_made += len(pending_keys)
+                for key, vector in zip(pending_keys, vectors, strict=False):
+                    normalized = [float(value) for value in vector]
+                    norm = sum(value * value for value in normalized) ** 0.5
+                    key_cache[key] = (normalized, float(norm))
+
+            payload_rows: list[dict[str, Any]] = []
+            for key in batch_keys:
+                vector, norm = key_cache[key]
+                text_sha = key[0]
+                for row in missing_grouped[key]:
+                    payload_rows.append(
+                        {
+                            "statement_id": str(row["statement_id"]),
+                            "text_sha256": text_sha,
+                            "embedding": vector,
+                            "vector_norm": float(norm),
+                            "source_fetched_at": str(row.get("source_fetched_at", "")),
+                        }
+                    )
 
             _persist_rows(db_path, retrieval_contract, config.embed_model_id, payload_rows)
             created += len(payload_rows)
 
             now = time.perf_counter()
-            batch_index = (offset // max(1, int(args.batch_size))) + 1
-            batch_count = (len(missing_rows) + max(1, int(args.batch_size)) - 1) // max(
-                1, int(args.batch_size)
-            )
-            is_final_batch = offset + len(batch_rows) >= len(missing_rows)
+            batch_index = (offset // batch_size) + 1
+            batch_count = (len(unique_missing_keys) + batch_size - 1) // batch_size
+            is_final_batch = offset + len(batch_keys) >= len(unique_missing_keys)
             if is_final_batch or (now - last_progress_emit) >= progress_interval_sec:
                 metrics = _progress_metrics(
                     started_monotonic=started,
@@ -408,7 +610,8 @@ def main() -> int:
                         "row_marker": scoped_row_marker,
                         "batch_index": batch_index,
                         "batch_count": batch_count,
-                        "batch_size": len(batch_rows),
+                        "batch_size": len(batch_keys),
+                        "embed_calls_made": embed_calls_made,
                         "created": created,
                         "target_statement_rows": target_corpus_count,
                         "target_corpus_rows": target_corpus_count,
@@ -497,6 +700,12 @@ def main() -> int:
         "already_cached": len(cached),
         "cached_after": len(cached_after),
         "new_embeddings": created,
+        "unique_text_count": len(unique_missing_keys),
+        "duplicate_text_count": duplicate_text_count,
+        "dedupe_ratio": round(dedupe_ratio, 6),
+        "embed_calls_made": embed_calls_made,
+        "effective_embed_device": effective_embed_device,
+        "effective_rerank_device": effective_rerank_device,
         "duration_ms": round(duration_ms, 3),
         "progress_log_path": str(progress_log_path) if progress_log_path is not None else "",
     }

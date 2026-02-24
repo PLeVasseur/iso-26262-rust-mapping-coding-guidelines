@@ -9,8 +9,10 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from semantic_backend_client import SemanticBackendConfig, check_semantic_backend
 
@@ -69,6 +71,71 @@ def _tail_text_file(path: Path, max_lines: int = 40) -> str:
     lines = content.splitlines()
     tail = lines[-max_lines:]
     return "\n".join(tail)
+
+
+def _listening_pids(port: int) -> set[int]:
+    try:
+        completed = _run(
+            ["lsof", "-nP", f"-iTCP:{int(port)}", "-sTCP:LISTEN", "-t"],
+            check=False,
+            capture_output=True,
+        )
+    except RuntimeError:
+        return set()
+    if completed.returncode not in (0, 1):
+        return set()
+    pids: set[int] = set()
+    for line in str(completed.stdout or "").splitlines():
+        token = line.strip()
+        if not token:
+            continue
+        try:
+            pids.add(int(token))
+        except ValueError:
+            continue
+    return pids
+
+
+def _fetch_health_device(base_url: str) -> str:
+    endpoint = str(base_url).rstrip("/") + "/health"
+    try:
+        with urlopen(endpoint, timeout=5.0) as response:  # noqa: S310
+            payload = json.loads(response.read().decode("utf-8"))
+    except OSError as exc:
+        raise RuntimeError(f"Failed to query health endpoint {endpoint}: {exc}") from exc
+    device = str(payload.get("device", "")).strip().lower()
+    if not device:
+        raise RuntimeError(f"Health endpoint {endpoint} did not report device")
+    return device
+
+
+@contextmanager
+def _startup_lock(runtime_dir: Path):
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = runtime_dir / "local_semantic_backend.start.lock"
+    fd: int | None = None
+    try:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as exc:
+            existing_pid = 0
+            try:
+                existing_pid = int(lock_path.read_text(encoding="utf-8").strip() or "0")
+            except (OSError, ValueError):
+                existing_pid = 0
+            if existing_pid > 0 and _pid_is_running(existing_pid):
+                raise RuntimeError(
+                    "Semantic backend startup lock is held by active process "
+                    f"pid={existing_pid}: {lock_path}"
+                ) from exc
+            lock_path.unlink(missing_ok=True)
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode("utf-8"))
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+        lock_path.unlink(missing_ok=True)
 
 
 def _pid_is_running(pid: int) -> bool:
@@ -425,14 +492,31 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--embed-device",
         choices=("auto", "cpu", "mps", "cuda"),
-        default="auto",
+        default="mps",
         help="Device selector for embedding worker",
     )
     parser.add_argument(
         "--rerank-device",
         choices=("auto", "cpu", "mps", "cuda"),
-        default="auto",
+        default="mps",
         help="Device selector for reranker worker",
+    )
+    parser.add_argument(
+        "--require-embed-device",
+        choices=("cpu", "mps", "cuda"),
+        default="mps",
+        help="Required effective embedding runtime device",
+    )
+    parser.add_argument(
+        "--require-rerank-device",
+        choices=("cpu", "mps", "cuda"),
+        default="mps",
+        help="Required effective reranker runtime device",
+    )
+    parser.add_argument(
+        "--allow-cpu-fallback",
+        action="store_true",
+        help="Allow effective CPU device override (loud warning payload emitted)",
     )
 
 
@@ -486,68 +570,148 @@ def _command_start(args: argparse.Namespace) -> dict[str, object]:
 
     runtime_dir = Path(str(args.runtime_dir)).resolve()
 
-    diagnostics_provider: Callable[[], dict[str, str]] | None = None
-    liveness_probe: Callable[[], bool] | None = None
-    worker_script = Path(str(args.python_worker_script)).resolve()
-    worker_span_log_path = (
-        Path(str(args.worker_span_log_path)).resolve()
-        if str(args.worker_span_log_path).strip()
-        else None
-    )
-    actions = _start_python_processes(
-        runtime_dir=runtime_dir,
-        worker_script=worker_script,
-        embed_host=embed_host,
-        embed_port=embed_port,
-        rerank_host=rerank_host,
-        rerank_port=rerank_port,
-        embed_model_id=str(args.embed_model_id),
-        rerank_model_id=str(args.rerank_model_id),
-        model_cache_dir=cache_dir,
-        worker_span_log_path=worker_span_log_path,
-        embed_device=str(args.embed_device),
-        rerank_device=str(args.rerank_device),
-    )
+    with _startup_lock(runtime_dir):
+        known_pids: set[int] = set()
+        state = _load_python_state(runtime_dir)
+        for role in ("embed", "rerank"):
+            entry = state.get(role)
+            if not isinstance(entry, dict):
+                continue
+            try:
+                pid = int(entry.get("pid", 0))
+            except (TypeError, ValueError):
+                pid = 0
+            if pid > 0 and _pid_is_running(pid):
+                known_pids.add(pid)
 
-    def _python_diagnostics() -> dict[str, str]:
-        return _python_logs(runtime_dir)
+        for port in (embed_port, rerank_port):
+            listeners = _listening_pids(port)
+            unknown = sorted(pid for pid in listeners if pid not in known_pids)
+            if unknown:
+                raise RuntimeError(
+                    "Refusing backend start because loopback port is already occupied by unknown "
+                    f"processes: port={port} pids={unknown}"
+                )
 
-    diagnostics_provider = _python_diagnostics
-
-    def _python_liveness() -> bool:
-        return _python_workers_running(runtime_dir)
-
-    liveness_probe = _python_liveness
-
-    try:
-        readiness = _wait_until_ready(
-            embed_base_url=str(args.embed_base_url),
-            rerank_base_url=str(args.rerank_base_url),
+        diagnostics_provider: Callable[[], dict[str, str]] | None = None
+        liveness_probe: Callable[[], bool] | None = None
+        worker_script = Path(str(args.python_worker_script)).resolve()
+        worker_span_log_path = (
+            Path(str(args.worker_span_log_path)).resolve()
+            if str(args.worker_span_log_path).strip()
+            else None
+        )
+        actions = _start_python_processes(
+            runtime_dir=runtime_dir,
+            worker_script=worker_script,
+            embed_host=embed_host,
+            embed_port=embed_port,
+            rerank_host=rerank_host,
+            rerank_port=rerank_port,
             embed_model_id=str(args.embed_model_id),
             rerank_model_id=str(args.rerank_model_id),
-            timeout_sec=float(args.startup_timeout_sec),
-            diagnostics_provider=diagnostics_provider,
-            liveness_probe=liveness_probe,
+            model_cache_dir=cache_dir,
+            worker_span_log_path=worker_span_log_path,
+            embed_device=str(args.embed_device),
+            rerank_device=str(args.rerank_device),
         )
-    except RuntimeError:
-        _stop_python_processes(runtime_dir)
-        raise
 
-    return {
-        "ok": True,
-        "engine": "python",
-        "backend_profile": "python-local",
-        "embed_action": str(actions.get("embed_action", "unknown")),
-        "rerank_action": str(actions.get("rerank_action", "unknown")),
-        "embed_base_url": str(args.embed_base_url),
-        "rerank_base_url": str(args.rerank_base_url),
-        "embed_device": str(args.embed_device).strip().lower(),
-        "rerank_device": str(args.rerank_device).strip().lower(),
-        "runtime_dir": str(runtime_dir),
-        "model_cache_dir": str(cache_dir),
-        "worker_span_log_path": str(args.worker_span_log_path),
-        "readiness": readiness,
-    }
+        def _python_diagnostics() -> dict[str, str]:
+            return _python_logs(runtime_dir)
+
+        diagnostics_provider = _python_diagnostics
+
+        def _python_liveness() -> bool:
+            return _python_workers_running(runtime_dir)
+
+        liveness_probe = _python_liveness
+
+        try:
+            readiness = _wait_until_ready(
+                embed_base_url=str(args.embed_base_url),
+                rerank_base_url=str(args.rerank_base_url),
+                embed_model_id=str(args.embed_model_id),
+                rerank_model_id=str(args.rerank_model_id),
+                timeout_sec=float(args.startup_timeout_sec),
+                diagnostics_provider=diagnostics_provider,
+                liveness_probe=liveness_probe,
+            )
+        except RuntimeError:
+            _stop_python_processes(runtime_dir)
+            raise
+
+        effective_embed_device = _fetch_health_device(str(args.embed_base_url))
+        effective_rerank_device = _fetch_health_device(str(args.rerank_base_url))
+        required_embed = str(args.require_embed_device).strip().lower()
+        required_rerank = str(args.require_rerank_device).strip().lower()
+        allow_cpu_fallback = bool(args.allow_cpu_fallback)
+
+        warnings: list[dict[str, object]] = []
+        if effective_embed_device != required_embed or effective_rerank_device != required_rerank:
+            is_cpu_override = (
+                allow_cpu_fallback
+                and effective_embed_device == "cpu"
+                and effective_rerank_device == "cpu"
+            )
+            mismatch_payload = {
+                "requested": {"embed": required_embed, "rerank": required_rerank},
+                "effective": {
+                    "embed": effective_embed_device,
+                    "rerank": effective_rerank_device,
+                },
+                "allow_cpu_fallback": allow_cpu_fallback,
+            }
+            if not is_cpu_override:
+                _stop_python_processes(runtime_dir)
+                raise RuntimeError(
+                    "Effective backend device mismatch (fail-closed): "
+                    f"{json.dumps(mismatch_payload, sort_keys=True)}"
+                )
+            warning_payload = {
+                "status": "cpu_fallback_override",
+                "requested": mismatch_payload["requested"],
+                "effective": mismatch_payload["effective"],
+                "ports": {"embed": embed_port, "rerank": rerank_port},
+                "note": (
+                    "CPU fallback override active; throughput and quality comparisons may be "
+                    "non-comparable without explicit approval"
+                ),
+            }
+            warnings.append(warning_payload)
+            print(
+                "[local-semantic-backend][warning] " + json.dumps(warning_payload, sort_keys=True),
+                file=sys.stderr,
+            )
+
+        state_after = _load_python_state(runtime_dir)
+        embed_entry = state_after.get("embed")
+        rerank_entry = state_after.get("rerank")
+        embed_pid = int(embed_entry.get("pid", 0)) if isinstance(embed_entry, dict) else 0
+        rerank_pid = int(rerank_entry.get("pid", 0)) if isinstance(rerank_entry, dict) else 0
+
+        return {
+            "ok": True,
+            "engine": "python",
+            "backend_profile": "python-local",
+            "embed_action": str(actions.get("embed_action", "unknown")),
+            "rerank_action": str(actions.get("rerank_action", "unknown")),
+            "embed_base_url": str(args.embed_base_url),
+            "rerank_base_url": str(args.rerank_base_url),
+            "embed_device": str(args.embed_device).strip().lower(),
+            "rerank_device": str(args.rerank_device).strip().lower(),
+            "effective_embed_device": effective_embed_device,
+            "effective_rerank_device": effective_rerank_device,
+            "require_embed_device": required_embed,
+            "require_rerank_device": required_rerank,
+            "allow_cpu_fallback": allow_cpu_fallback,
+            "warnings": warnings,
+            "runtime_dir": str(runtime_dir),
+            "model_cache_dir": str(cache_dir),
+            "worker_span_log_path": str(args.worker_span_log_path),
+            "runtime_pids": {"embed": embed_pid, "rerank": rerank_pid},
+            "ports": {"embed": embed_port, "rerank": rerank_port},
+            "readiness": readiness,
+        }
 
 
 def _command_stop(args: argparse.Namespace) -> dict[str, object]:

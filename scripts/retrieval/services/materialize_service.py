@@ -26,5 +26,7 @@ def run(args: Namespace, *, root: Path) -> int:
         "--query-log-root",
         str(defaults.query_log_root),
     ]
+    if defaults.corpus == "core_docs":
+        argv.append("--require-mps")
     argv.extend(list(args.extra_args or []))
     return run_main(materialize_main, argv)

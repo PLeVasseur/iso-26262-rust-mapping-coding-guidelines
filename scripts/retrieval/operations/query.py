@@ -1963,6 +1963,16 @@ def _apply_abstain_policy(
     }
 
 
+def _apply_corpus_row_policy(
+    rows: list[dict[str, Any]], *, query_text: str, corpus: str
+) -> list[dict[str, Any]]:
+    if str(corpus).strip().lower() != "core_docs":
+        return rows
+    from retrieval.query_policies.core_docs import apply_target_hint_preference
+
+    return apply_target_hint_preference(rows, query_text=query_text)
+
+
 def execute_retrieval_query(
     *,
     mode: str,
@@ -1989,6 +1999,7 @@ def execute_retrieval_query(
     hybrid_rerank_pool_size: int = 0,
     hybrid_lexical_min: int = 0,
     hybrid_semantic_min: int = 0,
+    corpus: str = "",
 ) -> dict[str, Any]:
     started = time.perf_counter()
     semantic_retry_events: list[dict[str, Any]] = []
@@ -2122,7 +2133,7 @@ def execute_retrieval_query(
                 semantic_weight=SEMANTIC_WEIGHT,
                 reranker_weight=RERANK_WEIGHT,
             )
-        rows = lexical_rows[:top_k]
+        rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
         projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
         row_projection, abstain = _apply_abstain_policy(row_projection_all)
@@ -2184,7 +2195,7 @@ def execute_retrieval_query(
                 semantic_weight=SEMANTIC_WEIGHT,
                 reranker_weight=RERANK_WEIGHT,
             )
-        rows = lexical_rows[:top_k]
+        rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
         projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
         row_projection, abstain = _apply_abstain_policy(row_projection_all)
@@ -2262,7 +2273,7 @@ def execute_retrieval_query(
                 semantic_weight=SEMANTIC_WEIGHT,
                 reranker_weight=RERANK_WEIGHT,
             )
-        rows = lexical_rows[:top_k]
+        rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
         projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
         row_projection, abstain = _apply_abstain_policy(row_projection_all)
@@ -2318,7 +2329,7 @@ def execute_retrieval_query(
                 _row_identity(row),
             )
         )
-        rows = semantic_rows[:top_k]
+        rows = _apply_corpus_row_policy(semantic_rows[:top_k], query_text=query_text, corpus=corpus)
         workload["union_pool_size"] = int(len(semantic_rows))
         projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
@@ -2473,7 +2484,7 @@ def execute_retrieval_query(
         )
         if candidate_policy_debug:
             fusion_debug["candidate_policy"] = candidate_policy_debug
-    rows = hybrid_rows[:top_k]
+    rows = _apply_corpus_row_policy(hybrid_rows[:top_k], query_text=query_text, corpus=corpus)
     workload["union_pool_size"] = int(len(merged))
     projection_started = time.perf_counter()
     row_projection_all = _build_row_projection(rows)
@@ -2639,6 +2650,7 @@ def main() -> int:
                 hybrid_rerank_pool_size=int(args.hybrid_rerank_pool_size),
                 hybrid_lexical_min=int(args.hybrid_lexical_min),
                 hybrid_semantic_min=int(args.hybrid_semantic_min),
+                corpus=corpus,
             )
             if not bool(args.include_score_breakdown):
                 result = _without_score_breakdown(result)

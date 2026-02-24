@@ -235,6 +235,65 @@ def load_eval_prompts(path: Path) -> list[dict[str, Any]]:
     return normalized
 
 
+def _validate_required_evidence_fields(db_path: Path, prompts: list[dict[str, Any]]) -> None:
+    required_fields = sorted(
+        {
+            str(field).strip()
+            for prompt in prompts
+            for field in list(prompt.get("required_evidence_fields") or [])
+            if str(field).strip()
+        }
+    )
+    if not required_fields:
+        return
+
+    known_field_sources: dict[str, tuple[str, str]] = {
+        "item_path": ("core_docs_chunk_metadata", "item_path"),
+        "item_kind": ("core_docs_chunk_metadata", "item_kind"),
+        "signature": ("core_docs_chunk_metadata", "signature"),
+        "stability": ("core_docs_chunk_metadata", "stability"),
+        "safety_notes": ("core_docs_chunk_metadata", "safety_notes"),
+        "panic_behavior": ("core_docs_chunk_metadata", "panic_behavior"),
+        "example_snippets": ("core_docs_chunk_metadata", "example_snippets"),
+        "target_triple": ("core_docs_chunk_metadata", "target_triple"),
+        "target_env": ("core_docs_chunk_metadata", "target_env"),
+        "cfg_signature": ("core_docs_chunk_metadata", "cfg_signature"),
+        "cfg_signature_sha256": ("core_docs_chunk_metadata", "cfg_signature_sha256"),
+        "row_markers": ("table1_rows", "row_marker"),
+    }
+
+    missing_mappings = [field for field in required_fields if field not in known_field_sources]
+    if missing_mappings:
+        raise RuntimeError(
+            "Unknown required_evidence_fields in prompt suite: " + ", ".join(missing_mappings)
+        )
+
+    connection = sqlite3.connect(db_path)
+    try:
+        for field in required_fields:
+            table_name, column_name = known_field_sources[field]
+            columns = [
+                str(row[1])
+                for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+            ]
+            if column_name not in columns:
+                raise RuntimeError(
+                    f"Required evidence field {field} missing column {column_name} in {table_name}"
+                )
+            sql = (
+                f"SELECT {column_name} FROM {table_name} "
+                f"WHERE {column_name} IS NOT NULL AND {column_name} <> '' LIMIT 1"
+            )
+            value = connection.execute(sql).fetchone()
+            if value is None:
+                raise RuntimeError(
+                    "Required evidence field "
+                    f"{field} has no non-empty values in {table_name}.{column_name}"
+                )
+    finally:
+        connection.close()
+
+
 def _is_relevant(row: dict[str, Any], prompt: dict[str, Any]) -> bool:
     statement_id = str(row.get("statement_id", ""))
     source_anchor = str(row.get("source_anchor", ""))
@@ -1316,6 +1375,8 @@ def main() -> int:
         prompts = eval_load_eval_prompts(eval_path)
         eval_payload = _load_yaml(eval_path)
         suite_id = str(eval_payload.get("suite_id", "")).strip() or eval_path.stem
+        if suite_id.startswith("core_docs_"):
+            _validate_required_evidence_fields(db_path, prompts)
         report = evaluate_retrieval_prompts(
             db_path=db_path,
             contract_path=contract_path,

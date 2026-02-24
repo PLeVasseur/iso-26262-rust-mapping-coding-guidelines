@@ -53,6 +53,12 @@ queries:
       SELECT
         c.chunk_uid,
         c.clean_text AS chunk_text,
+        COALESCE(m.item_path, '') AS item_path,
+        COALESCE(m.item_kind, '') AS item_kind,
+        COALESCE(m.target_triple, '') AS target_triple,
+        COALESCE(m.target_env, '') AS target_env,
+        COALESCE(m.cfg_signature, '') AS cfg_signature,
+        COALESCE(m.cfg_signature_sha256, '') AS cfg_signature_sha256,
         sec.heading AS section_heading,
         COALESCE(sp.source_anchor, sd.rel_path || '#' || sec.anchor) AS source_anchor,
         c.source_fetched_at,
@@ -65,6 +71,8 @@ queries:
       LEFT JOIN chunk_spans AS sp
         ON sp.chunk_uid = c.chunk_uid
        AND sp.span_order = 1
+      LEFT JOIN core_docs_chunk_metadata AS m
+        ON m.chunk_uid = c.chunk_uid
       WHERE :chunk_uid_after = '' OR c.chunk_uid > :chunk_uid_after
       ORDER BY c.chunk_uid ASC
 

@@ -14,7 +14,7 @@ class NoSyntheticCoreDocsBuildTests(unittest.TestCase):
         deny_markers = (
             "Core docs coverage for ISO 26262 Table 1 row",
             "core-docs::",
-            "row_profile_terms",
+            "Requirement:",
         )
         for marker in deny_markers:
             self.assertNotIn(marker, text, msg=f"synthetic marker present in builder: {marker}")
