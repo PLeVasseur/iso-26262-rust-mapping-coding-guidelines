@@ -17,6 +17,18 @@ def run(args: Namespace, *, root: Path) -> int:
             operation="build",
             reason="corpus configuration disables build",
         )
-    argv = ["sqlite_build.py", "--retrieval-corpus", str(args.corpus)]
+    argv = [
+        "sqlite_build.py",
+        "--db-path",
+        str(defaults.db_path),
+        "--report-root",
+        str(defaults.report_root),
+        "--ingest-strategy",
+        str(defaults.ingest_strategy),
+        "--chunk-target-min-tokens",
+        str(defaults.chunk_target_min_tokens),
+        "--chunk-target-max-tokens",
+        str(defaults.chunk_target_max_tokens),
+    ]
     argv.extend(list(args.extra_args or []))
     return run_main(build_main, argv)

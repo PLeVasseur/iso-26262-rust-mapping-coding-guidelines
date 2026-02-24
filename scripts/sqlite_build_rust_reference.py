@@ -9,12 +9,21 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from retrieval.core.provenance import (
+    apply_pending_migrations,
+    compute_source_state_from_db,
+    record_pipeline_run,
+)
+from retrieval.ingest.contracts import ChunkInput, CleanInput
+from retrieval.ingest.registry import list_ingest_strategies, resolve_ingest_strategy
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
@@ -714,7 +723,9 @@ def _split_section_blocks(section_text: str) -> list[str]:
 def _extract_sections_and_statements(
     snapshot_id: str,
     documents: list[SourceDocument],
+    cleaner: Callable[[str], str] | None = None,
 ) -> tuple[list[SectionRecord], list[StatementRecord]]:
+    clean_fn = cleaner or _clean_chunk_text
     sections: list[SectionRecord] = []
     statements: list[StatementRecord] = []
 
@@ -756,7 +767,7 @@ def _extract_sections_and_statements(
 
             sentence_index = 0
             for block in blocks:
-                cleaned_block = _clean_chunk_text(block)
+                cleaned_block = clean_fn(block)
                 if not cleaned_block:
                     continue
 
@@ -1898,6 +1909,8 @@ def _insert_payload(
     semantic_models: list[dict[str, Any]],
     semantic_corpus: list[dict[str, Any]],
     row_mechanism_scores: list[dict[str, Any]],
+    extractor_version: str,
+    build_notes: str,
 ) -> None:
     section_heading_by_id = {section.section_id: section.heading for section in sections}
 
@@ -1923,9 +1936,9 @@ def _insert_payload(
             "rust_reference",
             "rust-reference",
             commit_sha,
-            f"sqlite-build-rust-reference-v6::{CLEAN_TEXT_NORMALIZER_VERSION}",
+            extractor_version,
             fetched_at,
-            "chunk-first schema and deterministic block parsing",
+            build_notes,
         ),
     )
 
@@ -2699,6 +2712,10 @@ def build_rust_reference_db(
     reranker_model_id: str = DEFAULT_RERANKER_MODEL_ID,
     reranker_model_revision: str = DEFAULT_RERANKER_MODEL_REVISION,
     reranker_model_license: str = DEFAULT_RERANKER_MODEL_LICENSE,
+    ingest_strategy: str = "rust_md_v1",
+    chunk_target_min_tokens: int = 150,
+    chunk_target_max_tokens: int = 500,
+    allow_provenance_mismatch: bool = False,
 ) -> dict[str, Any]:
     report_root = report_root or (db_path.parents[1] / "reports" / "rust_reference")
     reference_cache_dir = reference_cache_dir or (db_path.parents[1] / "sources" / "rust-reference")
@@ -2709,6 +2726,8 @@ def build_rust_reference_db(
         )
     if not str(reference_revision or "").strip():
         raise ValueError("Pinned source revision is required; pass --reference-revision explicitly")
+
+    strategy = resolve_ingest_strategy(ingest_strategy)
 
     existing_manifest = _load_manifest(manifest_path)
     previous_snapshot_path = _read_previous_snapshot_path(
@@ -2736,9 +2755,44 @@ def build_rust_reference_db(
     snapshot_id = f"rust-reference-{snapshot_stamp}"
 
     sections, statements = _extract_sections_and_statements(
-        snapshot_id=snapshot_id, documents=documents
+        snapshot_id=snapshot_id,
+        documents=documents,
+        cleaner=lambda text: strategy.clean_text(
+            CleanInput(raw_text=text, source_type="markdown", context={"corpus": "rust_reference"})
+        ).cleaned_text,
     )
-    chunks, chunk_spans = _build_concept_chunks_from_sections(sections=sections)
+    chunk_result = strategy.build_chunks(
+        ChunkInput(
+            sections=sections,
+            target_min_tokens=int(chunk_target_min_tokens),
+            target_max_tokens=int(chunk_target_max_tokens),
+        )
+    )
+    chunks = [
+        ChunkRecord(
+            chunk_uid=str(row["chunk_uid"]),
+            section_id=str(row["section_id"]),
+            raw_text=str(row["raw_text"]),
+            clean_text=str(row["clean_text"]),
+            char_len=int(row["char_len"]),
+            token_len=int(row["token_len"]),
+            source_sha256=str(row["source_sha256"]),
+            source_fetched_at=str(row["source_fetched_at"]),
+            source_commit_sha=str(row["source_commit_sha"]),
+            order_index=int(row["order_index"]),
+        )
+        for row in chunk_result.chunks
+    ]
+    chunk_spans = [
+        ChunkSpanRecord(
+            chunk_uid=str(row["chunk_uid"]),
+            source_anchor=str(row["source_anchor"]),
+            start_offset=int(row["start_offset"]),
+            end_offset=int(row["end_offset"]),
+            span_order=int(row["span_order"]),
+        )
+        for row in chunk_result.spans
+    ]
     mechanisms, mechanism_evidence, evidence_count_by_mechanism, best_anchor_by_mechanism = (
         _extract_mechanisms_and_evidence(
             sections=sections,
@@ -2793,8 +2847,15 @@ def build_rust_reference_db(
         db_path.unlink()
 
     connection = sqlite3.connect(db_path)
+    latest_migration_id = ""
     try:
         initialize_schema(connection)
+        connection.commit()
+        connection.close()
+        latest_migration_id, _ = apply_pending_migrations(
+            db_path, root=Path(__file__).resolve().parents[1]
+        )
+        connection = sqlite3.connect(db_path)
         _insert_payload(
             connection=connection,
             snapshot_id=snapshot_id,
@@ -2815,6 +2876,14 @@ def build_rust_reference_db(
             semantic_models=semantic_models,
             semantic_corpus=semantic_corpus,
             row_mechanism_scores=row_mechanism_scores,
+            extractor_version=(
+                "sqlite-build-rust-reference-v7::"
+                f"{strategy.strategy_id}@{strategy.strategy_version}"
+            ),
+            build_notes=(
+                "chunk-first schema and deterministic block parsing via "
+                f"{strategy.strategy_id}@{strategy.strategy_version}"
+            ),
         )
         connection.commit()
     finally:
@@ -2875,6 +2944,28 @@ def build_rust_reference_db(
         reranker_model_id=reranker_model_id,
     )
 
+    source_state = compute_source_state_from_db(db_path)
+    model_fingerprint = _sha256_text(
+        "::".join((str(embedding_model_id), str(reranker_model_id), str(embedding_dim)))
+    )
+    pipeline_fingerprint = record_pipeline_run(
+        db_path=db_path,
+        run_id=f"build::{snapshot_id}",
+        corpus="rust_reference",
+        source_state=source_state,
+        schema_migration_id=latest_migration_id,
+        ingest_strategy=strategy.strategy_id,
+        ingest_strategy_version=strategy.strategy_version,
+        ingest_params={
+            "target_min_tokens": int(chunk_target_min_tokens),
+            "target_max_tokens": int(chunk_target_max_tokens),
+        },
+        retrieval_profile_id="rust_reference_control",
+        eval_policy_id="rust_reference",
+        model_fingerprint=model_fingerprint,
+        allow_provenance_mismatch=bool(allow_provenance_mismatch),
+    )
+
     return {
         "snapshot_id": snapshot_id,
         "commit_sha": commit_sha,
@@ -2894,6 +2985,11 @@ def build_rust_reference_db(
         "row_mechanism_scores": len(row_mechanism_scores),
         "retrieval_mode": retrieval_mode,
         "retrieval_corpus": retrieval_corpus,
+        "ingest_strategy": strategy.strategy_id,
+        "ingest_strategy_version": strategy.strategy_version,
+        "chunk_target_min_tokens": int(chunk_target_min_tokens),
+        "chunk_target_max_tokens": int(chunk_target_max_tokens),
+        "pipeline_fingerprint": pipeline_fingerprint,
         "semantic_profile_version": semantic_profile_version,
         "rows_total": counts["applicable"] + counts["not_applicable"],
         "applicable": counts["applicable"],
@@ -3029,6 +3125,29 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_RERANKER_MODEL_LICENSE,
         help="Reranker model license metadata",
     )
+    parser.add_argument(
+        "--ingest-strategy",
+        choices=list_ingest_strategies(),
+        default="rust_md_v1",
+        help="Ingest strategy id for source cleaning/chunking",
+    )
+    parser.add_argument(
+        "--chunk-target-min-tokens",
+        type=int,
+        default=150,
+        help="Minimum target tokens per generated chunk",
+    )
+    parser.add_argument(
+        "--chunk-target-max-tokens",
+        type=int,
+        default=500,
+        help="Maximum target tokens per generated chunk",
+    )
+    parser.add_argument(
+        "--allow-provenance-mismatch",
+        action="store_true",
+        help="Record build run even if provenance mismatch override is active",
+    )
     return parser.parse_args()
 
 
@@ -3074,6 +3193,10 @@ def main() -> int:
             reranker_model_id=args.reranker_model_id,
             reranker_model_revision=args.reranker_model_revision,
             reranker_model_license=args.reranker_model_license,
+            ingest_strategy=args.ingest_strategy,
+            chunk_target_min_tokens=args.chunk_target_min_tokens,
+            chunk_target_max_tokens=args.chunk_target_max_tokens,
+            allow_provenance_mismatch=args.allow_provenance_mismatch,
         )
     except Exception as exc:  # pragma: no cover - CLI guard
         print(f"[build-rust-reference][error] {exc}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from retrieval.core.provenance import compute_source_state_from_db
 from retrieval.corpora.base import CorpusAdapterConfig
 
 
@@ -19,3 +20,6 @@ class CoreDocsAdapter:
         default_profile_name="core_docs_control",
         default_eval_policy_path=Path("config/eval_policies/core_docs.yaml"),
     )
+
+    def compute_source_state(self, db_path: Path) -> dict[str, object]:
+        return compute_source_state_from_db(db_path)

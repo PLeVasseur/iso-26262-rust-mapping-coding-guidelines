@@ -13,6 +13,15 @@ paths:
 defaults:
   profile: core_docs_control
 
+ingest:
+  strategy: core_docs_pdf_v1
+  chunking:
+    target_min_tokens: 150
+    target_max_tokens: 500
+
+provenance:
+  hard_fail_on_mismatch: true
+
 runtime:
   semantic:
     base_url: http://127.0.0.1:8080
@@ -33,4 +42,4 @@ capabilities:
   capture: false
   verify: false
   validate: false
-  migrate: false
+  migrate: true

@@ -13,6 +13,15 @@ paths:
 defaults:
   profile: rust_reference_control
 
+ingest:
+  strategy: rust_md_v1
+  chunking:
+    target_min_tokens: 150
+    target_max_tokens: 500
+
+provenance:
+  hard_fail_on_mismatch: true
+
 runtime:
   semantic:
     base_url: http://127.0.0.1:8080

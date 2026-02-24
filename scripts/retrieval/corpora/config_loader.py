@@ -20,6 +20,9 @@ class CorpusRuntimeDefaults:
     report_root: Path
     profile_name: str
     eval_policy_path: Path
+    ingest_strategy: str
+    chunk_target_min_tokens: int
+    chunk_target_max_tokens: int
     supports_query: bool
     supports_eval: bool
     supports_build: bool
@@ -56,6 +59,8 @@ def load_corpus_runtime_defaults(*, root: Path, corpus: str) -> CorpusRuntimeDef
 
     paths = payload.get("paths") or {}
     defaults = payload.get("defaults") or {}
+    ingest = payload.get("ingest") or {}
+    ingest_chunking = ingest.get("chunking") or {}
     capabilities = payload.get("capabilities") or {}
 
     db_path = _resolve(root, paths.get("db", adapter_cfg.default_db_path))
@@ -69,6 +74,13 @@ def load_corpus_runtime_defaults(*, root: Path, corpus: str) -> CorpusRuntimeDef
     eval_policy_path = _resolve(
         root, paths.get("eval_policy", adapter_cfg.default_eval_policy_path)
     )
+    min_tokens = int(ingest_chunking.get("target_min_tokens", 150))
+    max_tokens = int(ingest_chunking.get("target_max_tokens", 500))
+    if min_tokens <= 0 or max_tokens <= 0 or max_tokens < min_tokens:
+        raise RuntimeError(
+            "Invalid ingest chunking thresholds for corpus "
+            f"{normalized}: min={min_tokens}, max={max_tokens}"
+        )
 
     return CorpusRuntimeDefaults(
         corpus=normalized,
@@ -80,6 +92,9 @@ def load_corpus_runtime_defaults(*, root: Path, corpus: str) -> CorpusRuntimeDef
         report_root=report_root,
         profile_name=str(defaults.get("profile", adapter_cfg.default_profile_name)).strip(),
         eval_policy_path=eval_policy_path,
+        ingest_strategy=str(ingest.get("strategy", "rust_md_v1")).strip() or "rust_md_v1",
+        chunk_target_min_tokens=min_tokens,
+        chunk_target_max_tokens=max_tokens,
         supports_query=bool(capabilities.get("query", adapter_cfg.supports_query)),
         supports_eval=bool(capabilities.get("eval", adapter_cfg.supports_eval)),
         supports_build=bool(capabilities.get("build", adapter_cfg.supports_build)),
