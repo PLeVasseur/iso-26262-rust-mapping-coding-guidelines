@@ -5,6 +5,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from retrieval.corpora.config_loader import load_corpus_runtime_defaults
 from retrieval.corpora.registry import list_supported_corpora
 from retrieval.services import (
     build_service,
@@ -17,6 +18,7 @@ from retrieval.services import (
     validate_service,
     verify_service,
 )
+from retrieval.services.provenance_guard import enforce_provenance_guard
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
@@ -67,6 +69,32 @@ def main() -> int:
     args.extra_args = extras
 
     try:
+        defaults = load_corpus_runtime_defaults(root=root, corpus=str(args.corpus))
+        support_map = {
+            "query": defaults.supports_query,
+            "eval": defaults.supports_eval,
+            "build": defaults.supports_build,
+            "materialize": defaults.supports_materialize,
+            "smoke": defaults.supports_smoke,
+            "capture": defaults.supports_capture,
+            "verify": defaults.supports_verify,
+            "validate": defaults.supports_validate,
+            "migrate": defaults.supports_migrate,
+        }
+        if bool(support_map.get(str(args.subcommand), True)):
+            enforce_provenance_guard(
+                root=root,
+                operation=str(args.subcommand),
+                corpus=defaults.corpus,
+                default_db_path=defaults.db_path,
+                default_profile_name=defaults.profile_name,
+                default_eval_policy_id=defaults.eval_policy_path.stem,
+                default_ingest_strategy=defaults.ingest_strategy,
+                chunk_target_min_tokens=defaults.chunk_target_min_tokens,
+                chunk_target_max_tokens=defaults.chunk_target_max_tokens,
+                extra_args=list(args.extra_args or []),
+            )
+
         if args.subcommand == "query":
             return query_service.run(args, root=root)
         if args.subcommand == "eval":
