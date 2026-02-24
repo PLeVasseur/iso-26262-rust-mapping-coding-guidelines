@@ -7,6 +7,7 @@ import yaml
 
 SLICES = {"issue_identification", "resolution_identification"}
 MODES = {"lexical", "semantic", "hybrid"}
+TARGET_SCOPES = {"any", "qnx", "vxworks", "embedded"}
 OVERRIDABLE_MIN_METRICS = {
     "precision_at_k",
     "mrr_at_k",
@@ -25,6 +26,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def load_eval_prompts(path: Path) -> list[dict[str, Any]]:
     payload = _load_yaml(path)
+    require_extended_metadata = str(payload.get("suite_id", "")).startswith("core_docs_")
     prompts = payload.get("prompts")
     if not isinstance(prompts, list) or not prompts:
         raise RuntimeError("Retrieval eval file must define non-empty prompts list")
@@ -74,6 +76,19 @@ def load_eval_prompts(path: Path) -> list[dict[str, Any]]:
         hard_negative_statement_ids = [
             str(value).strip() for value in (raw_prompt.get("hard_negative_statement_ids") or [])
         ]
+        expected_item_kinds = [
+            str(value).strip().lower()
+            for value in (raw_prompt.get("expected_item_kinds") or [])
+            if str(value).strip()
+        ]
+        required_evidence_fields = [
+            str(value).strip()
+            for value in (raw_prompt.get("required_evidence_fields") or [])
+            if str(value).strip()
+        ]
+        target_scope = str(raw_prompt.get("target_scope", "any")).strip().lower()
+        if target_scope not in TARGET_SCOPES:
+            raise RuntimeError(f"Prompt {prompt_id} has invalid target_scope {target_scope}")
         raw_min_metrics = raw_prompt.get("min_metrics") or {}
         if not isinstance(raw_min_metrics, dict):
             raise RuntimeError(f"Prompt {prompt_id} min_metrics must be a mapping")
@@ -109,10 +124,20 @@ def load_eval_prompts(path: Path) -> list[dict[str, Any]]:
                 f"Prompt {prompt_id} must define at least one relevance signal "
                 "(row markers, statement ids, anchor prefixes, or terms)"
             )
+        if require_extended_metadata and not expected_item_kinds:
+            raise RuntimeError(f"Prompt {prompt_id} missing expected_item_kinds")
+        if require_extended_metadata and not required_evidence_fields:
+            raise RuntimeError(f"Prompt {prompt_id} missing required_evidence_fields")
+
+        if not expected_item_kinds:
+            expected_item_kinds = ["statement"]
+        if not required_evidence_fields:
+            required_evidence_fields = ["row_markers"]
 
         normalized.append(
             {
                 "prompt_id": prompt_id,
+                "category": str(raw_prompt.get("category", "")).strip().lower(),
                 "slice": slice_name,
                 "query_text": query_text,
                 "modes": modes,
@@ -121,6 +146,9 @@ def load_eval_prompts(path: Path) -> list[dict[str, Any]]:
                 "relevant_anchor_prefixes": relevant_anchor_prefixes,
                 "relevant_terms": relevant_terms,
                 "hard_negative_statement_ids": hard_negative_statement_ids,
+                "expected_item_kinds": expected_item_kinds,
+                "required_evidence_fields": required_evidence_fields,
+                "target_scope": target_scope,
                 "min_metrics": min_metrics,
                 "semantic_focus": bool(raw_prompt.get("semantic_focus", False)),
                 "expect_abstain": bool(raw_prompt.get("expect_abstain", False)),

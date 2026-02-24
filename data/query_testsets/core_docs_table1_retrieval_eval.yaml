@@ -1,47 +1,389 @@
-version: 1
-suite_id: core_docs_table1_retrieval_eval_v1
+version: 2
+suite_id: core_docs_table1_retrieval_eval_v2
 description: >-
-  Starter retrieval quality prompts for ISO 26262 Part 6 Table 1 mapping over
-  core_docs evidence. This suite is intentionally small for early adapter bring-up.
+  API-first retrieval evaluation suite for Rust core docs with target-aware metadata.
+  Includes safety-critical platform overlays and hard-negative abstain prompts.
 
 prompts:
-  - prompt_id: CORE-ISSUE-001
+  # Ergonomics (5)
+  - prompt_id: CORE-ERG-001
+    category: ergonomics
     slice: issue_identification
-    query_text: What diagnostics or analysis gaps can hide safety issues?
-    semantic_focus: true
-    modes: [lexical, semantic, hybrid]
-    expected_row_markers: [1i]
-    relevant_terms: [diagnostic, analysis, warning, verification]
-
-  - prompt_id: CORE-ISSUE-002
-    slice: issue_identification
-    query_text: Where can weak error handling lead to unsafe behavior?
+    query_text: When should I use Option::ok_or_else instead of ok_or?
     semantic_focus: true
     modes: [lexical, semantic, hybrid]
     expected_row_markers: [1d]
-    relevant_terms: [error, handling, fallback, defensive]
+    relevant_terms: [option, ok_or_else, ok_or, lazy, error]
+    expected_item_kinds: [method, enum]
+    required_evidence_fields: [item_path, signature, panic_behavior]
+    target_scope: any
+    expect_abstain: false
 
-  - prompt_id: CORE-RESOLVE-001
+  - prompt_id: CORE-ERG-002
+    category: ergonomics
+    slice: issue_identification
+    query_text: How do I convert Option to Result without constructing errors eagerly?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [option, result, ok_or_else, lazy, conversion]
+    expected_item_kinds: [method, enum]
+    required_evidence_fields: [item_path, signature, example_snippets]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-ERG-003
+    category: ergonomics
     slice: resolution_identification
-    query_text: Which controls improve concurrency safety confidence?
+    query_text: Which Result combinators are preferred over nested match for recoverable errors?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d, 1f]
+    relevant_terms: [result, combinator, map_err, and_then, recoverable]
+    expected_item_kinds: [method, enum]
+    required_evidence_fields: [item_path, signature, example_snippets]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-ERG-004
+    category: ergonomics
+    slice: resolution_identification
+    query_text: What is the difference between map_or and map_or_else for Option?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a, 1d]
+    relevant_terms: [option, map_or, map_or_else, default, closure]
+    expected_item_kinds: [method, enum]
+    required_evidence_fields: [item_path, signature]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-ERG-005
+    category: ergonomics
+    slice: issue_identification
+    query_text: Which core APIs help avoid unwrap-heavy control flow?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [unwrap, result, option, and_then, map_err, safe]
+    expected_item_kinds: [method, enum]
+    required_evidence_fields: [item_path, panic_behavior, example_snippets]
+    target_scope: any
+    expect_abstain: false
+
+  # Safety and panic contracts (5)
+  - prompt_id: CORE-SAFE-001
+    category: safety_panic
+    slice: issue_identification
+    query_text: What are the safety preconditions for AtomicUsize::from_ptr?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e, 1h]
+    relevant_terms: [atomicusize, from_ptr, safety, alignment, valid]
+    expected_item_kinds: [method, struct]
+    required_evidence_fields: [item_path, signature, safety_notes]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-SAFE-002
+    category: safety_panic
+    slice: issue_identification
+    query_text: When can RefCell::borrow_mut panic, and what should I use instead?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d, 1e]
+    relevant_terms: [refcell, borrow_mut, panic, try_borrow_mut, interior]
+    expected_item_kinds: [method, struct]
+    required_evidence_fields: [item_path, panic_behavior, example_snippets]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-SAFE-003
+    category: safety_panic
+    slice: issue_identification
+    query_text: What is required before calling unwrap_unchecked safely?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e]
+    relevant_terms: [unwrap_unchecked, unsafe, precondition, option, result]
+    expected_item_kinds: [method]
+    required_evidence_fields: [item_path, safety_notes, panic_behavior]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-SAFE-004
+    category: safety_panic
+    slice: resolution_identification
+    query_text: Which alternatives avoid panics compared with unchecked indexing-style operations?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d, 1e]
+    relevant_terms: [panic, checked, get, indexing, bounds]
+    expected_item_kinds: [method, trait]
+    required_evidence_fields: [item_path, panic_behavior]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-SAFE-005
+    category: safety_panic
+    slice: resolution_identification
+    query_text: Which core docs explicitly list panic conditions for API misuse?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e]
+    relevant_terms: [panics, safety, precondition, misuse, contract]
+    expected_item_kinds: [method, trait, struct]
+    required_evidence_fields: [item_path, panic_behavior]
+    target_scope: any
+    expect_abstain: false
+
+  # Concurrency and ordering (5)
+  - prompt_id: CORE-CONC-001
+    category: concurrency
+    slice: resolution_identification
+    query_text: Which memory orderings are valid for AtomicUsize::load?
     semantic_focus: true
     modes: [lexical, semantic, hybrid]
     expected_row_markers: [1h]
-    relevant_terms: [concurrency, thread, race, synchronization]
+    relevant_terms: [atomicusize, load, ordering, acquire, seqcst]
+    expected_item_kinds: [method, enum]
+    required_evidence_fields: [item_path, signature, safety_notes]
+    target_scope: any
+    expect_abstain: false
 
-  - prompt_id: CORE-RESOLVE-002
+  - prompt_id: CORE-CONC-002
+    category: concurrency
     slice: resolution_identification
-    query_text: What practices strengthen type and interface robustness?
+    query_text: How should compare_exchange failure ordering be selected?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [compare_exchange, failure, ordering, acquire, release]
+    expected_item_kinds: [method]
+    required_evidence_fields: [item_path, signature, safety_notes]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-CONC-003
+    category: concurrency
+    slice: issue_identification
+    query_text: When is SeqCst justified over Acquire/Release in safety-critical logic?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h, 1i]
+    relevant_terms: [seqcst, acquire, release, ordering, safety]
+    expected_item_kinds: [enum, method]
+    required_evidence_fields: [item_path, safety_notes]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-CONC-004
+    category: concurrency
+    slice: issue_identification
+    query_text: What are the ordering caveats for fetch_add and related atomic RMW APIs?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [fetch_add, atomic, rmw, ordering, race]
+    expected_item_kinds: [method]
+    required_evidence_fields: [item_path, signature, safety_notes]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-CONC-005
+    category: concurrency
+    slice: resolution_identification
+    query_text: Which core APIs should I inspect to reason about lock-free shared counters?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [lock-free, counter, atomicusize, compare_exchange, ordering]
+    expected_item_kinds: [struct, method]
+    required_evidence_fields: [item_path, signature, example_snippets]
+    target_scope: any
+    expect_abstain: false
+
+  # Traits and auto-traits (5)
+  - prompt_id: CORE-TRAIT-001
+    category: traits
+    slice: issue_identification
+    query_text: Why can RefCell<T> be Send but not Sync?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [refcell, send, sync, auto trait, interior mutability]
+    expected_item_kinds: [struct, trait]
+    required_evidence_fields: [item_path, safety_notes]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-TRAIT-002
+    category: traits
+    slice: resolution_identification
+    query_text: What conditions make a type Send in core docs?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [send, trait, bounds, thread, ownership]
+    expected_item_kinds: [trait, impl]
+    required_evidence_fields: [item_path, signature]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-TRAIT-003
+    category: traits
+    slice: resolution_identification
+    query_text: What conditions make a type Sync in core docs?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [sync, trait, shared reference, thread-safe]
+    expected_item_kinds: [trait, impl]
+    required_evidence_fields: [item_path, signature]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-TRAIT-004
+    category: traits
+    slice: issue_identification
+    query_text: How do auto-trait implementations interact with UnsafeCell and interior mutability wrappers?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h, 1e]
+    relevant_terms: [auto trait, unsafecell, interior mutability, send, sync]
+    expected_item_kinds: [trait, struct, impl]
+    required_evidence_fields: [item_path, safety_notes]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-TRAIT-005
+    category: traits
+    slice: resolution_identification
+    query_text: Where are thread-safety assumptions documented for trait-based APIs in core?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [thread-safety, trait, assumptions, sync, send]
+    expected_item_kinds: [trait, method]
+    required_evidence_fields: [item_path, safety_notes]
+    target_scope: any
+    expect_abstain: false
+
+  # Platform-targeted positives (3)
+  - prompt_id: CORE-TGT-001
+    category: safety_panic
+    slice: issue_identification
+    query_text: For QNX nto71 targets, which cfg env values affect API applicability?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a, 1h]
+    relevant_terms: [qnx, nto71, target_env, cfg, applicability]
+    expected_item_kinds: [module, trait]
+    required_evidence_fields: [item_path, target_env, cfg_signature]
+    target_scope: qnx
+    expect_abstain: false
+
+  - prompt_id: CORE-TGT-002
+    category: concurrency
+    slice: resolution_identification
+    query_text: On VxWorks targets, which docs mention target-specific caveats for atomic usage?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [vxworks, atomic, target, caveat, cfg]
+    expected_item_kinds: [module, method]
+    required_evidence_fields: [item_path, target_triple, cfg_signature]
+    target_scope: vxworks
+    expect_abstain: false
+
+  - prompt_id: CORE-TGT-003
+    category: ergonomics
+    slice: resolution_identification
+    query_text: For thumbv7em no_std targets, what constraints affect available core APIs?
     semantic_focus: true
     modes: [lexical, semantic, hybrid]
     expected_row_markers: [1a, 1c]
-    relevant_terms: [type, interface, abstraction, contract]
+    relevant_terms: [thumbv7em, no_std, core, available, constraints]
+    expected_item_kinds: [module, struct]
+    required_evidence_fields: [item_path, target_triple, cfg_signature]
+    target_scope: embedded
+    expect_abstain: false
 
+  # Hard negatives / abstain (6)
   - prompt_id: CORE-NEG-001
+    category: negative
     slice: issue_identification
-    query_text: zzzyyyxx nohits tokenvoid
+    query_text: Which PostgreSQL isolation level should I use for distributed transaction sagas?
     semantic_focus: false
     modes: [lexical, semantic, hybrid]
     expected_row_markers: []
-    relevant_terms: [tokenvoid]
+    relevant_terms: [postgresql, isolation, transaction, saga]
+    expected_item_kinds: [module]
+    required_evidence_fields: [item_path]
+    target_scope: any
+    expect_abstain: true
+
+  - prompt_id: CORE-NEG-002
+    category: negative
+    slice: issue_identification
+    query_text: How do I configure Linux cgroups v2 CPU quotas in Kubernetes?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [kubernetes, cgroups, cpu, quota]
+    expected_item_kinds: [module]
+    required_evidence_fields: [item_path]
+    target_scope: any
+    expect_abstain: true
+
+  - prompt_id: CORE-NEG-003
+    category: negative
+    slice: issue_identification
+    query_text: Which AUTOSAR CanNm startup timer values are recommended for bus wake-up?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [autosar, cannm, timer, wake-up]
+    expected_item_kinds: [module]
+    required_evidence_fields: [item_path]
+    target_scope: any
+    expect_abstain: true
+
+  - prompt_id: CORE-NEG-004
+    category: negative
+    slice: resolution_identification
+    query_text: How can I enable TLS session tickets in NGINX with OpenSSL?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [nginx, tls, session, openssl]
+    expected_item_kinds: [module]
+    required_evidence_fields: [item_path]
+    target_scope: any
+    expect_abstain: true
+
+  - prompt_id: CORE-NEG-005
+    category: negative
+    slice: issue_identification
+    query_text: Which MISRA-C rule defines deallocation timing for heap ownership transfer?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [misra-c, deallocation, heap, ownership]
+    expected_item_kinds: [module]
+    required_evidence_fields: [item_path]
+    target_scope: any
+    expect_abstain: true
+
+  - prompt_id: CORE-NEG-006
+    category: negative
+    slice: resolution_identification
+    query_text: What is the best Redis key eviction policy for flash-backed clusters?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [redis, eviction, cluster, flash]
+    expected_item_kinds: [module]
+    required_evidence_fields: [item_path]
+    target_scope: any
     expect_abstain: true
