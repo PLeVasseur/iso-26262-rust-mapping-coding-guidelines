@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 
-from sqlite_capture_rust_reference_query_reviews import main
+from retrieval.operations.capture import main
 
 if __name__ == "__main__":
     sys.exit(main())

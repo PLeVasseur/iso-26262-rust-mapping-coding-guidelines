@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 
-from sqlite_migrate_rust_reference_schema import main
+from retrieval.operations.migrate import main
 
 if __name__ == "__main__":
     sys.exit(main())

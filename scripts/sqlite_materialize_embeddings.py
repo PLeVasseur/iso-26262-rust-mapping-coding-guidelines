@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sys
 
-from sqlite_materialize_rust_reference_embeddings import main
+from retrieval.operations.materialize import main
 
 if __name__ == "__main__":
     sys.exit(main())
