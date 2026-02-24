@@ -14,7 +14,7 @@ defaults:
   profile: core_docs_control
 
 ingest:
-  strategy: core_docs_pdf_v1
+  strategy: core_docs_rustdoc_v1
   chunking:
     target_min_tokens: 150
     target_max_tokens: 500
@@ -34,8 +34,8 @@ runtime:
     candidate_limit: 5000
 
 capabilities:
-  query: false
-  eval: false
+  query: true
+  eval: true
   build: false
   materialize: false
   smoke: false

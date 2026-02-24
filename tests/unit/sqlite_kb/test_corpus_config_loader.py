@@ -29,8 +29,8 @@ class CorpusConfigLoaderTests(unittest.TestCase):
         self.assertEqual(cfg.corpus, "core_docs")
         self.assertEqual(cfg.profile_name, "core_docs_control")
         self.assertTrue(str(cfg.contract_path).endswith("core_docs.yaml"))
-        self.assertEqual(cfg.ingest_strategy, "core_docs_pdf_v1")
-        self.assertFalse(cfg.supports_eval)
+        self.assertEqual(cfg.ingest_strategy, "core_docs_rustdoc_v1")
+        self.assertTrue(cfg.supports_eval)
         self.assertTrue(cfg.supports_migrate)
 
 

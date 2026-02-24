@@ -16,7 +16,12 @@ class IngestRegistryTests(unittest.TestCase):
     def test_lists_expected_strategies(self) -> None:
         strategies = list_ingest_strategies()
         self.assertIn("rust_md_v1", strategies)
-        self.assertIn("core_docs_pdf_v1", strategies)
+        self.assertIn("core_docs_rustdoc_v1", strategies)
+
+    def test_legacy_core_docs_strategy_id_hard_fails_with_migration_hint(self) -> None:
+        with self.assertRaises(RuntimeError) as context:
+            resolve_ingest_strategy("core_docs_pdf_v1")
+        self.assertIn("core_docs_rustdoc_v1", str(context.exception))
 
     def test_resolve_unknown_raises(self) -> None:
         with self.assertRaises(RuntimeError):

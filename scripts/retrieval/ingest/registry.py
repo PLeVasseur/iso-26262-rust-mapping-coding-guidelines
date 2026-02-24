@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from retrieval.ingest.contracts import IngestStrategy
+from retrieval.ingest.strategies.core_docs_rustdoc_v1 import CoreDocsRustdocV1Strategy
 from retrieval.ingest.strategies.rust_md_v1 import RustMarkdownV1Strategy
 
 _STRATEGIES: dict[str, IngestStrategy] = {
     "rust_md_v1": RustMarkdownV1Strategy(),
-    "core_docs_pdf_v1": RustMarkdownV1Strategy(),
+    "core_docs_rustdoc_v1": CoreDocsRustdocV1Strategy(),
 }
 
 
@@ -15,6 +16,12 @@ def list_ingest_strategies() -> tuple[str, ...]:
 
 def resolve_ingest_strategy(strategy_id: str) -> IngestStrategy:
     normalized = str(strategy_id).strip().lower()
+    if normalized == "core_docs_pdf_v1":
+        raise RuntimeError(
+            "Unknown ingest strategy 'core_docs_pdf_v1'. "
+            "Use 'core_docs_rustdoc_v1' instead. "
+            f"Supported: {', '.join(list_ingest_strategies())}"
+        )
     strategy = _STRATEGIES.get(normalized)
     if strategy is None:
         raise RuntimeError(
