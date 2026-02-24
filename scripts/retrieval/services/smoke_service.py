@@ -17,12 +17,15 @@ def run(args: Namespace, *, root: Path) -> int:
             operation="smoke",
             reason="corpus configuration disables smoke",
         )
+    smoke_contract = root / "config" / "sqlite_query_contracts" / f"{defaults.corpus}.yaml"
+    contract_path = smoke_contract if smoke_contract.exists() else defaults.contract_path
+
     argv = [
         "sqlite_smoke.py",
         "--db-path",
         str(defaults.db_path),
         "--contract-path",
-        str(defaults.contract_path),
+        str(contract_path),
         "--query-log-root",
         str(defaults.query_log_root),
     ]
