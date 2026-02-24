@@ -19,6 +19,8 @@ def run(args: Namespace, *, root: Path) -> int:
         )
     argv = [
         "sqlite_build.py",
+        "--corpus",
+        defaults.corpus,
         "--db-path",
         str(defaults.db_path),
         "--report-root",

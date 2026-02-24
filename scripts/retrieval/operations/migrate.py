@@ -6,9 +6,8 @@ import json
 import re
 import sqlite3
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
-
-from retrieval.operations.build import initialize_schema, utc_now
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
@@ -28,6 +27,10 @@ def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
 
 
 TOKEN_RE = re.compile(r"[a-z0-9_]{3,}")
+
+
+def utc_now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _count_rows(connection: sqlite3.Connection, table_name: str) -> int:
@@ -53,7 +56,6 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
 
     connection = sqlite3.connect(db_path)
     try:
-        initialize_schema(connection)
         added_columns: list[str] = []
         refreshed_fts = False
         refreshed_chunk_fts = False

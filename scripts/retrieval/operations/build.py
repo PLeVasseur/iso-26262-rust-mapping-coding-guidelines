@@ -22,6 +22,7 @@ from retrieval.core.provenance import (
     compute_source_state_from_db,
     record_pipeline_run,
 )
+from retrieval.corpora.registry import list_supported_corpora
 from retrieval.ingest.contracts import ChunkInput, CleanInput
 from retrieval.ingest.registry import list_ingest_strategies, resolve_ingest_strategy
 
@@ -3013,6 +3014,12 @@ def build_rust_reference_db(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build rust_reference.sqlite (Rank 1)")
     parser.add_argument(
+        "--corpus",
+        choices=list_supported_corpora(),
+        default="rust_reference",
+        help="Corpus adapter used to resolve build runner",
+    )
+    parser.add_argument(
         "--db-path",
         default=".cache/sqlite_kb/current/rust_reference.sqlite",
         help="Target path for active rust_reference.sqlite",
@@ -3164,10 +3171,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    root = Path(__file__).resolve().parents[3]
-
+def run_rust_reference_build(*, args: argparse.Namespace, root: Path) -> dict[str, Any]:
     db_path = (root / args.db_path).resolve()
     snapshot_root = (root / args.snapshot_root).resolve()
     manifest_path = (root / args.manifest_path).resolve()
@@ -3180,37 +3184,47 @@ def main() -> int:
     )
     reference_cache_dir = (root / args.reference_cache_dir).resolve()
 
+    return build_rust_reference_db(
+        db_path=db_path,
+        snapshot_root=snapshot_root,
+        manifest_path=manifest_path,
+        extractor_db=extractor_db,
+        table_node_id=args.table_node_id,
+        reference_source_dir=reference_source_dir,
+        reference_cache_dir=reference_cache_dir,
+        reference_repo_url=args.reference_repo_url,
+        reference_revision=args.reference_revision,
+        skip_fetch=args.skip_fetch,
+        report_root=report_root,
+        min_sections=args.min_sections,
+        min_statements=args.min_statements,
+        min_mechanisms=args.min_mechanisms,
+        retrieval_mode=args.retrieval_mode,
+        retrieval_corpus=args.retrieval_corpus,
+        semantic_profile_version=args.semantic_profile_version,
+        embedding_model_id=args.embedding_model_id,
+        embedding_model_revision=args.embedding_model_revision,
+        embedding_model_license=args.embedding_model_license,
+        embedding_dim=args.embedding_dim,
+        reranker_model_id=args.reranker_model_id,
+        reranker_model_revision=args.reranker_model_revision,
+        reranker_model_license=args.reranker_model_license,
+        ingest_strategy=args.ingest_strategy,
+        chunk_target_min_tokens=args.chunk_target_min_tokens,
+        chunk_target_max_tokens=args.chunk_target_max_tokens,
+        allow_provenance_mismatch=args.allow_provenance_mismatch,
+    )
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(__file__).resolve().parents[3]
+
     try:
-        summary = build_rust_reference_db(
-            db_path=db_path,
-            snapshot_root=snapshot_root,
-            manifest_path=manifest_path,
-            extractor_db=extractor_db,
-            table_node_id=args.table_node_id,
-            reference_source_dir=reference_source_dir,
-            reference_cache_dir=reference_cache_dir,
-            reference_repo_url=args.reference_repo_url,
-            reference_revision=args.reference_revision,
-            skip_fetch=args.skip_fetch,
-            report_root=report_root,
-            min_sections=args.min_sections,
-            min_statements=args.min_statements,
-            min_mechanisms=args.min_mechanisms,
-            retrieval_mode=args.retrieval_mode,
-            retrieval_corpus=args.retrieval_corpus,
-            semantic_profile_version=args.semantic_profile_version,
-            embedding_model_id=args.embedding_model_id,
-            embedding_model_revision=args.embedding_model_revision,
-            embedding_model_license=args.embedding_model_license,
-            embedding_dim=args.embedding_dim,
-            reranker_model_id=args.reranker_model_id,
-            reranker_model_revision=args.reranker_model_revision,
-            reranker_model_license=args.reranker_model_license,
-            ingest_strategy=args.ingest_strategy,
-            chunk_target_min_tokens=args.chunk_target_min_tokens,
-            chunk_target_max_tokens=args.chunk_target_max_tokens,
-            allow_provenance_mismatch=args.allow_provenance_mismatch,
-        )
+        from retrieval.builders.registry import resolve_builder
+
+        runner = resolve_builder(str(args.corpus))
+        summary = runner(args=args, root=root)
     except Exception as exc:  # pragma: no cover - CLI guard
         print(f"[build-rust-reference][error] {exc}")
         return EXIT_RUNTIME_FAIL
