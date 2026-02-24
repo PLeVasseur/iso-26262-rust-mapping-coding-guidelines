@@ -59,5 +59,9 @@ Use this command sequence as the canonical repo verification path for retrieval 
 
 ```bash
 uv run ruff check scripts tests/unit/sqlite_kb && \
-uv run python -m unittest discover -s tests/unit/sqlite_kb -p 'test_*.py'
+uv run python -m unittest discover -s tests/unit/sqlite_kb -p 'test_*.py' && \
+uv run rg -n "Core docs coverage for ISO 26262 Table 1 row|core-docs::.*::section" scripts/retrieval/builders/core_docs_builder.py && exit 1 || true
 ```
+
+The final grep guard must not match anything. If it matches, synthetic row-summary core_docs
+build behavior has reappeared and the change is rejected.

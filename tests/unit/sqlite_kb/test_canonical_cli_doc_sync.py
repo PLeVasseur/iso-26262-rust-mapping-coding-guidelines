@@ -15,6 +15,10 @@ class CanonicalCliDocSyncTests(unittest.TestCase):
             "uv run python -m unittest discover -s tests/unit/sqlite_kb -p 'test_*.py'",
             text,
         )
+        self.assertIn(
+            'uv run rg -n "Core docs coverage for ISO 26262 Table 1 row|core-docs::.*::section"',
+            text,
+        )
 
 
 if __name__ == "__main__":
