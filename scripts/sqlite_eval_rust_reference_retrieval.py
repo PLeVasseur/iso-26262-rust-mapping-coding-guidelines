@@ -29,6 +29,11 @@ from retrieval.eval.prompt_routing import (
     classify_prompt_family,
     resolve_hybrid_fusion_method_for_case,
 )
+from retrieval.eval.reporting import (
+    infer_root_cause_run_and_cell as eval_infer_root_cause_run_and_cell,
+)
+from retrieval.eval.reporting import write_eval_report
+from retrieval.eval.runner import load_eval_prompts as eval_load_eval_prompts
 from semantic_backend_client import (
     SemanticBackendConfig,
     check_semantic_backend,
@@ -1205,7 +1210,7 @@ def main() -> int:
         else runtime_paths.report_root
         / f"retrieval_eval_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
     )
-    root_cause_run_id, root_cause_cell_id = _infer_root_cause_run_and_cell(report_path)
+    root_cause_run_id, root_cause_cell_id = eval_infer_root_cause_run_and_cell(report_path)
     backend_attempt_log_path = (
         (root / args.backend_attempt_log_path).resolve() if args.backend_attempt_log_path else None
     )
@@ -1259,7 +1264,7 @@ def main() -> int:
             started_local_backend = True
 
     try:
-        prompts = load_eval_prompts(eval_path)
+        prompts = eval_load_eval_prompts(eval_path)
         report = evaluate_retrieval_prompts(
             db_path=db_path,
             contract_path=contract_path,
@@ -1301,10 +1306,7 @@ def main() -> int:
                 check=False,
             )
 
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    with report_path.open("w", encoding="utf-8") as handle:
-        json.dump(report, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    write_eval_report(report_path, report)
 
     print(json.dumps(report["summary"], indent=2, sort_keys=True))
     print(f"[eval-rust-reference-retrieval] report -> {report_path}")
