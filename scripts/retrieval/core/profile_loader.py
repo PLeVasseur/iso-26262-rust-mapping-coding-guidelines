@@ -14,6 +14,19 @@ def load_retrieval_profile(profile_path: Path) -> dict[str, Any]:
     return payload
 
 
+def enforce_profile_corpus(selected_corpus: str, profile: dict[str, Any]) -> str:
+    normalized_selected = str(selected_corpus).strip().lower()
+    profile_corpus = str(profile.get("corpus", "")).strip().lower()
+    if not profile_corpus:
+        return normalized_selected
+    if normalized_selected != profile_corpus:
+        raise RuntimeError(
+            "Retrieval profile corpus mismatch: "
+            f"--corpus={normalized_selected} but profile declares corpus={profile_corpus}"
+        )
+    return normalized_selected
+
+
 def apply_profile_defaults(args: Any, profile: dict[str, Any]) -> None:
     hybrid = profile.get("hybrid") or {}
     semantic = profile.get("semantic") or {}

@@ -28,7 +28,11 @@ from retrieval.core.profile import (
     HYBRID_FUSION_WEIGHTED_V1,
     HYBRID_FUSION_WEIGHTED_V2,
 )
-from retrieval.core.profile_loader import apply_profile_defaults, load_retrieval_profile
+from retrieval.core.profile_loader import (
+    apply_profile_defaults,
+    enforce_profile_corpus,
+    load_retrieval_profile,
+)
 from retrieval.corpora.registry import list_supported_corpora
 from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
 from semantic_backend_client import (
@@ -2512,6 +2516,7 @@ def main() -> int:
         if not profile_path.is_absolute():
             profile_path = (root / profile_path).resolve()
         profile = load_retrieval_profile(profile_path)
+        corpus = enforce_profile_corpus(corpus, profile)
         apply_profile_defaults(args, profile)
 
     runtime_paths = resolve_corpus_runtime_paths(
