@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from retrieval.core.profile_loader import apply_profile_defaults, load_retrieval_profile
+from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
 from retrieval.eval.prompt_routing import (
     HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1,
     HYBRID_FUSION_ROUTING_OFF,
@@ -978,9 +979,9 @@ def evaluate_retrieval_prompts(
     return report
 
 
-def _default_report_path(root: Path) -> Path:
+def _default_report_path(root: Path, corpus: str) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return root / ".cache/sqlite_kb/reports/rust_reference" / f"retrieval_eval_{stamp}.json"
+    return root / f".cache/sqlite_kb/reports/{corpus}" / f"retrieval_eval_{stamp}.json"
 
 
 def _infer_root_cause_run_and_cell(report_path: Path) -> tuple[str, str]:
@@ -1006,13 +1007,19 @@ def parse_args() -> argparse.Namespace:
         description="Evaluate lexical/semantic/hybrid retrieval quality for rust_reference.sqlite"
     )
     parser.add_argument(
+        "--corpus",
+        choices=list_supported_corpora(),
+        default="rust_reference",
+        help="Corpus adapter used to resolve default DB/contract paths",
+    )
+    parser.add_argument(
         "--db-path",
-        default=".cache/sqlite_kb/current/rust_reference.sqlite",
-        help="Path to rust_reference sqlite database",
+        default="",
+        help="Path to corpus sqlite database (defaults from --corpus)",
     )
     parser.add_argument(
         "--contract-path",
-        default="config/sqlite_query_contracts/rust_reference_chunk.yaml",
+        default="",
         help="Path to query contract file",
     )
     parser.add_argument(
@@ -1027,7 +1034,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--query-log-root",
-        default=".cache/sqlite_kb/query_logs/rust_reference",
+        default="",
         help="Directory for query audit logs",
     )
     parser.add_argument(
@@ -1168,6 +1175,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
+    corpus = str(args.corpus).strip().lower()
+    corpus_config = get_corpus_adapter(corpus).config
 
     retrieval_profile_path = str(args.retrieval_profile_path).strip()
     if retrieval_profile_path:
@@ -1177,12 +1186,18 @@ def main() -> int:
         profile = load_retrieval_profile(profile_path)
         apply_profile_defaults(args, profile)
 
-    db_path = (root / args.db_path).resolve()
-    contract_path = (root / args.contract_path).resolve()
+    db_path_raw = str(args.db_path).strip() or str(corpus_config.default_db_path)
+    contract_path_raw = str(args.contract_path).strip() or str(corpus_config.default_contract_path)
+    query_log_root_raw = str(args.query_log_root).strip() or f".cache/sqlite_kb/query_logs/{corpus}"
+
+    db_path = (root / db_path_raw).resolve()
+    contract_path = (root / contract_path_raw).resolve()
     eval_path = (root / args.eval_path).resolve()
-    query_log_root = (root / args.query_log_root).resolve()
+    query_log_root = (root / query_log_root_raw).resolve()
     report_path = (
-        (root / args.report_path).resolve() if args.report_path else _default_report_path(root)
+        (root / args.report_path).resolve()
+        if args.report_path
+        else _default_report_path(root, corpus)
     )
     root_cause_run_id, root_cause_cell_id = _infer_root_cause_run_and_cell(report_path)
     backend_attempt_log_path = (

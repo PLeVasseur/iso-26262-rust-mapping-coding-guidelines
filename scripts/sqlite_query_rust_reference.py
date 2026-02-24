@@ -29,6 +29,7 @@ from retrieval.core.profile import (
     HYBRID_FUSION_WEIGHTED_V2,
 )
 from retrieval.core.profile_loader import apply_profile_defaults, load_retrieval_profile
+from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
 from semantic_backend_client import (
     SemanticBackendConfig,
     SemanticBackendError,
@@ -348,6 +349,12 @@ def parse_args() -> argparse.Namespace:
         description="Read-only query wrapper for rust_reference.sqlite"
     )
     parser.add_argument(
+        "--corpus",
+        choices=list_supported_corpora(),
+        default="rust_reference",
+        help="Corpus adapter used to resolve default DB/contract paths",
+    )
+    parser.add_argument(
         "--mode",
         choices=("contract", "lexical", "semantic", "hybrid"),
         default="contract",
@@ -523,18 +530,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--db-path",
-        default=".cache/sqlite_kb/current/rust_reference.sqlite",
-        help="Path to rust_reference.sqlite",
+        default="",
+        help="Path to corpus sqlite database (defaults from --corpus)",
     )
     parser.add_argument(
         "--contract-path",
-        default="config/sqlite_query_contracts/rust_reference_chunk.yaml",
-        help="Path to rust_reference query contract YAML",
+        default="",
+        help="Path to corpus query contract YAML (defaults from --corpus)",
     )
     parser.add_argument(
         "--query-log-root",
-        default=".cache/sqlite_kb/query_logs/rust_reference",
-        help="Directory used for query audit logs",
+        default="",
+        help="Directory used for query audit logs (defaults by corpus)",
     )
     parser.add_argument(
         "--rewrite-mode",
@@ -544,8 +551,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--rewrite-rules-path",
-        default=DEFAULT_REWRITE_RULES_PATH,
-        help="Path to deterministic query rewrite rules YAML",
+        default="",
+        help="Path to deterministic query rewrite rules YAML (defaults by corpus)",
     )
     parser.add_argument(
         "--row-limit",
@@ -2496,6 +2503,8 @@ def _without_score_breakdown(result: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
+    corpus = str(args.corpus).strip().lower()
+    corpus_config = get_corpus_adapter(corpus).config
 
     retrieval_profile_path = str(args.retrieval_profile_path).strip()
     if retrieval_profile_path:
@@ -2505,9 +2514,23 @@ def main() -> int:
         profile = load_retrieval_profile(profile_path)
         apply_profile_defaults(args, profile)
 
-    db_path = (root / args.db_path).resolve()
-    contract_path = (root / args.contract_path).resolve()
-    query_log_root = (root / args.query_log_root).resolve()
+    db_path_raw = str(args.db_path).strip() or str(corpus_config.default_db_path)
+    contract_path_raw = str(args.contract_path).strip() or str(corpus_config.default_contract_path)
+    query_log_root_raw = str(args.query_log_root).strip() or f".cache/sqlite_kb/query_logs/{corpus}"
+
+    db_path = (root / db_path_raw).resolve()
+    contract_path = (root / contract_path_raw).resolve()
+    query_log_root = (root / query_log_root_raw).resolve()
+
+    rewrite_rules_raw = str(args.rewrite_rules_path).strip()
+    if rewrite_rules_raw:
+        rewrite_path = (root / rewrite_rules_raw).resolve()
+    else:
+        rewrite_path = (root / f"config/sqlite_query_rewrite/{corpus}_rewrite.yaml").resolve()
+
+    rewrite_mode = str(args.rewrite_mode)
+    if rewrite_mode == "auto" and not rewrite_path.exists():
+        rewrite_mode = "off"
 
     query_text = str(getattr(args, "query_text", "")).strip()
     allow_degraded = bool(getattr(args, "allow_degraded", False))
@@ -2548,8 +2571,8 @@ def main() -> int:
                 semantic_retries=int(args.semantic_retries),
                 persist_semantic_cache=bool(args.persist_semantic_cache),
                 allow_online_corpus_embedding=bool(args.allow_online_corpus_embedding),
-                rewrite_mode=str(args.rewrite_mode),
-                rewrite_rules_path=(root / str(args.rewrite_rules_path)).resolve(),
+                rewrite_mode=rewrite_mode,
+                rewrite_rules_path=rewrite_path,
                 hybrid_fusion_method=str(args.hybrid_fusion_method),
                 hybrid_rrf_k=int(args.hybrid_rrf_k),
                 hybrid_rrf_window=int(args.hybrid_rrf_window),
