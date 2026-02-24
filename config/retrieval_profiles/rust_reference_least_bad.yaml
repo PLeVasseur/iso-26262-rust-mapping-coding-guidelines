@@ -1,0 +1,18 @@
+profile_name: rust_reference_least_bad
+corpus: rust_reference
+hybrid:
+  fusion_method: weighted-v2
+  rrf_k: 60
+  rrf_window: 0
+  candidate_policy: legacy
+  rerank_pool_size: 0
+  lexical_min: 0
+  semantic_min: 0
+  lexical_floor_count: 0
+  lexical_floor_share: 0.0
+semantic:
+  timeout_sec: 120
+  retries: 0
+models:
+  embed_model_id: Qwen/Qwen3-Embedding-4B
+  reranker_model_id: BAAI/bge-reranker-base

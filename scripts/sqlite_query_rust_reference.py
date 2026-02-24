@@ -18,6 +18,17 @@ from typing import Any
 
 import yaml
 
+from retrieval.core.profile import (
+    DEFAULT_HYBRID_RRF_K,
+    HYBRID_CANDIDATE_POLICIES,
+    HYBRID_CANDIDATE_POLICY_LEGACY,
+    HYBRID_CANDIDATE_POLICY_V2,
+    HYBRID_FUSION_METHODS,
+    HYBRID_FUSION_RRF_V1,
+    HYBRID_FUSION_WEIGHTED_V1,
+    HYBRID_FUSION_WEIGHTED_V2,
+)
+from retrieval.core.profile_loader import apply_profile_defaults, load_retrieval_profile
 from semantic_backend_client import (
     SemanticBackendConfig,
     SemanticBackendError,
@@ -135,21 +146,6 @@ SCORE_FIELDS = {
 LEXICAL_WEIGHT = 0.30
 SEMANTIC_WEIGHT = 0.25
 RERANK_WEIGHT = 0.45
-HYBRID_FUSION_WEIGHTED_V1 = "weighted-v1"
-HYBRID_FUSION_WEIGHTED_V2 = "weighted-v2"
-HYBRID_FUSION_RRF_V1 = "rrf-v1"
-HYBRID_FUSION_METHODS = (
-    HYBRID_FUSION_WEIGHTED_V1,
-    HYBRID_FUSION_WEIGHTED_V2,
-    HYBRID_FUSION_RRF_V1,
-)
-DEFAULT_HYBRID_RRF_K = 60
-HYBRID_CANDIDATE_POLICY_LEGACY = "legacy"
-HYBRID_CANDIDATE_POLICY_V2 = "v2"
-HYBRID_CANDIDATE_POLICIES = (
-    HYBRID_CANDIDATE_POLICY_LEGACY,
-    HYBRID_CANDIDATE_POLICY_V2,
-)
 WEIGHTED_V2_LEXICAL_WEIGHT = 0.55
 WEIGHTED_V2_SEMANTIC_WEIGHT = 0.15
 WEIGHTED_V2_RERANK_WEIGHT = 0.30
@@ -367,6 +363,11 @@ def parse_args() -> argparse.Namespace:
         "--query-text",
         default="",
         help="Natural-language query text for lexical/semantic/hybrid retrieval",
+    )
+    parser.add_argument(
+        "--retrieval-profile-path",
+        default="",
+        help="Optional retrieval profile YAML for model/fusion defaults",
     )
     parser.add_argument(
         "--row-marker",
@@ -2495,6 +2496,14 @@ def _without_score_breakdown(result: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
+
+    retrieval_profile_path = str(args.retrieval_profile_path).strip()
+    if retrieval_profile_path:
+        profile_path = Path(retrieval_profile_path)
+        if not profile_path.is_absolute():
+            profile_path = (root / profile_path).resolve()
+        profile = load_retrieval_profile(profile_path)
+        apply_profile_defaults(args, profile)
 
     db_path = (root / args.db_path).resolve()
     contract_path = (root / args.contract_path).resolve()

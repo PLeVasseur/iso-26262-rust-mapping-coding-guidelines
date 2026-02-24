@@ -16,6 +16,13 @@ from typing import Any
 
 import yaml
 
+from retrieval.core.profile_loader import apply_profile_defaults, load_retrieval_profile
+from retrieval.eval.prompt_routing import (
+    HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1,
+    HYBRID_FUSION_ROUTING_OFF,
+    classify_prompt_family,
+    resolve_hybrid_fusion_method_for_case,
+)
 from semantic_backend_client import (
     SemanticBackendConfig,
     check_semantic_backend,
@@ -64,68 +71,6 @@ THRESHOLDS = {
     "semantic_vs_lexical_mrr_delta": 0.05,
     "hybrid_vs_best_single_mrr_tolerance": 0.01,
 }
-
-HYBRID_FUSION_ROUTING_OFF = "off"
-HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1 = "best-practice-v1"
-
-
-def _classify_prompt_family(prompt: dict[str, Any]) -> str:
-    prompt_id = str(prompt.get("prompt_id", "")).strip().lower()
-    query_text = str(prompt.get("query_text", "")).strip().lower()
-    relevant_terms = " ".join(
-        str(term).strip().lower() for term in prompt.get("relevant_terms", [])
-    )
-    haystack = " ".join(part for part in (prompt_id, query_text, relevant_terms) if part)
-
-    unsafe_control_flow_tokens = (
-        "unsafe",
-        "undefined",
-        "pointer",
-        "alias",
-        "lifetime",
-        "control-flow",
-        "control flow",
-        "pattern",
-        "match",
-        "branch",
-    )
-    error_handling_tokens = (
-        "error",
-        "panic",
-        "unwrap",
-        "expect",
-        "result",
-        "defensive",
-    )
-
-    if any(token in haystack for token in unsafe_control_flow_tokens):
-        return "unsafe_control_flow"
-    if any(token in haystack for token in error_handling_tokens):
-        return "error_handling"
-    return "general_semantics"
-
-
-def _resolve_hybrid_fusion_method_for_case(
-    *,
-    mode: str,
-    prompt: dict[str, Any],
-    default_method: str,
-    routing_policy: str,
-) -> tuple[str, str]:
-    if str(mode).strip() != "hybrid":
-        return str(default_method).strip(), "not_hybrid"
-
-    normalized_policy = str(routing_policy).strip().lower() or HYBRID_FUSION_ROUTING_OFF
-    if normalized_policy == HYBRID_FUSION_ROUTING_OFF:
-        return str(default_method).strip(), "routing_off"
-
-    prompt_family = _classify_prompt_family(prompt)
-    if normalized_policy == HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1:
-        if prompt_family == "unsafe_control_flow":
-            return "weighted-v2", prompt_family
-        return "rrf-v1", prompt_family
-
-    return str(default_method).strip(), "unknown_routing_policy"
 
 
 def _utc_now() -> str:
@@ -624,7 +569,7 @@ def evaluate_retrieval_prompts(
                 attempt_prompt_id=str(prompt["prompt_id"]).strip(),
                 attempt_mode=str(mode).strip(),
             )
-            resolved_hybrid_method, routing_reason = _resolve_hybrid_fusion_method_for_case(
+            resolved_hybrid_method, routing_reason = resolve_hybrid_fusion_method_for_case(
                 mode=str(mode),
                 prompt=prompt,
                 default_method=str(hybrid_fusion_method),
@@ -729,7 +674,7 @@ def evaluate_retrieval_prompts(
                 "semantic_retry_events": list(query_result.get("semantic_retry_events", [])),
                 "attempt_context": attempt_context,
                 "min_metric_overrides": dict(prompt.get("min_metrics", {}).get(mode, {})),
-                "prompt_family": _classify_prompt_family(prompt),
+                "prompt_family": classify_prompt_family(prompt),
                 "hybrid_fusion_method_applied": str(resolved_hybrid_method),
                 "hybrid_fusion_routing_reason": str(routing_reason),
                 "timing": {
@@ -1076,6 +1021,11 @@ def parse_args() -> argparse.Namespace:
         help="Path to retrieval eval prompt definitions",
     )
     parser.add_argument(
+        "--retrieval-profile-path",
+        default="",
+        help="Optional retrieval profile YAML for model/fusion defaults",
+    )
+    parser.add_argument(
         "--query-log-root",
         default=".cache/sqlite_kb/query_logs/rust_reference",
         help="Directory for query audit logs",
@@ -1218,6 +1168,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
+
+    retrieval_profile_path = str(args.retrieval_profile_path).strip()
+    if retrieval_profile_path:
+        profile_path = Path(retrieval_profile_path)
+        if not profile_path.is_absolute():
+            profile_path = (root / profile_path).resolve()
+        profile = load_retrieval_profile(profile_path)
+        apply_profile_defaults(args, profile)
 
     db_path = (root / args.db_path).resolve()
     contract_path = (root / args.contract_path).resolve()
