@@ -65,6 +65,68 @@ THRESHOLDS = {
     "hybrid_vs_best_single_mrr_tolerance": 0.01,
 }
 
+HYBRID_FUSION_ROUTING_OFF = "off"
+HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1 = "best-practice-v1"
+
+
+def _classify_prompt_family(prompt: dict[str, Any]) -> str:
+    prompt_id = str(prompt.get("prompt_id", "")).strip().lower()
+    query_text = str(prompt.get("query_text", "")).strip().lower()
+    relevant_terms = " ".join(
+        str(term).strip().lower() for term in prompt.get("relevant_terms", [])
+    )
+    haystack = " ".join(part for part in (prompt_id, query_text, relevant_terms) if part)
+
+    unsafe_control_flow_tokens = (
+        "unsafe",
+        "undefined",
+        "pointer",
+        "alias",
+        "lifetime",
+        "control-flow",
+        "control flow",
+        "pattern",
+        "match",
+        "branch",
+    )
+    error_handling_tokens = (
+        "error",
+        "panic",
+        "unwrap",
+        "expect",
+        "result",
+        "defensive",
+    )
+
+    if any(token in haystack for token in unsafe_control_flow_tokens):
+        return "unsafe_control_flow"
+    if any(token in haystack for token in error_handling_tokens):
+        return "error_handling"
+    return "general_semantics"
+
+
+def _resolve_hybrid_fusion_method_for_case(
+    *,
+    mode: str,
+    prompt: dict[str, Any],
+    default_method: str,
+    routing_policy: str,
+) -> tuple[str, str]:
+    if str(mode).strip() != "hybrid":
+        return str(default_method).strip(), "not_hybrid"
+
+    normalized_policy = str(routing_policy).strip().lower() or HYBRID_FUSION_ROUTING_OFF
+    if normalized_policy == HYBRID_FUSION_ROUTING_OFF:
+        return str(default_method).strip(), "routing_off"
+
+    prompt_family = _classify_prompt_family(prompt)
+    if normalized_policy == HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1:
+        if prompt_family == "unsafe_control_flow":
+            return "weighted-v2", prompt_family
+        return "rrf-v1", prompt_family
+
+    return str(default_method).strip(), "unknown_routing_policy"
+
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -535,6 +597,9 @@ def evaluate_retrieval_prompts(
     hybrid_fusion_method: str = "weighted-v1",
     hybrid_rrf_k: int = 60,
     hybrid_rrf_window: int = 0,
+    hybrid_fusion_routing: str = HYBRID_FUSION_ROUTING_OFF,
+    hybrid_lexical_floor_count: int = 0,
+    hybrid_lexical_floor_share: float = 0.0,
 ) -> dict[str, Any]:
     case_results: list[dict[str, Any]] = []
 
@@ -555,6 +620,12 @@ def evaluate_retrieval_prompts(
                 attempt_prompt_id=str(prompt["prompt_id"]).strip(),
                 attempt_mode=str(mode).strip(),
             )
+            resolved_hybrid_method, routing_reason = _resolve_hybrid_fusion_method_for_case(
+                mode=str(mode),
+                prompt=prompt,
+                default_method=str(hybrid_fusion_method),
+                routing_policy=str(hybrid_fusion_routing),
+            )
             try:
                 query_result = execute_retrieval_query(
                     mode=mode,
@@ -569,9 +640,11 @@ def evaluate_retrieval_prompts(
                     semantic_config=case_semantic_config,
                     semantic_retries=semantic_retries,
                     persist_semantic_cache=True,
-                    hybrid_fusion_method=hybrid_fusion_method,
+                    hybrid_fusion_method=resolved_hybrid_method,
                     hybrid_rrf_k=hybrid_rrf_k,
                     hybrid_rrf_window=hybrid_rrf_window,
+                    hybrid_lexical_floor_count=hybrid_lexical_floor_count,
+                    hybrid_lexical_floor_share=hybrid_lexical_floor_share,
                 )
                 status = "pass"
                 reason = ""
@@ -648,6 +721,9 @@ def evaluate_retrieval_prompts(
                 "semantic_retry_events": list(query_result.get("semantic_retry_events", [])),
                 "attempt_context": attempt_context,
                 "min_metric_overrides": dict(prompt.get("min_metrics", {}).get(mode, {})),
+                "prompt_family": _classify_prompt_family(prompt),
+                "hybrid_fusion_method_applied": str(resolved_hybrid_method),
+                "hybrid_fusion_routing_reason": str(routing_reason),
                 "timing": {
                     "preflight_ms": round(float(case_timing.get("preflight_ms", 0.0)), 3),
                     "lexical_ms": round(float(case_timing.get("lexical_ms", 0.0)), 3),
@@ -908,6 +984,9 @@ def evaluate_retrieval_prompts(
             "hybrid_fusion_method": str(hybrid_fusion_method).strip(),
             "hybrid_rrf_k": int(hybrid_rrf_k),
             "hybrid_rrf_window": int(hybrid_rrf_window),
+            "hybrid_fusion_routing": str(hybrid_fusion_routing).strip(),
+            "hybrid_lexical_floor_count": int(hybrid_lexical_floor_count),
+            "hybrid_lexical_floor_share": float(hybrid_lexical_floor_share),
             "backend_attempt_log_path": (
                 str(backend_attempt_log_path) if backend_attempt_log_path is not None else ""
             ),
@@ -1007,6 +1086,12 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("RUST_REF_HYBRID_FUSION_METHOD", "weighted-v1"),
     )
     parser.add_argument(
+        "--hybrid-fusion-routing",
+        choices=(HYBRID_FUSION_ROUTING_OFF, HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1),
+        default=os.environ.get("RUST_REF_HYBRID_FUSION_ROUTING", HYBRID_FUSION_ROUTING_OFF),
+        help="Optional routing policy that overrides hybrid fusion method per prompt family",
+    )
+    parser.add_argument(
         "--hybrid-rrf-k",
         type=int,
         default=int(os.environ.get("RUST_REF_HYBRID_RRF_K", "60")),
@@ -1016,6 +1101,18 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Optional rank window for RRF (0 means auto)",
+    )
+    parser.add_argument(
+        "--hybrid-lexical-floor-count",
+        type=int,
+        default=int(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_COUNT", "0")),
+        help="Minimum lexical candidates to include in hybrid reranker pool",
+    )
+    parser.add_argument(
+        "--hybrid-lexical-floor-share",
+        type=float,
+        default=float(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_SHARE", "0.0")),
+        help="Minimum lexical share of hybrid reranker window [0,1]",
     )
     parser.add_argument("--allow-degraded", action="store_true")
     parser.add_argument(
@@ -1167,6 +1264,9 @@ def main() -> int:
             hybrid_fusion_method=str(args.hybrid_fusion_method),
             hybrid_rrf_k=int(args.hybrid_rrf_k),
             hybrid_rrf_window=int(args.hybrid_rrf_window),
+            hybrid_fusion_routing=str(args.hybrid_fusion_routing),
+            hybrid_lexical_floor_count=int(args.hybrid_lexical_floor_count),
+            hybrid_lexical_floor_share=float(args.hybrid_lexical_floor_share),
         )
     except (RuntimeError, GuardrailError, OSError) as exc:
         print(f"[eval-rust-reference-retrieval][error] {exc}")

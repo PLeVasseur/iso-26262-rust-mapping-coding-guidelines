@@ -398,6 +398,18 @@ def parse_args() -> argparse.Namespace:
         help="Optional rank window for RRF (0 means auto max(top_k*8,64))",
     )
     parser.add_argument(
+        "--hybrid-lexical-floor-count",
+        type=int,
+        default=int(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_COUNT", "0")),
+        help="Minimum lexical candidates to include in hybrid reranker pool",
+    )
+    parser.add_argument(
+        "--hybrid-lexical-floor-share",
+        type=float,
+        default=float(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_SHARE", "0.0")),
+        help="Minimum lexical share of hybrid reranker window [0,1]",
+    )
+    parser.add_argument(
         "--include-score-breakdown",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -660,6 +672,98 @@ def _apply_rrf_hybrid_scores(
     return hybrid_rows, {
         "lists_fused": ["lexical", "semantic", "reranker"],
         "contribution_counts": contribution_counts,
+    }
+
+
+def _apply_hybrid_lexical_floor_rerank(
+    *,
+    merged_rows: dict[str, dict[str, Any]],
+    lexical_rows: list[dict[str, Any]],
+    semantic_rows: list[dict[str, Any]],
+    query_text: str,
+    config: SemanticBackendConfig,
+    retries: int,
+    top_k: int,
+    floor_count: int,
+    floor_share: float,
+    retry_events: list[dict[str, Any]],
+    timing: dict[str, float],
+    workload: dict[str, int],
+) -> dict[str, Any]:
+    rerank_window = max(int(top_k) * 8, 64)
+    resolved_share = max(0.0, min(1.0, float(floor_share)))
+    resolved_floor_count = max(
+        int(floor_count), int(math.ceil(float(rerank_window) * resolved_share))
+    )
+    if resolved_floor_count <= 0:
+        return {
+            "enabled": False,
+            "resolved_floor_count": 0,
+            "lexical_extra_count": 0,
+            "rerank_window": int(rerank_window),
+        }
+
+    semantic_base = list(semantic_rows[:rerank_window])
+    semantic_base_ids = {_row_identity(row) for row in semantic_base}
+
+    lexical_extras: list[dict[str, Any]] = []
+    for row in lexical_rows:
+        row_id = _row_identity(row)
+        if not row_id or row_id in semantic_base_ids:
+            continue
+        lexical_extras.append(row)
+        if len(lexical_extras) >= resolved_floor_count:
+            break
+
+    if not lexical_extras:
+        return {
+            "enabled": True,
+            "resolved_floor_count": int(resolved_floor_count),
+            "lexical_extra_count": 0,
+            "rerank_window": int(rerank_window),
+        }
+
+    combined: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for row in semantic_base + lexical_extras:
+        row_id = _row_identity(row)
+        if not row_id or row_id in seen_ids:
+            continue
+        seen_ids.add(row_id)
+        combined.append(row)
+
+    rerank_inputs = [str(row.get("statement_text", "")) for row in combined]
+    rerank_started = time.perf_counter()
+    rerank_scores_raw = _with_semantic_retries(
+        "hybrid lexical-floor reranker scoring",
+        retries,
+        lambda: rerank_texts(
+            config=config,
+            query_text=query_text,
+            documents=rerank_inputs,
+        ),
+        telemetry=retry_events,
+    )
+    timing["rerank_ms"] = timing.get("rerank_ms", 0.0) + (
+        (time.perf_counter() - rerank_started) * 1000.0
+    )
+
+    rerank_scores = _min_max_normalize([float(value) for value in rerank_scores_raw])
+    for row, score in zip(combined, rerank_scores, strict=False):
+        row_id = _row_identity(row)
+        if not row_id or row_id not in merged_rows:
+            continue
+        merged_rows[row_id]["reranker_score"] = float(score)
+
+    workload["rerank_pool_size"] = max(int(workload.get("rerank_pool_size", 0)), int(len(combined)))
+    workload["rerank_doc_count"] = max(int(workload.get("rerank_doc_count", 0)), int(len(combined)))
+
+    return {
+        "enabled": True,
+        "resolved_floor_count": int(resolved_floor_count),
+        "lexical_extra_count": int(len(lexical_extras)),
+        "rerank_window": int(rerank_window),
+        "rerank_pool_size": int(len(combined)),
     }
 
 
@@ -1702,6 +1806,8 @@ def execute_retrieval_query(
     hybrid_fusion_method: str = HYBRID_FUSION_WEIGHTED_V1,
     hybrid_rrf_k: int = DEFAULT_HYBRID_RRF_K,
     hybrid_rrf_window: int = 0,
+    hybrid_lexical_floor_count: int = 0,
+    hybrid_lexical_floor_share: float = 0.0,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     semantic_retry_events: list[dict[str, Any]] = []
@@ -1720,6 +1826,8 @@ def execute_retrieval_query(
     resolved_rrf_window = int(hybrid_rrf_window)
     if resolved_rrf_window <= 0:
         resolved_rrf_window = max(top_k * 8, 64)
+    resolved_lexical_floor_count = max(0, int(hybrid_lexical_floor_count))
+    resolved_lexical_floor_share = max(0.0, min(1.0, float(hybrid_lexical_floor_share)))
 
     timing: dict[str, float] = {
         "preflight_ms": 0.0,
@@ -1792,6 +1900,8 @@ def execute_retrieval_query(
         "method": normalized_fusion_method,
         "rrf_k": int(resolved_rrf_k),
         "rrf_window": int(resolved_rrf_window),
+        "lexical_floor_count": int(resolved_lexical_floor_count),
+        "lexical_floor_share": float(resolved_lexical_floor_share),
     }
     fusion_debug: dict[str, Any] = {}
     if normalized_fusion_method == HYBRID_FUSION_RRF_V1:
@@ -2072,6 +2182,21 @@ def execute_retrieval_query(
             merged[row_id]["reranker_score"] = 0.0
         merged[row_id]["lexical_score"] = lexical_score_by_id.get(row_id, 0.0)
 
+    lexical_floor_debug = _apply_hybrid_lexical_floor_rerank(
+        merged_rows=merged,
+        lexical_rows=lexical_rows,
+        semantic_rows=semantic_rows,
+        query_text=effective_query_text,
+        config=semantic_config,
+        retries=semantic_retries,
+        top_k=top_k,
+        floor_count=resolved_lexical_floor_count,
+        floor_share=resolved_lexical_floor_share,
+        retry_events=semantic_retry_events,
+        timing=timing,
+        workload=workload,
+    )
+
     hybrid_rows: list[dict[str, Any]] = []
     if normalized_fusion_method == HYBRID_FUSION_RRF_V1:
         hybrid_rows, fusion_debug = _apply_rrf_hybrid_scores(
@@ -2081,6 +2206,7 @@ def execute_retrieval_query(
             rrf_k=resolved_rrf_k,
             rrf_window=resolved_rrf_window,
         )
+        fusion_debug["lexical_floor"] = lexical_floor_debug
     else:
         use_weighted_v2 = normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
         for row in merged.values():
@@ -2110,6 +2236,8 @@ def execute_retrieval_query(
                 _row_identity(row),
             )
         )
+        if lexical_floor_debug:
+            fusion_debug["lexical_floor"] = lexical_floor_debug
     rows = hybrid_rows[:top_k]
     workload["union_pool_size"] = int(len(merged))
     projection_started = time.perf_counter()
@@ -2231,6 +2359,8 @@ def main() -> int:
                 hybrid_fusion_method=str(args.hybrid_fusion_method),
                 hybrid_rrf_k=int(args.hybrid_rrf_k),
                 hybrid_rrf_window=int(args.hybrid_rrf_window),
+                hybrid_lexical_floor_count=int(args.hybrid_lexical_floor_count),
+                hybrid_lexical_floor_share=float(args.hybrid_lexical_floor_share),
             )
             if not bool(args.include_score_breakdown):
                 result = _without_score_breakdown(result)
