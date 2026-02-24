@@ -5,7 +5,6 @@ import argparse
 import hashlib
 import json
 import math
-import os
 import re
 import sqlite3
 import sys
@@ -29,6 +28,7 @@ from retrieval.core.fusion import (
     apply_component_scores as core_apply_component_scores,
 )
 from retrieval.core.fusion import apply_rrf_hybrid_scores as core_apply_rrf_hybrid_scores
+from retrieval.core.policy_loader import load_eval_policy
 from retrieval.core.profile import (
     DEFAULT_HYBRID_RRF_K,
     HYBRID_CANDIDATE_POLICIES,
@@ -52,7 +52,7 @@ from retrieval.core.telemetry import (
 from retrieval.core.telemetry import (
     timing_payload as core_timing_payload,
 )
-from retrieval.corpora.registry import list_supported_corpora
+from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
 from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
 from semantic_backend_client import (
     SemanticBackendConfig,
@@ -420,13 +420,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hybrid-fusion-method",
         choices=HYBRID_FUSION_METHODS,
-        default=os.environ.get("RUST_REF_HYBRID_FUSION_METHOD", HYBRID_FUSION_WEIGHTED_V1),
+        default=HYBRID_FUSION_WEIGHTED_V1,
         help="Hybrid fusion method",
     )
     parser.add_argument(
         "--hybrid-rrf-k",
         type=int,
-        default=int(os.environ.get("RUST_REF_HYBRID_RRF_K", str(DEFAULT_HYBRID_RRF_K))),
+        default=DEFAULT_HYBRID_RRF_K,
         help="RRF rank constant k for --hybrid-fusion-method rrf-v1",
     )
     parser.add_argument(
@@ -438,7 +438,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hybrid-candidate-policy",
         choices=HYBRID_CANDIDATE_POLICIES,
-        default=os.environ.get("RUST_REF_HYBRID_CANDIDATE_POLICY", HYBRID_CANDIDATE_POLICY_LEGACY),
+        default=HYBRID_CANDIDATE_POLICY_LEGACY,
         help="Hybrid candidate assembly policy before fusion",
     )
     parser.add_argument(
@@ -462,13 +462,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hybrid-lexical-floor-count",
         type=int,
-        default=int(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_COUNT", "0")),
+        default=0,
         help="Minimum lexical candidates to include in hybrid reranker pool",
     )
     parser.add_argument(
         "--hybrid-lexical-floor-share",
         type=float,
-        default=float(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_SHARE", "0.0")),
+        default=0.0,
         help="Minimum lexical share of hybrid reranker window [0,1]",
     )
     parser.add_argument(
@@ -502,33 +502,33 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--semantic-base-url",
-        default=os.environ.get("RUST_REF_TEI_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
         help="Fallback semantic backend base URL",
     )
     parser.add_argument(
         "--semantic-embed-base-url",
-        default=os.environ.get("RUST_REF_TEI_EMBED_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
         help="Optional embedding backend base URL override",
     )
     parser.add_argument(
         "--semantic-rerank-base-url",
-        default=os.environ.get("RUST_REF_TEI_RERANK_BASE_URL", "http://127.0.0.1:8081"),
+        default="http://127.0.0.1:8081",
         help="Optional reranker backend base URL override",
     )
     parser.add_argument(
         "--embed-model-id",
-        default=os.environ.get("RUST_REF_EMBED_MODEL_ID", "Qwen/Qwen3-Embedding-4B"),
+        default="Qwen/Qwen3-Embedding-4B",
         help="Embedding model identifier",
     )
     parser.add_argument(
         "--reranker-model-id",
-        default=os.environ.get("RUST_REF_RERANK_MODEL_ID", "BAAI/bge-reranker-v2-m3"),
+        default="BAAI/bge-reranker-v2-m3",
         help="Reranker model identifier",
     )
     parser.add_argument(
         "--semantic-timeout-sec",
         type=float,
-        default=float(os.environ.get("RUST_REF_SEMANTIC_TIMEOUT_SEC", "60.0")),
+        default=60.0,
         help="Timeout for semantic backend HTTP requests",
     )
     parser.add_argument(
@@ -546,7 +546,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-online-corpus-embedding",
         action=argparse.BooleanOptionalAction,
-        default=bool(int(os.environ.get("RUST_REF_ALLOW_ONLINE_CORPUS_EMBEDDING", "0"))),
+        default=False,
         help=(
             "Allow semantic query path to embed missing corpus rows on demand "
             "(disabled by default; prefer materialize-first)"
@@ -570,7 +570,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--rewrite-mode",
         choices=("auto", "off"),
-        default=os.environ.get("RUST_REF_REWRITE_MODE", "auto"),
+        default="auto",
         help="Deterministic query rewrite mode",
     )
     parser.add_argument(
@@ -1053,7 +1053,7 @@ def build_review_artifact_payload(
             "db_path": str(db_path),
             "contract_path": str(contract_path),
             "query_log_root": str(query_log_root),
-            "backend_profile": str(os.environ.get("RUST_REF_SEMANTIC_BACKEND_PROFILE", "unknown")),
+            "backend_profile": "configured",
             "semantic": semantic_runtime,
         },
         "response": response,
@@ -2569,14 +2569,30 @@ def main() -> int:
     query_log_root = runtime_paths.query_log_root
     rewrite_path = runtime_paths.rewrite_rules_path
 
+    global ROW_PROJECTION_THRESHOLDS
+    policy_path = (root / str(get_corpus_adapter(corpus).config.default_eval_policy_path)).resolve()
+    if policy_path.exists():
+        policy = load_eval_policy(policy_path)
+        projection = policy.get("projection_thresholds") or {}
+        if isinstance(projection, dict):
+            resolved_thresholds = {
+                str(marker).strip().lower(): float(value)
+                for marker, value in projection.items()
+                if str(marker).strip()
+            }
+            default_threshold = float(resolved_thresholds.get("default", 0.015))
+            row_markers = tuple(f"1{chr(ord('a') + idx)}" for idx in range(9))
+            ROW_PROJECTION_THRESHOLDS = {
+                marker: float(resolved_thresholds.get(marker, default_threshold))
+                for marker in row_markers
+            }
+
     rewrite_mode = str(args.rewrite_mode)
     if rewrite_mode == "auto" and not rewrite_path.exists():
         rewrite_mode = "off"
 
     query_text = str(getattr(args, "query_text", "")).strip()
     allow_degraded = bool(getattr(args, "allow_degraded", False))
-    if not allow_degraded:
-        allow_degraded = os.environ.get("RUST_REF_ALLOW_DEGRADED", "0") == "1"
 
     semantic_config: SemanticBackendConfig | None = None
 

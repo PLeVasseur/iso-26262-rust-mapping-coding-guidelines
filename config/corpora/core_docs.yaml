@@ -1,0 +1,36 @@
+version: 1
+corpus: core_docs
+
+paths:
+  db: .cache/sqlite_kb/current/core_docs.sqlite
+  contract: config/sqlite_query_contracts/core_docs.yaml
+  eval_testset: data/query_testsets/core_docs_table1_retrieval_eval.yaml
+  rewrite_rules: config/sqlite_query_rewrite/core_docs_rewrite.yaml
+  query_log_root: .cache/sqlite_kb/query_logs/core_docs
+  report_root: .cache/sqlite_kb/reports/core_docs
+  eval_policy: config/eval_policies/core_docs.yaml
+
+defaults:
+  profile: core_docs_control
+
+runtime:
+  semantic:
+    base_url: http://127.0.0.1:8080
+    embed_base_url: http://127.0.0.1:8080
+    rerank_base_url: http://127.0.0.1:8081
+    timeout_sec: 120
+    retries: 0
+  retrieval:
+    top_k: 10
+    candidate_limit: 5000
+
+capabilities:
+  query: true
+  eval: true
+  build: true
+  materialize: true
+  smoke: true
+  capture: true
+  verify: true
+  validate: true
+  migrate: true

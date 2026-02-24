@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,17 +12,18 @@ EXIT_RUNTIME_FAIL = 3
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run semantic/hybrid retrieval CI lane checks")
+    parser.add_argument("--corpus", default="rust_reference")
     parser.add_argument(
         "--semantic-base-url",
-        default=os.environ.get("RUST_REF_TEI_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
     )
     parser.add_argument(
         "--semantic-embed-base-url",
-        default=os.environ.get("RUST_REF_TEI_EMBED_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
     )
     parser.add_argument(
         "--semantic-rerank-base-url",
-        default=os.environ.get("RUST_REF_TEI_RERANK_BASE_URL", "http://127.0.0.1:8081"),
+        default="http://127.0.0.1:8081",
     )
     parser.add_argument("--embed-model-id", default="Qwen/Qwen3-Embedding-4B")
     parser.add_argument("--reranker-model-id", default="BAAI/bge-reranker-v2-m3")
@@ -43,19 +43,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--local-embed-device",
         choices=("auto", "cpu", "mps", "cuda"),
-        default=os.environ.get("RUST_REF_LOCAL_EMBED_DEVICE", "auto"),
+        default="auto",
     )
     parser.add_argument(
         "--local-rerank-device",
         choices=("auto", "cpu", "mps", "cuda"),
-        default=os.environ.get("RUST_REF_LOCAL_RERANK_DEVICE", "auto"),
+        default="auto",
     )
     parser.add_argument(
         "--local-model-cache-dir",
-        default=os.environ.get(
-            "RUST_REF_SEMANTIC_MODEL_CACHE_DIR",
-            os.environ.get("RUST_REF_TEI_MODEL_CACHE_DIR", ".cache/sqlite_kb/models/hf"),
-        ),
+        default=".cache/sqlite_kb/models/hf",
     )
     parser.add_argument("--local-startup-timeout-sec", type=float, default=180.0)
     return parser.parse_args()
@@ -133,7 +130,10 @@ def main() -> int:
             "uv",
             "run",
             "python",
-            "scripts/sqlite_materialize_rust_reference_embeddings.py",
+            "scripts/sqlite_kb.py",
+            "materialize",
+            "--corpus",
+            str(args.corpus),
             "--semantic-base-url",
             base_url,
             "--semantic-embed-base-url",
@@ -151,7 +151,10 @@ def main() -> int:
             "uv",
             "run",
             "python",
-            "scripts/sqlite_eval_rust_reference_retrieval.py",
+            "scripts/sqlite_kb.py",
+            "eval",
+            "--corpus",
+            str(args.corpus),
             "--semantic-base-url",
             base_url,
             "--semantic-embed-base-url",

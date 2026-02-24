@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import sqlite3
 import subprocess
 import sys
@@ -16,12 +15,13 @@ from typing import Any
 
 import yaml
 
+from retrieval.core.policy_loader import load_eval_policy
 from retrieval.core.profile_loader import (
     apply_profile_defaults,
     enforce_profile_corpus,
     load_retrieval_profile,
 )
-from retrieval.corpora.registry import list_supported_corpora
+from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
 from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
 from retrieval.eval.prompt_routing import (
     HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1,
@@ -1029,8 +1029,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--eval-path",
-        default="data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
-        help="Path to retrieval eval prompt definitions",
+        default="",
+        help="Path to retrieval eval prompt definitions (defaults from --corpus)",
     )
     parser.add_argument(
         "--retrieval-profile-path",
@@ -1057,18 +1057,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hybrid-fusion-method",
         choices=("weighted-v1", "weighted-v2", "rrf-v1"),
-        default=os.environ.get("RUST_REF_HYBRID_FUSION_METHOD", "weighted-v1"),
+        default="weighted-v1",
     )
     parser.add_argument(
         "--hybrid-fusion-routing",
         choices=(HYBRID_FUSION_ROUTING_OFF, HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1),
-        default=os.environ.get("RUST_REF_HYBRID_FUSION_ROUTING", HYBRID_FUSION_ROUTING_OFF),
+        default=HYBRID_FUSION_ROUTING_OFF,
         help="Optional routing policy that overrides hybrid fusion method per prompt family",
     )
     parser.add_argument(
         "--hybrid-rrf-k",
         type=int,
-        default=int(os.environ.get("RUST_REF_HYBRID_RRF_K", "60")),
+        default=60,
     )
     parser.add_argument(
         "--hybrid-rrf-window",
@@ -1079,19 +1079,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hybrid-lexical-floor-count",
         type=int,
-        default=int(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_COUNT", "0")),
+        default=0,
         help="Minimum lexical candidates to include in hybrid reranker pool",
     )
     parser.add_argument(
         "--hybrid-lexical-floor-share",
         type=float,
-        default=float(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_SHARE", "0.0")),
+        default=0.0,
         help="Minimum lexical share of hybrid reranker window [0,1]",
     )
     parser.add_argument(
         "--hybrid-candidate-policy",
         choices=("legacy", "v2"),
-        default=os.environ.get("RUST_REF_HYBRID_CANDIDATE_POLICY", "legacy"),
+        default="legacy",
         help="Hybrid candidate assembly policy before fusion",
     )
     parser.add_argument(
@@ -1115,28 +1115,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-degraded", action="store_true")
     parser.add_argument(
         "--semantic-base-url",
-        default=os.environ.get("RUST_REF_TEI_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
     )
     parser.add_argument(
         "--semantic-embed-base-url",
-        default=os.environ.get("RUST_REF_TEI_EMBED_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
     )
     parser.add_argument(
         "--semantic-rerank-base-url",
-        default=os.environ.get("RUST_REF_TEI_RERANK_BASE_URL", "http://127.0.0.1:8081"),
+        default="http://127.0.0.1:8081",
     )
     parser.add_argument(
         "--embed-model-id",
-        default=os.environ.get("RUST_REF_EMBED_MODEL_ID", "Qwen/Qwen3-Embedding-4B"),
+        default="Qwen/Qwen3-Embedding-4B",
     )
     parser.add_argument(
         "--reranker-model-id",
-        default=os.environ.get("RUST_REF_RERANK_MODEL_ID", "BAAI/bge-reranker-v2-m3"),
+        default="BAAI/bge-reranker-v2-m3",
     )
     parser.add_argument(
         "--semantic-timeout-sec",
         type=float,
-        default=float(os.environ.get("RUST_REF_SEMANTIC_TIMEOUT_SEC", "60.0")),
+        default=60.0,
     )
     parser.add_argument("--semantic-retries", type=int, default=0)
     parser.add_argument(
@@ -1159,19 +1159,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--local-embed-device",
         choices=("auto", "cpu", "mps", "cuda"),
-        default=os.environ.get("RUST_REF_LOCAL_EMBED_DEVICE", "auto"),
+        default="auto",
     )
     parser.add_argument(
         "--local-rerank-device",
         choices=("auto", "cpu", "mps", "cuda"),
-        default=os.environ.get("RUST_REF_LOCAL_RERANK_DEVICE", "auto"),
+        default="auto",
     )
     parser.add_argument(
         "--local-model-cache-dir",
-        default=os.environ.get(
-            "RUST_REF_SEMANTIC_MODEL_CACHE_DIR",
-            os.environ.get("RUST_REF_TEI_MODEL_CACHE_DIR", ".cache/sqlite_kb/models/hf"),
-        ),
+        default=".cache/sqlite_kb/models/hf",
     )
     parser.add_argument("--local-startup-timeout-sec", type=float, default=180.0)
     return parser.parse_args()
@@ -1202,7 +1199,10 @@ def main() -> int:
 
     db_path = runtime_paths.db_path
     contract_path = runtime_paths.contract_path
-    eval_path = (root / args.eval_path).resolve()
+    eval_path_raw = str(args.eval_path).strip() or str(
+        get_corpus_adapter(corpus).config.default_eval_path
+    )
+    eval_path = (root / eval_path_raw).resolve()
     query_log_root = runtime_paths.query_log_root
     report_path = (
         (root / args.report_path).resolve()
@@ -1211,6 +1211,18 @@ def main() -> int:
         / f"retrieval_eval_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
     )
     root_cause_run_id, root_cause_cell_id = eval_infer_root_cause_run_and_cell(report_path)
+
+    global THRESHOLDS
+    global SKEW_THRESHOLDS
+    policy_path = (root / str(get_corpus_adapter(corpus).config.default_eval_policy_path)).resolve()
+    if policy_path.exists():
+        policy = load_eval_policy(policy_path)
+        loaded_thresholds = policy.get("thresholds")
+        loaded_skew = policy.get("skew_thresholds")
+        if isinstance(loaded_thresholds, dict):
+            THRESHOLDS = loaded_thresholds
+        if isinstance(loaded_skew, dict):
+            SKEW_THRESHOLDS = {str(key): float(value) for key, value in loaded_skew.items()}
     backend_attempt_log_path = (
         (root / args.backend_attempt_log_path).resolve() if args.backend_attempt_log_path else None
     )

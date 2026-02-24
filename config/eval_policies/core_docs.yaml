@@ -1,0 +1,38 @@
+version: 1
+corpus: core_docs
+
+thresholds:
+  lexical:
+    precision_at_k: 0.55
+    mrr_at_k: 0.65
+    row_hit_rate: 0.80
+  semantic_focus:
+    mrr_at_k: 0.60
+    row_hit_rate: 0.75
+  hybrid:
+    precision_at_k: 0.65
+    ndcg_at_k: 0.72
+  slice:
+    lexical:
+      row_hit_rate: 0.75
+    hybrid:
+      row_hit_rate: 0.75
+  semantic_vs_lexical_mrr_delta: 0.05
+  hybrid_vs_best_single_mrr_tolerance: 0.01
+
+skew_thresholds:
+  max_row_share: 0.75
+  min_row_entropy: 0.35
+  min_abstain_rate_with_expected: 0.20
+
+projection_thresholds:
+  default: 0.015
+  1a: 0.02
+  1b: 0.02
+  1c: 0.02
+  1d: 0.015
+  1e: 0.015
+  1f: 0.015
+  1g: 0.015
+  1h: 0.015
+  1i: 0.015

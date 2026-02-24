@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,25 +14,26 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run full nightly retrieval checks (lexical + semantic + hybrid)"
     )
+    parser.add_argument("--corpus", default="rust_reference")
     parser.add_argument(
         "--semantic-base-url",
-        default=os.environ.get("RUST_REF_TEI_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
     )
     parser.add_argument(
         "--semantic-embed-base-url",
-        default=os.environ.get("RUST_REF_TEI_EMBED_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
     )
     parser.add_argument(
         "--semantic-rerank-base-url",
-        default=os.environ.get("RUST_REF_TEI_RERANK_BASE_URL", "http://127.0.0.1:8081"),
+        default="http://127.0.0.1:8081",
     )
     parser.add_argument(
         "--embed-model-id",
-        default=os.environ.get("RUST_REF_EMBED_MODEL_ID", "Qwen/Qwen3-Embedding-4B"),
+        default="Qwen/Qwen3-Embedding-4B",
     )
     parser.add_argument(
         "--reranker-model-id",
-        default=os.environ.get("RUST_REF_RERANK_MODEL_ID", "BAAI/bge-reranker-v2-m3"),
+        default="BAAI/bge-reranker-v2-m3",
     )
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--candidate-limit", type=int, default=5000)
@@ -45,19 +45,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--local-embed-device",
         choices=("auto", "cpu", "mps", "cuda"),
-        default=os.environ.get("RUST_REF_LOCAL_EMBED_DEVICE", "auto"),
+        default="auto",
     )
     parser.add_argument(
         "--local-rerank-device",
         choices=("auto", "cpu", "mps", "cuda"),
-        default=os.environ.get("RUST_REF_LOCAL_RERANK_DEVICE", "auto"),
+        default="auto",
     )
     parser.add_argument(
         "--local-model-cache-dir",
-        default=os.environ.get(
-            "RUST_REF_SEMANTIC_MODEL_CACHE_DIR",
-            os.environ.get("RUST_REF_TEI_MODEL_CACHE_DIR", ".cache/sqlite_kb/models/hf"),
-        ),
+        default=".cache/sqlite_kb/models/hf",
     )
     parser.add_argument("--local-startup-timeout-sec", type=float, default=180.0)
     return parser.parse_args()
@@ -80,6 +77,8 @@ def main() -> int:
             "run",
             "python",
             "scripts/sqlite_ci_retrieval_semantic.py",
+            "--corpus",
+            str(args.corpus),
             "--semantic-base-url",
             str(args.semantic_base_url),
             "--semantic-embed-base-url",

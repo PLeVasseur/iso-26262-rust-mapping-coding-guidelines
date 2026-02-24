@@ -35,7 +35,10 @@ def main() -> int:
             "uv",
             "run",
             "python",
-            "scripts/sqlite_smoke_rust_reference.py",
+            "scripts/sqlite_kb.py",
+            "smoke",
+            "--corpus",
+            "rust_reference",
             "--no-build-if-missing",
         ],
     ]

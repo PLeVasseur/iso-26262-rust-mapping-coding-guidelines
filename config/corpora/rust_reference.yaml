@@ -1,0 +1,36 @@
+version: 1
+corpus: rust_reference
+
+paths:
+  db: .cache/sqlite_kb/current/rust_reference.sqlite
+  contract: config/sqlite_query_contracts/rust_reference_chunk.yaml
+  eval_testset: data/query_testsets/rust_reference_table1_retrieval_eval.yaml
+  rewrite_rules: config/sqlite_query_rewrite/rust_reference_rewrite.yaml
+  query_log_root: .cache/sqlite_kb/query_logs/rust_reference
+  report_root: .cache/sqlite_kb/reports/rust_reference
+  eval_policy: config/eval_policies/rust_reference.yaml
+
+defaults:
+  profile: rust_reference_control
+
+runtime:
+  semantic:
+    base_url: http://127.0.0.1:8080
+    embed_base_url: http://127.0.0.1:8080
+    rerank_base_url: http://127.0.0.1:8081
+    timeout_sec: 120
+    retries: 0
+  retrieval:
+    top_k: 10
+    candidate_limit: 5000
+
+capabilities:
+  query: true
+  eval: true
+  build: true
+  materialize: true
+  smoke: true
+  capture: true
+  verify: true
+  validate: true
+  migrate: true

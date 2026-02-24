@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sqlite3
 import sys
 import time
@@ -126,33 +125,33 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--semantic-base-url",
-        default=os.environ.get("RUST_REF_TEI_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
         help="Fallback semantic backend base URL",
     )
     parser.add_argument(
         "--semantic-embed-base-url",
-        default=os.environ.get("RUST_REF_TEI_EMBED_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
         help="Optional embedding backend base URL override",
     )
     parser.add_argument(
         "--semantic-rerank-base-url",
-        default=os.environ.get("RUST_REF_TEI_RERANK_BASE_URL", "http://127.0.0.1:8081"),
+        default="http://127.0.0.1:8081",
         help="Optional reranker backend base URL override",
     )
     parser.add_argument(
         "--embed-model-id",
-        default=os.environ.get("RUST_REF_EMBED_MODEL_ID", "Qwen/Qwen3-Embedding-4B"),
+        default="Qwen/Qwen3-Embedding-4B",
         help="Embedding model identifier",
     )
     parser.add_argument(
         "--reranker-model-id",
-        default=os.environ.get("RUST_REF_RERANK_MODEL_ID", "BAAI/bge-reranker-v2-m3"),
+        default="BAAI/bge-reranker-v2-m3",
         help="Reranker model identifier metadata",
     )
     parser.add_argument(
         "--semantic-timeout-sec",
         type=float,
-        default=float(os.environ.get("RUST_REF_SEMANTIC_TIMEOUT_SEC", "60.0")),
+        default=60.0,
         help="Semantic backend timeout per HTTP call",
     )
     parser.add_argument(

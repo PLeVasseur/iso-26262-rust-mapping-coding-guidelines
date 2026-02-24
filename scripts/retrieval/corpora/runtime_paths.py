@@ -37,11 +37,9 @@ def resolve_corpus_runtime_paths(
 
     db_path_raw = str(db_path).strip() or str(corpus_config.default_db_path)
     contract_path_raw = str(contract_path).strip() or str(corpus_config.default_contract_path)
-    query_log_root_raw = (
-        str(query_log_root).strip() or f".cache/sqlite_kb/query_logs/{normalized_corpus}"
-    )
-    rewrite_rules_raw = str(rewrite_rules_path).strip() or (
-        f"config/sqlite_query_rewrite/{normalized_corpus}_rewrite.yaml"
+    query_log_root_raw = str(query_log_root).strip() or str(corpus_config.default_query_log_root)
+    rewrite_rules_raw = str(rewrite_rules_path).strip() or str(
+        corpus_config.default_rewrite_rules_path
     )
 
     return CorpusRuntimePaths(
@@ -50,5 +48,5 @@ def resolve_corpus_runtime_paths(
         contract_path=_resolve(root, contract_path_raw),
         query_log_root=_resolve(root, query_log_root_raw),
         rewrite_rules_path=_resolve(root, rewrite_rules_raw),
-        report_root=_resolve(root, f".cache/sqlite_kb/reports/{normalized_corpus}"),
+        report_root=_resolve(root, str(corpus_config.default_report_root)),
     )

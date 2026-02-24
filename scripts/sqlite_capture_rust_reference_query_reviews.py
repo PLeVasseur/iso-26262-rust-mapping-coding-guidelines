@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -155,28 +154,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-degraded", action="store_true")
     parser.add_argument(
         "--semantic-base-url",
-        default=os.environ.get("RUST_REF_TEI_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
     )
     parser.add_argument(
         "--semantic-embed-base-url",
-        default=os.environ.get("RUST_REF_TEI_EMBED_BASE_URL", "http://127.0.0.1:8080"),
+        default="http://127.0.0.1:8080",
     )
     parser.add_argument(
         "--semantic-rerank-base-url",
-        default=os.environ.get("RUST_REF_TEI_RERANK_BASE_URL", "http://127.0.0.1:8081"),
+        default="http://127.0.0.1:8081",
     )
     parser.add_argument(
         "--embed-model-id",
-        default=os.environ.get("RUST_REF_EMBED_MODEL_ID", "Qwen/Qwen3-Embedding-4B"),
+        default="Qwen/Qwen3-Embedding-4B",
     )
     parser.add_argument(
         "--reranker-model-id",
-        default=os.environ.get("RUST_REF_RERANK_MODEL_ID", "BAAI/bge-reranker-v2-m3"),
+        default="BAAI/bge-reranker-v2-m3",
     )
     parser.add_argument(
         "--semantic-timeout-sec",
         type=float,
-        default=float(os.environ.get("RUST_REF_SEMANTIC_TIMEOUT_SEC", "60.0")),
+        default=60.0,
     )
     parser.add_argument("--semantic-retries", type=int, default=0)
     parser.add_argument(
@@ -187,7 +186,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-online-corpus-embedding",
         action=argparse.BooleanOptionalAction,
-        default=bool(int(os.environ.get("RUST_REF_ALLOW_ONLINE_CORPUS_EMBEDDING", "0"))),
+        default=False,
     )
     return parser.parse_args()
 
@@ -220,8 +219,6 @@ def main() -> int:
         rerank_base_url=(str(args.semantic_rerank_base_url).strip() or None),
     )
     allow_degraded = bool(args.allow_degraded)
-    if not allow_degraded:
-        allow_degraded = os.environ.get("RUST_REF_ALLOW_DEGRADED", "0") == "1"
 
     try:
         prompts = _load_prompt_pack(prompts_path)
