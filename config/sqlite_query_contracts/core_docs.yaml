@@ -1,0 +1,83 @@
+version: 1
+database: core_docs
+defaults:
+  row_limit: 200
+
+queries:
+  snapshot_metadata:
+    description: Active snapshot metadata for core_docs
+    requires_order: true
+    row_limit: 5
+    params: []
+    sql: |
+      SELECT
+        snapshot_id,
+        commit_sha,
+        source_url,
+        fetched_at,
+        sha256
+      FROM snapshots
+      ORDER BY fetched_at DESC
+
+  table1_row_requirements_v2:
+    description: Table 1 row requirement text for chunk-first row projection
+    requires_order: true
+    row_limit: 20
+    params:
+      - row_marker
+    sql: |
+      SELECT
+        r.row_node_id,
+        r.row_marker,
+        r.requirement_text,
+        COALESCE(pt.profile_terms, '') AS profile_terms
+      FROM table1_rows AS r
+      LEFT JOIN (
+        SELECT
+          row_node_id,
+          GROUP_CONCAT(term, ',') AS profile_terms
+        FROM table1_row_profile_terms
+        GROUP BY row_node_id
+      ) AS pt
+        ON pt.row_node_id = r.row_node_id
+      WHERE :row_marker = '' OR row_marker = :row_marker
+      ORDER BY row_marker ASC
+
+  chunk_corpus_v1_all:
+    description: Full chunk retrieval corpus
+    requires_order: true
+    row_limit: 5000
+    params:
+      - chunk_uid_after
+    sql: |
+      SELECT
+        c.chunk_uid,
+        c.clean_text AS chunk_text,
+        sec.heading AS section_heading,
+        COALESCE(sp.source_anchor, sd.rel_path || '#' || sec.anchor) AS source_anchor,
+        c.source_fetched_at,
+        '' AS row_markers,
+        '' AS mechanism_ids,
+        '' AS mechanism_families
+      FROM chunks AS c
+      JOIN sections AS sec ON sec.section_id = c.section_id
+      JOIN source_documents AS sd ON sd.document_id = sec.document_id
+      LEFT JOIN chunk_spans AS sp
+        ON sp.chunk_uid = c.chunk_uid
+       AND sp.span_order = 1
+      WHERE :chunk_uid_after = '' OR c.chunk_uid > :chunk_uid_after
+      ORDER BY c.chunk_uid ASC
+
+  lexical_chunk_search_v1:
+    description: Free-text lexical chunk candidates using FTS5 and BM25
+    requires_order: true
+    row_limit: 500
+    params:
+      - fts_query
+    sql: |
+      SELECT
+        chunk_uid,
+        bm25(chunks_fts) AS bm25_raw
+      FROM chunks_fts
+      WHERE chunks_fts MATCH :fts_query
+      ORDER BY bm25_raw ASC, chunk_uid ASC

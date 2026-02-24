@@ -1,0 +1,47 @@
+version: 1
+suite_id: core_docs_table1_retrieval_eval_v1
+description: >-
+  Starter retrieval quality prompts for ISO 26262 Part 6 Table 1 mapping over
+  core_docs evidence. This suite is intentionally small for early adapter bring-up.
+
+prompts:
+  - prompt_id: CORE-ISSUE-001
+    slice: issue_identification
+    query_text: What diagnostics or analysis gaps can hide safety issues?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [diagnostic, analysis, warning, verification]
+
+  - prompt_id: CORE-ISSUE-002
+    slice: issue_identification
+    query_text: Where can weak error handling lead to unsafe behavior?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [error, handling, fallback, defensive]
+
+  - prompt_id: CORE-RESOLVE-001
+    slice: resolution_identification
+    query_text: Which controls improve concurrency safety confidence?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [concurrency, thread, race, synchronization]
+
+  - prompt_id: CORE-RESOLVE-002
+    slice: resolution_identification
+    query_text: What practices strengthen type and interface robustness?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a, 1c]
+    relevant_terms: [type, interface, abstraction, contract]
+
+  - prompt_id: CORE-NEG-001
+    slice: issue_identification
+    query_text: zzzyyyxx nohits tokenvoid
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [tokenvoid]
+    expect_abstain: true
