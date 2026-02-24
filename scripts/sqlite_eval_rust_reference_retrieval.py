@@ -17,7 +17,8 @@ from typing import Any
 import yaml
 
 from retrieval.core.profile_loader import apply_profile_defaults, load_retrieval_profile
-from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
+from retrieval.corpora.registry import list_supported_corpora
+from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
 from retrieval.eval.prompt_routing import (
     HYBRID_FUSION_ROUTING_BEST_PRACTICE_V1,
     HYBRID_FUSION_ROUTING_OFF,
@@ -979,11 +980,6 @@ def evaluate_retrieval_prompts(
     return report
 
 
-def _default_report_path(root: Path, corpus: str) -> Path:
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return root / f".cache/sqlite_kb/reports/{corpus}" / f"retrieval_eval_{stamp}.json"
-
-
 def _infer_root_cause_run_and_cell(report_path: Path) -> tuple[str, str]:
     parts = list(report_path.parts)
     run_id = ""
@@ -1176,7 +1172,6 @@ def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
     corpus = str(args.corpus).strip().lower()
-    corpus_config = get_corpus_adapter(corpus).config
 
     retrieval_profile_path = str(args.retrieval_profile_path).strip()
     if retrieval_profile_path:
@@ -1186,18 +1181,24 @@ def main() -> int:
         profile = load_retrieval_profile(profile_path)
         apply_profile_defaults(args, profile)
 
-    db_path_raw = str(args.db_path).strip() or str(corpus_config.default_db_path)
-    contract_path_raw = str(args.contract_path).strip() or str(corpus_config.default_contract_path)
-    query_log_root_raw = str(args.query_log_root).strip() or f".cache/sqlite_kb/query_logs/{corpus}"
+    runtime_paths = resolve_corpus_runtime_paths(
+        root=root,
+        corpus=corpus,
+        db_path=str(args.db_path),
+        contract_path=str(args.contract_path),
+        query_log_root=str(args.query_log_root),
+        rewrite_rules_path="",
+    )
 
-    db_path = (root / db_path_raw).resolve()
-    contract_path = (root / contract_path_raw).resolve()
+    db_path = runtime_paths.db_path
+    contract_path = runtime_paths.contract_path
     eval_path = (root / args.eval_path).resolve()
-    query_log_root = (root / query_log_root_raw).resolve()
+    query_log_root = runtime_paths.query_log_root
     report_path = (
         (root / args.report_path).resolve()
         if args.report_path
-        else _default_report_path(root, corpus)
+        else runtime_paths.report_root
+        / f"retrieval_eval_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
     )
     root_cause_run_id, root_cause_cell_id = _infer_root_cause_run_and_cell(report_path)
     backend_attempt_log_path = (

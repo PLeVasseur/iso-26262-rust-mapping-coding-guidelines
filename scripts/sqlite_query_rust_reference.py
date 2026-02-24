@@ -29,7 +29,8 @@ from retrieval.core.profile import (
     HYBRID_FUSION_WEIGHTED_V2,
 )
 from retrieval.core.profile_loader import apply_profile_defaults, load_retrieval_profile
-from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
+from retrieval.corpora.registry import list_supported_corpora
+from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
 from semantic_backend_client import (
     SemanticBackendConfig,
     SemanticBackendError,
@@ -2504,7 +2505,6 @@ def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
     corpus = str(args.corpus).strip().lower()
-    corpus_config = get_corpus_adapter(corpus).config
 
     retrieval_profile_path = str(args.retrieval_profile_path).strip()
     if retrieval_profile_path:
@@ -2514,19 +2514,18 @@ def main() -> int:
         profile = load_retrieval_profile(profile_path)
         apply_profile_defaults(args, profile)
 
-    db_path_raw = str(args.db_path).strip() or str(corpus_config.default_db_path)
-    contract_path_raw = str(args.contract_path).strip() or str(corpus_config.default_contract_path)
-    query_log_root_raw = str(args.query_log_root).strip() or f".cache/sqlite_kb/query_logs/{corpus}"
-
-    db_path = (root / db_path_raw).resolve()
-    contract_path = (root / contract_path_raw).resolve()
-    query_log_root = (root / query_log_root_raw).resolve()
-
-    rewrite_rules_raw = str(args.rewrite_rules_path).strip()
-    if rewrite_rules_raw:
-        rewrite_path = (root / rewrite_rules_raw).resolve()
-    else:
-        rewrite_path = (root / f"config/sqlite_query_rewrite/{corpus}_rewrite.yaml").resolve()
+    runtime_paths = resolve_corpus_runtime_paths(
+        root=root,
+        corpus=corpus,
+        db_path=str(args.db_path),
+        contract_path=str(args.contract_path),
+        query_log_root=str(args.query_log_root),
+        rewrite_rules_path=str(args.rewrite_rules_path),
+    )
+    db_path = runtime_paths.db_path
+    contract_path = runtime_paths.contract_path
+    query_log_root = runtime_paths.query_log_root
+    rewrite_path = runtime_paths.rewrite_rules_path
 
     rewrite_mode = str(args.rewrite_mode)
     if rewrite_mode == "auto" and not rewrite_path.exists():
