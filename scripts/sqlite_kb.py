@@ -61,6 +61,11 @@ def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[1]
 
+    extras = list(getattr(args, "extra_args", []) or [])
+    if extras and extras[0] == "--":
+        extras = extras[1:]
+    args.extra_args = extras
+
     try:
         if args.subcommand == "query":
             return query_service.run(args, root=root)

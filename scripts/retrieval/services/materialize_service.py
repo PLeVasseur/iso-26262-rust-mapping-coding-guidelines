@@ -6,7 +6,7 @@ from pathlib import Path
 from retrieval.corpora.config_loader import load_corpus_runtime_defaults
 from retrieval.services._invoke import run_main
 from retrieval.services.capability import emit_unsupported
-from sqlite_materialize_rust_reference_embeddings import main as materialize_main
+from sqlite_materialize_embeddings import main as materialize_main
 
 
 def run(args: Namespace, *, root: Path) -> int:

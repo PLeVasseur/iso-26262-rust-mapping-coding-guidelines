@@ -6,7 +6,7 @@ from pathlib import Path
 from retrieval.corpora.config_loader import load_corpus_runtime_defaults
 from retrieval.services._invoke import run_main
 from retrieval.services.capability import emit_unsupported
-from sqlite_migrate_rust_reference_schema import main as migrate_main
+from sqlite_migrate_schema import main as migrate_main
 
 
 def run(args: Namespace, *, root: Path) -> int:

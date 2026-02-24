@@ -6,7 +6,7 @@ from pathlib import Path
 from retrieval.corpora.config_loader import load_corpus_runtime_defaults
 from retrieval.services._invoke import run_main
 from retrieval.services.capability import emit_unsupported
-from sqlite_verify_rust_reference_query_set import main as verify_main
+from sqlite_verify_query_set import main as verify_main
 
 
 def run(args: Namespace, *, root: Path) -> int:
