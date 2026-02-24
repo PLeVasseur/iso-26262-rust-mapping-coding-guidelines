@@ -26,7 +26,7 @@ Add a new corpus without adding corpus-specific orchestration scripts.
 1. `uv run python scripts/sqlite_kb.py query --corpus <corpus> -- --mode lexical --query-text "sanity"`
 2. `uv run python scripts/sqlite_kb.py eval --corpus <corpus>`
 3. `uv run ruff check scripts tests/unit/sqlite_kb`
-4. `uv run python -m unittest tests/unit/sqlite_kb/test_retrieval_*.py`
+4. `uv run python -m unittest tests/unit/sqlite_kb/test_retrieval_*.py tests/unit/sqlite_kb/test_no_top_level_rust_orchestration.py tests/unit/sqlite_kb/test_no_timestamped_docs_artifacts.py`
 
 ## Non-Regression Requirement
 
