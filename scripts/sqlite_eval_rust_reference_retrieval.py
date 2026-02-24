@@ -600,6 +600,10 @@ def evaluate_retrieval_prompts(
     hybrid_fusion_routing: str = HYBRID_FUSION_ROUTING_OFF,
     hybrid_lexical_floor_count: int = 0,
     hybrid_lexical_floor_share: float = 0.0,
+    hybrid_candidate_policy: str = "legacy",
+    hybrid_rerank_pool_size: int = 0,
+    hybrid_lexical_min: int = 0,
+    hybrid_semantic_min: int = 0,
 ) -> dict[str, Any]:
     case_results: list[dict[str, Any]] = []
 
@@ -645,6 +649,10 @@ def evaluate_retrieval_prompts(
                     hybrid_rrf_window=hybrid_rrf_window,
                     hybrid_lexical_floor_count=hybrid_lexical_floor_count,
                     hybrid_lexical_floor_share=hybrid_lexical_floor_share,
+                    hybrid_candidate_policy=hybrid_candidate_policy,
+                    hybrid_rerank_pool_size=hybrid_rerank_pool_size,
+                    hybrid_lexical_min=hybrid_lexical_min,
+                    hybrid_semantic_min=hybrid_semantic_min,
                 )
                 status = "pass"
                 reason = ""
@@ -987,6 +995,10 @@ def evaluate_retrieval_prompts(
             "hybrid_fusion_routing": str(hybrid_fusion_routing).strip(),
             "hybrid_lexical_floor_count": int(hybrid_lexical_floor_count),
             "hybrid_lexical_floor_share": float(hybrid_lexical_floor_share),
+            "hybrid_candidate_policy": str(hybrid_candidate_policy).strip(),
+            "hybrid_rerank_pool_size": int(hybrid_rerank_pool_size),
+            "hybrid_lexical_min": int(hybrid_lexical_min),
+            "hybrid_semantic_min": int(hybrid_semantic_min),
             "backend_attempt_log_path": (
                 str(backend_attempt_log_path) if backend_attempt_log_path is not None else ""
             ),
@@ -1113,6 +1125,30 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=float(os.environ.get("RUST_REF_HYBRID_LEXICAL_FLOOR_SHARE", "0.0")),
         help="Minimum lexical share of hybrid reranker window [0,1]",
+    )
+    parser.add_argument(
+        "--hybrid-candidate-policy",
+        choices=("legacy", "v2"),
+        default=os.environ.get("RUST_REF_HYBRID_CANDIDATE_POLICY", "legacy"),
+        help="Hybrid candidate assembly policy before fusion",
+    )
+    parser.add_argument(
+        "--hybrid-rerank-pool-size",
+        type=int,
+        default=0,
+        help="Hybrid rerank pool target size (0 means auto)",
+    )
+    parser.add_argument(
+        "--hybrid-lexical-min",
+        type=int,
+        default=0,
+        help="Minimum lexical candidates in hybrid rerank pool when policy=v2",
+    )
+    parser.add_argument(
+        "--hybrid-semantic-min",
+        type=int,
+        default=0,
+        help="Minimum semantic candidates in hybrid rerank pool when policy=v2",
     )
     parser.add_argument("--allow-degraded", action="store_true")
     parser.add_argument(
@@ -1267,6 +1303,10 @@ def main() -> int:
             hybrid_fusion_routing=str(args.hybrid_fusion_routing),
             hybrid_lexical_floor_count=int(args.hybrid_lexical_floor_count),
             hybrid_lexical_floor_share=float(args.hybrid_lexical_floor_share),
+            hybrid_candidate_policy=str(args.hybrid_candidate_policy),
+            hybrid_rerank_pool_size=int(args.hybrid_rerank_pool_size),
+            hybrid_lexical_min=int(args.hybrid_lexical_min),
+            hybrid_semantic_min=int(args.hybrid_semantic_min),
         )
     except (RuntimeError, GuardrailError, OSError) as exc:
         print(f"[eval-rust-reference-retrieval][error] {exc}")
