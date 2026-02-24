@@ -52,3 +52,12 @@ Run materialization for core docs:
 ```bash
 uv run python scripts/sqlite_kb.py materialize --corpus core_docs
 ```
+
+## Canonical Verification Command
+
+Use this command sequence as the canonical repo verification path for retrieval changes:
+
+```bash
+uv run ruff check scripts tests/unit/sqlite_kb && \
+uv run python -m unittest discover -s tests/unit/sqlite_kb -p 'test_*.py'
+```

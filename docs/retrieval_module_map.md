@@ -32,6 +32,10 @@ This map is the canonical place to find retrieval command logic.
 
 - `scripts/retrieval/services/*.py`
 
+## Builder Dispatch (corpus build internals)
+
+- `scripts/retrieval/builders/*.py`
+
 ## Corpus-Specific Behavior
 
 - adapters: `scripts/retrieval/corpora/*.py`
