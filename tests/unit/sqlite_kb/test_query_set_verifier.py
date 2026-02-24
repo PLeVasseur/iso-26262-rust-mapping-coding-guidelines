@@ -16,13 +16,13 @@ if str(THIS_DIR) not in sys.path:
 
 from _fixture import create_reference_fixture  # noqa: E402
 
-from semantic_backend_client import SemanticBackendConfig  # noqa: E402
-from sqlite_build_rust_reference import (  # noqa: E402
+from retrieval.operations.build import (  # noqa: E402
     DEFAULT_EXTRACTOR_DB,
     DEFAULT_TABLE_NODE_ID,
     build_rust_reference_db,
 )
-from sqlite_eval_rust_reference_retrieval import evaluate_retrieval_prompts  # noqa: E402
+from retrieval.operations.eval import evaluate_retrieval_prompts  # noqa: E402
+from semantic_backend_client import SemanticBackendConfig  # noqa: E402
 
 
 class RetrievalEvalVerifierTests(unittest.TestCase):
@@ -134,7 +134,7 @@ class RetrievalEvalVerifierTests(unittest.TestCase):
             }
 
         with patch(
-            "sqlite_eval_rust_reference_retrieval.execute_retrieval_query",
+            "retrieval.operations.eval.execute_retrieval_query",
             side_effect=_fake_execute_retrieval_query,
         ):
             report = evaluate_retrieval_prompts(
@@ -204,7 +204,7 @@ class RetrievalEvalVerifierTests(unittest.TestCase):
             }
 
         with patch(
-            "sqlite_eval_rust_reference_retrieval.execute_retrieval_query",
+            "retrieval.operations.eval.execute_retrieval_query",
             side_effect=_fake_execute_retrieval_query,
         ):
             report = evaluate_retrieval_prompts(
@@ -287,7 +287,7 @@ class RetrievalEvalVerifierTests(unittest.TestCase):
             }
 
         with patch(
-            "sqlite_eval_rust_reference_retrieval.execute_retrieval_query",
+            "retrieval.operations.eval.execute_retrieval_query",
             side_effect=_fake_execute_retrieval_query,
         ):
             report = evaluate_retrieval_prompts(
@@ -349,7 +349,7 @@ class RetrievalEvalVerifierTests(unittest.TestCase):
             }
 
         with patch(
-            "sqlite_eval_rust_reference_retrieval.execute_retrieval_query",
+            "retrieval.operations.eval.execute_retrieval_query",
             side_effect=_fake_execute_retrieval_query,
         ):
             report = evaluate_retrieval_prompts(
@@ -434,7 +434,7 @@ class RetrievalEvalVerifierTests(unittest.TestCase):
             }
 
         with patch(
-            "sqlite_eval_rust_reference_retrieval.execute_retrieval_query",
+            "retrieval.operations.eval.execute_retrieval_query",
             side_effect=_fake_execute_retrieval_query,
         ):
             report = evaluate_retrieval_prompts(

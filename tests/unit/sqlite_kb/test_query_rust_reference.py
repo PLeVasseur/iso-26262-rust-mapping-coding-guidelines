@@ -20,14 +20,12 @@ if str(THIS_DIR) not in sys.path:
 
 from _fixture import create_reference_fixture  # noqa: E402
 
-from semantic_backend_client import SemanticBackendConfig  # noqa: E402
-from sqlite_build_rust_reference import (  # noqa: E402
+from retrieval.operations.build import (  # noqa: E402
     DEFAULT_EXTRACTOR_DB,
     DEFAULT_TABLE_NODE_ID,
     build_rust_reference_db,
 )
-from sqlite_query_guardrails import GuardrailError, execute_contract_query  # noqa: E402
-from sqlite_query_rust_reference import (  # noqa: E402
+from retrieval.operations.query import (  # noqa: E402
     ModeExecutionError,
     _rewrite_query_text,
     build_review_artifact_payload,
@@ -35,6 +33,8 @@ from sqlite_query_rust_reference import (  # noqa: E402
     persist_review_artifact,
     resolve_review_artifact_path,
 )
+from semantic_backend_client import SemanticBackendConfig  # noqa: E402
+from sqlite_query_guardrails import GuardrailError, execute_contract_query  # noqa: E402
 
 
 class _MockSemanticHandler(BaseHTTPRequestHandler):

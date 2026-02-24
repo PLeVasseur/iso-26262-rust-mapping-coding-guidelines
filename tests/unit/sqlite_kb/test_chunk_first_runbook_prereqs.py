@@ -20,17 +20,17 @@ if str(THIS_DIR) not in sys.path:
 
 from _fixture import create_reference_fixture  # noqa: E402
 
-from semantic_backend_client import SemanticBackendConfig  # noqa: E402
-from sqlite_build_rust_reference import (  # noqa: E402
+from retrieval.operations.build import (  # noqa: E402
     DEFAULT_EXTRACTOR_DB,
     DEFAULT_TABLE_NODE_ID,
     RETRIEVAL_CORPUS_VALUES,
     build_rust_reference_db,
     parse_args,
 )
-from sqlite_eval_rust_reference_retrieval import evaluate_retrieval_prompts  # noqa: E402
-from sqlite_materialize_rust_reference_embeddings import main as materialize_main  # noqa: E402
-from sqlite_query_rust_reference import execute_retrieval_query  # noqa: E402
+from retrieval.operations.eval import evaluate_retrieval_prompts  # noqa: E402
+from retrieval.operations.materialize import main as materialize_main  # noqa: E402
+from retrieval.operations.query import execute_retrieval_query  # noqa: E402
+from semantic_backend_client import SemanticBackendConfig  # noqa: E402
 
 
 class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
@@ -91,7 +91,7 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
             with patch.object(
                 sys,
                 "argv",
-                ["sqlite_build_rust_reference.py", "--retrieval-corpus", corpus],
+                ["build.py", "--retrieval-corpus", corpus],
             ):
                 args = parse_args()
                 self.assertEqual(args.retrieval_corpus, corpus)
@@ -99,7 +99,7 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
         self.assertEqual(set(RETRIEVAL_CORPUS_VALUES), {"statement", "chunk"})
 
     def test_retrieval_corpus_default_is_chunk(self) -> None:
-        with patch.object(sys, "argv", ["sqlite_build_rust_reference.py"]):
+        with patch.object(sys, "argv", ["build.py"]):
             args = parse_args()
         self.assertEqual(args.retrieval_corpus, "chunk")
 
@@ -302,14 +302,14 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
             materialize_query_log_root = temp_root / "query_logs_materialize"
             materialize_progress = temp_root / "reports" / "materialize_progress.jsonl"
             with patch(
-                "sqlite_materialize_rust_reference_embeddings.embed_texts",
+                "retrieval.operations.materialize.embed_texts",
                 side_effect=lambda _config, texts: [[0.1, 0.2, 0.3] for _ in texts],
             ):
                 with patch.object(
                     sys,
                     "argv",
                     [
-                        "sqlite_materialize_rust_reference_embeddings.py",
+                        "materialize.py",
                         "--db-path",
                         str(db_path),
                         "--contract-path",
@@ -402,14 +402,14 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
             contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference_chunk.yaml"
 
             with patch(
-                "sqlite_materialize_rust_reference_embeddings.embed_texts",
+                "retrieval.operations.materialize.embed_texts",
                 side_effect=lambda _config, texts: [[0.1, 0.2, 0.3] for _ in texts],
             ):
                 with patch.object(
                     sys,
                     "argv",
                     [
-                        "sqlite_materialize_rust_reference_embeddings.py",
+                        "materialize.py",
                         "--db-path",
                         str(db_path),
                         "--contract-path",

@@ -15,7 +15,7 @@ if str(THIS_DIR) not in sys.path:
 
 from _fixture import create_reference_fixture  # noqa: E402
 
-from sqlite_build_rust_reference import (  # noqa: E402
+from retrieval.operations.build import (  # noqa: E402
     DEFAULT_EMBEDDING_DIM,
     DEFAULT_EMBEDDING_MODEL_ID,
     DEFAULT_EMBEDDING_MODEL_LICENSE,
@@ -27,7 +27,7 @@ from sqlite_build_rust_reference import (  # noqa: E402
     DEFAULT_RETRIEVAL_MODE,
     DEFAULT_SEMANTIC_PROFILE_VERSION,
 )
-from sqlite_smoke_rust_reference import run_smoke  # noqa: E402
+from retrieval.operations.smoke import run_smoke  # noqa: E402
 
 
 class SmokeRustReferenceTests(unittest.TestCase):

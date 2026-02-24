@@ -13,14 +13,12 @@ if str(SCRIPTS) not in sys.path:
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from sqlite_eval_rust_reference_retrieval import load_eval_prompts  # noqa: E402
+from retrieval.operations.eval import load_eval_prompts  # noqa: E402
 
 
 class RetrievalEvalLoaderTests(unittest.TestCase):
     def test_retrieval_eval_prompt_file_has_required_shape(self) -> None:
-        eval_path = (
-            ROOT / "data" / "query_testsets" / "rust_reference_table1_retrieval_eval.yaml"
-        )
+        eval_path = ROOT / "data" / "query_testsets" / "rust_reference_table1_retrieval_eval.yaml"
         prompts = load_eval_prompts(eval_path)
 
         self.assertGreaterEqual(len(prompts), 20)

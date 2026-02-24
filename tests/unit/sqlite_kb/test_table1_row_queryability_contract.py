@@ -16,7 +16,7 @@ if str(THIS_DIR) not in sys.path:
 
 from _fixture import create_reference_fixture  # noqa: E402
 
-from sqlite_build_rust_reference import (  # noqa: E402
+from retrieval.operations.build import (  # noqa: E402
     DEFAULT_EXTRACTOR_DB,
     DEFAULT_TABLE_NODE_ID,
     build_rust_reference_db,
