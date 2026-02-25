@@ -17,15 +17,21 @@ import sqlite_kb  # noqa: E402
 
 
 class CoreDocsCapabilityContractTests(unittest.TestCase):
-    def _run(self, subcommand: str) -> tuple[int, str]:
+    def _run(self, subcommand: str, extra: list[str] | None = None) -> tuple[int, str]:
         stdout = io.StringIO()
+        argv = ["sqlite_kb.py", subcommand, "--corpus", "core_docs"]
+        if extra:
+            argv.extend(list(extra))
         with patch.object(
             sys,
             "argv",
-            ["sqlite_kb.py", subcommand, "--corpus", "core_docs"],
+            argv,
         ):
             with redirect_stdout(stdout):
-                status = sqlite_kb.main()
+                try:
+                    status = sqlite_kb.main()
+                except SystemExit as exc:
+                    status = int(exc.code or 0)
         return int(status), stdout.getvalue()
 
     def test_phase_a_disabled_operations_emit_typed_unsupported_payload(self) -> None:
@@ -40,7 +46,7 @@ class CoreDocsCapabilityContractTests(unittest.TestCase):
 
     def test_phase_a_enabled_operations_are_not_marked_unsupported(self) -> None:
         for subcommand in ("query", "eval", "migrate"):
-            status, _ = self._run(subcommand)
+            status, _ = self._run(subcommand, extra=["--", "--help"])
             self.assertNotEqual(status, 4, msg=f"{subcommand} should be enabled in phase A")
 
 

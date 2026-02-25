@@ -30,16 +30,11 @@ from retrieval.operations.build import (
 )
 
 TARGET_MATRIX = (
-    "x86_64-unknown-linux-gnu",
-    "x86_64-pc-nto-qnx710",
+    "aarch64-unknown-linux-gnu",
     "aarch64-unknown-nto-qnx710",
-    "x86_64-pc-nto-qnx800",
     "aarch64-unknown-nto-qnx800",
-    "x86_64-wrs-vxworks",
-    "aarch64-wrs-vxworks",
-    "thumbv7em-none-eabihf",
 )
-CANONICAL_TARGET = "x86_64-unknown-linux-gnu"
+CANONICAL_TARGET = "aarch64-unknown-linux-gnu"
 OVERLAY_ITEM_CAP = 1200
 
 CODE_BLOCK_RE = re.compile(r"```(.*?)```", re.DOTALL)
