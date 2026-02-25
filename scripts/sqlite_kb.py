@@ -16,6 +16,7 @@ from retrieval.services import (
     migrate_service,
     query_service,
     smoke_service,
+    validate_audit_service,
     validate_service,
     verify_service,
 )
@@ -54,6 +55,7 @@ def parse_args() -> argparse.Namespace:
         "verify",
         "validate",
         "migrate",
+        "validate-audit",
     ):
         subparser = subparsers.add_parser(name)
         _add_common(subparser)
@@ -83,6 +85,7 @@ def main() -> int:
             "verify": defaults.supports_verify,
             "validate": defaults.supports_validate,
             "migrate": defaults.supports_migrate,
+            "validate-audit": defaults.supports_eval,
         }
         if bool(support_map.get(str(args.subcommand), True)):
             enforce_provenance_guard(
@@ -118,6 +121,8 @@ def main() -> int:
             return validate_service.run(args, root=root)
         if args.subcommand == "migrate":
             return migrate_service.run(args, root=root)
+        if args.subcommand == "validate-audit":
+            return validate_audit_service.run(args, root=root)
     except Exception as exc:  # pragma: no cover - defensive CLI boundary
         print(f"[sqlite_kb][error] {exc}")
         return EXIT_RUNTIME_FAIL

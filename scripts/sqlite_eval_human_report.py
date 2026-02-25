@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,6 +10,10 @@ from pathlib import Path
 from retrieval.corpora.registry import list_supported_corpora
 from retrieval.eval.human_report import HumanReportConfig, generate_human_report
 from retrieval.eval.human_report_resolvers.registry import get_human_report_resolver
+from retrieval.eval.weak_prompt_manifest import (
+    build_weak_prompt_manifest,
+    write_weak_prompt_manifest,
+)
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
@@ -24,6 +29,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--testset-path", default="")
     parser.add_argument("--report-root", default="")
     parser.add_argument("--output-path", default="")
+    parser.add_argument("--weak-prompts-manifest-path", default="")
+    parser.add_argument("--comparator-eval-path", default="")
     parser.add_argument("--top-n", type=int, default=10)
     parser.add_argument("--snippet-chars", type=int, default=320)
     parser.add_argument("--only-problem-prompts", action="store_true")
@@ -56,8 +63,6 @@ def main() -> int:
             db_path = _resolve_path(root, db_path_raw)
         else:
             payload = eval_path.read_text(encoding="utf-8")
-            import json
-
             parsed = json.loads(payload)
             inputs = parsed.get("inputs", {}) if isinstance(parsed, dict) else {}
             eval_db_path = str(inputs.get("db_path", "")).strip()
@@ -97,11 +102,34 @@ def main() -> int:
             only_problem_prompts=bool(args.only_problem_prompts),
         )
         written = generate_human_report(resolver=resolver, config=config)
+
+        manifest_path = (
+            _resolve_path(root, str(args.weak_prompts_manifest_path))
+            if str(args.weak_prompts_manifest_path).strip()
+            else written.with_name(f"{written.stem}__weak_prompts.json")
+        )
+        eval_payload = json.loads(eval_path.read_text(encoding="utf-8"))
+
+        comparator_eval_payload: dict[str, object] | None = None
+        comparator_raw = str(args.comparator_eval_path).strip()
+        if comparator_raw:
+            comparator_path = _resolve_path(root, comparator_raw)
+            if not comparator_path.exists():
+                raise RuntimeError(f"comparator eval artifact not found: {comparator_path}")
+            comparator_eval_payload = json.loads(comparator_path.read_text(encoding="utf-8"))
+
+        weak_manifest = build_weak_prompt_manifest(
+            eval_payload=eval_payload,
+            comparator_payload=comparator_eval_payload,
+            top_n=10,
+        )
+        write_weak_prompt_manifest(path=manifest_path, payload=weak_manifest)
     except Exception as exc:  # pragma: no cover
         print(f"[sqlite_eval_human_report][error] {exc}")
         return EXIT_RUNTIME_FAIL
 
     print(f"[sqlite_eval_human_report] report -> {written}")
+    print(f"[sqlite_eval_human_report] weak prompts -> {manifest_path}")
     return EXIT_SUCCESS
 
 
