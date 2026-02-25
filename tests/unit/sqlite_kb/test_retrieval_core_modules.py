@@ -81,6 +81,38 @@ class RetrievalCoreModuleTests(unittest.TestCase):
             self.assertIn("defensive", rewritten)
             self.assertIn("intent", rewritten)
 
+    def test_rewrite_query_text_can_disable_row_marker_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rules_path = Path(temp_dir) / "rules.yaml"
+            rules_path.write_text(
+                "\n".join(
+                    [
+                        "version: 1",
+                        "strategy: unit-test",
+                        "allow_row_marker_terms: false",
+                        "token_expansions:",
+                        "  error: [result]",
+                        "row_marker_terms:",
+                        "  1d: [defensive]",
+                        "mode_terms:",
+                        "  semantic: [intent]",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            payload = rewrite_query_text(
+                query_text="error handling",
+                row_marker="1d",
+                mode="semantic",
+                rewrite_mode="auto",
+                rewrite_rules_path=rules_path,
+            )
+            rewritten = str(payload.get("rewritten_query", ""))
+            self.assertIn("result", rewritten)
+            self.assertIn("intent", rewritten)
+            self.assertNotIn("defensive", rewritten)
+            self.assertNotIn("row-marker-terms", list(payload.get("strategy_tags", [])))
+
 
 if __name__ == "__main__":
     unittest.main()

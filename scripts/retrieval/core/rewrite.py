@@ -42,6 +42,7 @@ def rewrite_query_text(
     token_expansions_raw = rules.get("token_expansions") or {}
     row_terms_raw = rules.get("row_marker_terms") or {}
     mode_terms_raw = rules.get("mode_terms") or {}
+    allow_row_marker_terms = bool(rules.get("allow_row_marker_terms", True))
 
     token_expansions = {
         str(token).strip().lower(): [
@@ -81,7 +82,7 @@ def rewrite_query_text(
 
     scoped_marker = str(row_marker).strip().lower()
     marker_terms_added = False
-    if scoped_marker in row_terms:
+    if allow_row_marker_terms and scoped_marker in row_terms:
         for term in row_terms[scoped_marker]:
             if term in seen:
                 continue
