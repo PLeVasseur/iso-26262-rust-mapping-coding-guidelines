@@ -78,12 +78,12 @@ def _build_fixture_db(db_path: Path, *, with_core_docs_metadata: bool) -> None:
 def _write_eval(eval_path: Path, db_path: Path) -> None:
     payload = {
         "inputs": {"db_path": str(db_path)},
+        "gate_failures": ["semantic_vs_lexical mrr delta below threshold"],
         "summary": {
             "total_mode_cases": 3,
             "passed_cases": 3,
             "failed_cases": 0,
             "enforce_gates": True,
-            "gate_failures": [],
         },
         "cases": [
             {
@@ -179,6 +179,7 @@ class EvalReportHumanReviewTests(unittest.TestCase):
             self.assertIn("## P1", rendered)
             self.assertIn("item_path", rendered)
             self.assertIn("core::option::Option", rendered)
+            self.assertIn("semantic_vs_lexical mrr delta below threshold", rendered)
 
     def test_rust_reference_report_includes_doc_path_column(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

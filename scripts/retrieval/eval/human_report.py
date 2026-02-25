@@ -218,7 +218,10 @@ def build_markdown_report(
         ]
 
     summary = eval_payload.get("summary", {}) if isinstance(eval_payload, dict) else {}
-    gate_failures = list(summary.get("gate_failures", [])) if isinstance(summary, dict) else []
+    gate_failures_raw = eval_payload.get("gate_failures", [])
+    if not isinstance(gate_failures_raw, list) and isinstance(summary, dict):
+        gate_failures_raw = summary.get("gate_failures", [])
+    gate_failures = [str(value).strip() for value in gate_failures_raw if str(value).strip()]
 
     lines: list[str] = []
     lines.append("# Retrieval Eval Human Review Report")
