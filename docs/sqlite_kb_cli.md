@@ -20,6 +20,7 @@ Supported subcommands:
 - `verify`
 - `validate`
 - `migrate`
+- `validate-audit`
 
 ## Override Precedence
 
@@ -59,6 +60,15 @@ Generate human-readable eval report markdown from eval artifact:
 ```bash
 uv run python scripts/sqlite_kb.py eval-report --corpus core_docs -- \
   --eval-path .cache/sqlite_kb/reports/core_docs/phase_a/20260224T230000Z/eval.json
+```
+
+This command also emits a weak-prompt manifest JSON next to the markdown report by default.
+
+Validate a subagent audit report contract (JSON block + markdown):
+
+```bash
+uv run python scripts/sqlite_kb.py validate-audit --corpus core_docs -- \
+  --audit-report-path /path/to/retrieval-rust-reference-subagent-audit-<phase>-<candidate-id>-<timestamp>.md
 ```
 
 ## Canonical Verification Command
