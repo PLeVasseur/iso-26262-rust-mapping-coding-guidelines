@@ -10,6 +10,7 @@ from retrieval.corpora.registry import list_supported_corpora
 from retrieval.services import (
     build_service,
     capture_service,
+    eval_report_service,
     eval_service,
     materialize_service,
     migrate_service,
@@ -45,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     for name in (
         "query",
         "eval",
+        "eval-report",
         "build",
         "materialize",
         "smoke",
@@ -73,6 +75,7 @@ def main() -> int:
         support_map = {
             "query": defaults.supports_query,
             "eval": defaults.supports_eval,
+            "eval-report": defaults.supports_eval,
             "build": defaults.supports_build,
             "materialize": defaults.supports_materialize,
             "smoke": defaults.supports_smoke,
@@ -99,6 +102,8 @@ def main() -> int:
             return query_service.run(args, root=root)
         if args.subcommand == "eval":
             return eval_service.run(args, root=root)
+        if args.subcommand == "eval-report":
+            return eval_report_service.run(args, root=root)
         if args.subcommand == "build":
             return build_service.run(args, root=root)
         if args.subcommand == "materialize":

@@ -12,6 +12,7 @@ Supported subcommands:
 
 - `query`
 - `eval`
+- `eval-report`
 - `build`
 - `materialize`
 - `smoke`
@@ -51,6 +52,13 @@ Run materialization for core docs:
 
 ```bash
 uv run python scripts/sqlite_kb.py materialize --corpus core_docs
+```
+
+Generate human-readable eval report markdown from eval artifact:
+
+```bash
+uv run python scripts/sqlite_kb.py eval-report --corpus core_docs -- \
+  --eval-path .cache/sqlite_kb/reports/core_docs/phase_a/20260224T230000Z/eval.json
 ```
 
 ## Canonical Verification Command
