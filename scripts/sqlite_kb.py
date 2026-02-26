@@ -12,6 +12,9 @@ from retrieval.services import (
     capture_service,
     eval_report_service,
     eval_service,
+    export_service,
+    guidelines_repo_service,
+    inspect_service,
     materialize_service,
     migrate_service,
     query_service,
@@ -20,6 +23,7 @@ from retrieval.services import (
     validate_service,
     verify_service,
 )
+from retrieval.services.capability import emit_unsupported
 from retrieval.services.provenance_guard import enforce_provenance_guard
 
 EXIT_SUCCESS = 0
@@ -41,13 +45,58 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    if len(sys.argv) > 1 and sys.argv[1] == "guidelines-repo":
+        parser = argparse.ArgumentParser(description="Guidelines repo operations")
+        parser.add_argument("command_family", choices=("guidelines-repo",))
+        subparsers = parser.add_subparsers(dest="guidelines_subcommand", required=True)
+
+        doctor = subparsers.add_parser("doctor")
+        doctor.add_argument(
+            "--mode",
+            choices=("publishable", "exploratory"),
+            default="publishable",
+        )
+
+        ensure_repo = subparsers.add_parser("ensure-repo")
+        ensure_repo.add_argument(
+            "--mode",
+            choices=("publishable", "exploratory"),
+            default="publishable",
+        )
+        ensure_repo.add_argument("--allow-main", action="store_true")
+
+        bootstrap = subparsers.add_parser("bootstrap-guidelines-repo")
+        bootstrap_group = bootstrap.add_mutually_exclusive_group(required=True)
+        bootstrap_group.add_argument("--verify", action="store_true")
+        bootstrap_group.add_argument("--apply", action="store_true")
+        bootstrap.add_argument("--no-commit", action="store_true")
+        bootstrap.add_argument("--allow-dirty-bootstrap", action="store_true")
+
+        bump_pin = subparsers.add_parser("bump-pin")
+        bump_pin.add_argument("--revision", required=True)
+
+        reorg = subparsers.add_parser("reorg-path-mapping")
+        reorg.add_argument("--mapping-file", default="")
+
+        autopilot = subparsers.add_parser("autopilot")
+        autopilot.add_argument("--profile", choices=("fast", "full"), required=True)
+        autopilot.add_argument(
+            "--mode",
+            choices=("publishable", "exploratory"),
+            default="publishable",
+        )
+        autopilot.add_argument("--allow-main", action="store_true")
+        return parser.parse_args()
+
     parser = argparse.ArgumentParser(description="Unified sqlite_kb multi-corpus command")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     for name in (
+        "inspect",
         "query",
         "eval",
         "eval-report",
+        "export-rst",
         "build",
         "materialize",
         "smoke",
@@ -73,11 +122,30 @@ def main() -> int:
     args.extra_args = extras
 
     try:
+        if getattr(args, "command_family", "") == "guidelines-repo":
+            if str(args.guidelines_subcommand) == "doctor":
+                return guidelines_repo_service.run_doctor(args, root=root)
+            if str(args.guidelines_subcommand) == "ensure-repo":
+                return guidelines_repo_service.run_ensure_repo(args, root=root)
+            if str(args.guidelines_subcommand) == "bootstrap-guidelines-repo":
+                return guidelines_repo_service.run_bootstrap_guidelines_repo(args, root=root)
+            if str(args.guidelines_subcommand) == "bump-pin":
+                return guidelines_repo_service.run_bump_pin(args, root=root)
+            if str(args.guidelines_subcommand) == "reorg-path-mapping":
+                return guidelines_repo_service.run_reorg_path_mapping(args, root=root)
+            if str(args.guidelines_subcommand) == "autopilot":
+                return guidelines_repo_service.run_autopilot(args, root=root)
+            raise RuntimeError(
+                f"Unsupported guidelines-repo operation: {args.guidelines_subcommand}"
+            )
+
         defaults = load_corpus_runtime_defaults(root=root, corpus=str(args.corpus))
         support_map = {
+            "inspect": defaults.supports_inspect,
             "query": defaults.supports_query,
             "eval": defaults.supports_eval,
             "eval-report": defaults.supports_eval,
+            "export-rst": defaults.supports_build,
             "build": defaults.supports_build,
             "materialize": defaults.supports_materialize,
             "smoke": defaults.supports_smoke,
@@ -87,7 +155,13 @@ def main() -> int:
             "migrate": defaults.supports_migrate,
             "validate-audit": defaults.supports_eval,
         }
-        if bool(support_map.get(str(args.subcommand), True)):
+        if not bool(support_map.get(str(args.subcommand), True)):
+            return emit_unsupported(
+                corpus=defaults.corpus,
+                operation=str(args.subcommand),
+                reason=f"corpus configuration disables {args.subcommand}",
+            )
+        if bool(support_map.get(str(args.subcommand), True)) and str(args.subcommand) != "inspect":
             enforce_provenance_guard(
                 root=root,
                 operation=str(args.subcommand),
@@ -102,12 +176,16 @@ def main() -> int:
                 extra_args=list(args.extra_args or []),
             )
 
+        if args.subcommand == "inspect":
+            return inspect_service.run(args, root=root)
         if args.subcommand == "query":
             return query_service.run(args, root=root)
         if args.subcommand == "eval":
             return eval_service.run(args, root=root)
         if args.subcommand == "eval-report":
             return eval_report_service.run(args, root=root)
+        if args.subcommand == "export-rst":
+            return export_service.run(args, root=root)
         if args.subcommand == "build":
             return build_service.run(args, root=root)
         if args.subcommand == "materialize":
