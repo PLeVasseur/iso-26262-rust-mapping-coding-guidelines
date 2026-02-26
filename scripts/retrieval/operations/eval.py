@@ -34,7 +34,12 @@ from retrieval.eval.reporting import (
 )
 from retrieval.eval.reporting import write_eval_report
 from retrieval.eval.runner import load_eval_prompts as eval_load_eval_prompts
-from retrieval.operations.query import ModeExecutionError, execute_retrieval_query
+from retrieval.operations.query import (
+    ModeExecutionError,
+    RowProjectionPolicy,
+    execute_retrieval_query,
+    resolve_row_projection_policy,
+)
 from semantic_backend_client import (
     SemanticBackendConfig,
     check_semantic_backend,
@@ -649,6 +654,8 @@ def evaluate_retrieval_prompts(
     hybrid_semantic_min: int = 0,
     suite_id: str = "",
     operation: str = "eval",
+    row_projection_policy: RowProjectionPolicy | None = None,
+    corpus: str = "rust_reference",
 ) -> dict[str, Any]:
     case_results: list[dict[str, Any]] = []
 
@@ -698,6 +705,8 @@ def evaluate_retrieval_prompts(
                     hybrid_rerank_pool_size=hybrid_rerank_pool_size,
                     hybrid_lexical_min=hybrid_lexical_min,
                     hybrid_semantic_min=hybrid_semantic_min,
+                    row_projection_policy=row_projection_policy,
+                    corpus=corpus,
                 )
                 status = "pass"
                 reason = ""
@@ -1267,6 +1276,11 @@ def parse_args() -> argparse.Namespace:
         default=".cache/sqlite_kb/models/hf",
     )
     parser.add_argument("--local-startup-timeout-sec", type=float, default=180.0)
+    parser.add_argument(
+        "--allow-provenance-mismatch",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
@@ -1322,6 +1336,7 @@ def main() -> int:
     backend_attempt_log_path = (
         (root / args.backend_attempt_log_path).resolve() if args.backend_attempt_log_path else None
     )
+    row_projection_policy = resolve_row_projection_policy(root=root, corpus=corpus)
 
     if backend_attempt_log_path is not None:
         backend_attempt_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1405,6 +1420,8 @@ def main() -> int:
             hybrid_semantic_min=int(args.hybrid_semantic_min),
             suite_id=suite_id,
             operation=str(args.operation),
+            row_projection_policy=row_projection_policy,
+            corpus=corpus,
         )
     except (RuntimeError, GuardrailError, OSError) as exc:
         print(f"[eval-rust-reference-retrieval][error] {exc}")

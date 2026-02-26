@@ -113,6 +113,37 @@ class RetrievalCoreModuleTests(unittest.TestCase):
             self.assertNotIn("defensive", rewritten)
             self.assertNotIn("row-marker-terms", list(payload.get("strategy_tags", [])))
 
+    def test_rewrite_query_text_can_suppress_ambiguous_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rules_path = Path(temp_dir) / "rules.yaml"
+            rules_path.write_text(
+                "\n".join(
+                    [
+                        "version: 1",
+                        "strategy: unit-test",
+                        "token_expansions:",
+                        "  style: [lint, diagnostic]",
+                        "suppress_tokens_when_present:",
+                        "  conventions: [style, lint, analyzability]",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            payload = rewrite_query_text(
+                query_text="style conventions analyzability",
+                row_marker="",
+                mode="hybrid",
+                rewrite_mode="auto",
+                rewrite_rules_path=rules_path,
+            )
+            rewritten = str(payload.get("rewritten_query", ""))
+            strategy_tags = list(payload.get("strategy_tags", []))
+            self.assertIn("style", rewritten)
+            self.assertIn("analyzability", rewritten)
+            self.assertNotIn("conventions", rewritten)
+            self.assertIn("lint", rewritten)
+            self.assertIn("token-suppression", strategy_tags)
+
 
 if __name__ == "__main__":
     unittest.main()

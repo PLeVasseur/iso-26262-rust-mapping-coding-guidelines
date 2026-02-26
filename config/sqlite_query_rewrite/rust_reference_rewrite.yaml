@@ -8,6 +8,17 @@ token_expansions:
   concurrency: [thread, send, sync, atomic]
   unsafe: [invariant, boundary, review]
   diagnostics: [lint, warning, policy]
+  trait: [interface, abstraction, dyn, object, impl]
+  abstraction: [interface, trait, boundary, contract]
+  architecture: [interface, module, boundary, contract]
+  integrity: [invariant, contract, consistency]
+  style: [convention, formatting, readability, lint, analyzability]
+  conventions: [style, lint, convention, diagnostic]
+  analyzability: [diagnostic, review, lint, convention]
+  audits: [review, verification, diagnostic]
+
+suppress_tokens_when_present:
+  conventions: [style, lint, analyzability, audit, audits, diagnostic]
 
 mode_terms:
   semantic: [intent, semantics]

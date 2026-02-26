@@ -42,6 +42,7 @@ def rewrite_query_text(
     token_expansions_raw = rules.get("token_expansions") or {}
     row_terms_raw = rules.get("row_marker_terms") or {}
     mode_terms_raw = rules.get("mode_terms") or {}
+    suppress_tokens_raw = rules.get("suppress_tokens_when_present") or {}
     allow_row_marker_terms = bool(rules.get("allow_row_marker_terms", True))
 
     token_expansions = {
@@ -65,13 +66,29 @@ def rewrite_query_text(
         for mode_name, values in mode_terms_raw.items()
         if str(mode_name).strip()
     }
+    suppress_tokens = {
+        str(token).strip().lower(): {
+            str(trigger).strip().lower() for trigger in list(values or []) if str(trigger).strip()
+        }
+        for token, values in suppress_tokens_raw.items()
+        if str(token).strip()
+    }
 
     tokens_in_order = [match.group(0).lower() for match in TOKEN_RE.finditer(original.lower())]
-    seen = set(tokens_in_order)
+    base_seen = set(tokens_in_order)
+    suppressed_tokens = {
+        token
+        for token in tokens_in_order
+        if token in suppress_tokens and suppress_tokens[token].intersection(base_seen)
+    }
+    filtered_tokens = [token for token in tokens_in_order if token not in suppressed_tokens]
+    seen = set(filtered_tokens)
     added_terms: list[str] = []
     strategy_tags = [strategy]
+    if suppressed_tokens:
+        strategy_tags.append("token-suppression")
 
-    for token in tokens_in_order:
+    for token in filtered_tokens:
         for term in token_expansions.get(token, []):
             if term in seen:
                 continue
@@ -102,7 +119,7 @@ def rewrite_query_text(
     if mode_terms_added:
         strategy_tags.append("mode-terms")
 
-    rewritten = " ".join(tokens_in_order + added_terms).strip() or original
+    rewritten = " ".join(filtered_tokens + added_terms).strip() or original
     return {
         "enabled": True,
         "strategy_tags": strategy_tags,

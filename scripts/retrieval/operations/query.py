@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
 import sqlite3
 import sys
@@ -186,8 +187,99 @@ ROW_PROJECTION_THRESHOLDS = {
     "1h": 0.015,
     "1i": 0.020,
 }
+ROW_PROJECTION_TOP_SCORE_FLOOR = 0.0
 ROW_PROJECTION_MIN_EVIDENCE_HITS = 1
 ROW_PROJECTION_MARGIN = 0.005
+
+
+@dataclass(frozen=True)
+class RowProjectionPolicy:
+    thresholds: dict[str, float]
+    top_score_floor: float
+    min_evidence_hits: int
+    margin: float
+
+
+def _row_projection_policy_from_globals() -> RowProjectionPolicy:
+    return RowProjectionPolicy(
+        thresholds={
+            str(marker).strip().lower(): float(value)
+            for marker, value in ROW_PROJECTION_THRESHOLDS.items()
+            if str(marker).strip()
+        },
+        top_score_floor=float(ROW_PROJECTION_TOP_SCORE_FLOOR),
+        min_evidence_hits=max(1, int(ROW_PROJECTION_MIN_EVIDENCE_HITS)),
+        margin=max(0.0, float(ROW_PROJECTION_MARGIN)),
+    )
+
+
+def resolve_row_projection_policy(*, root: Path, corpus: str) -> RowProjectionPolicy:
+    policy = _row_projection_policy_from_globals()
+    policy_path = (root / str(get_corpus_adapter(corpus).config.default_eval_policy_path)).resolve()
+    if policy_path.exists():
+        loaded = load_eval_policy(policy_path)
+        projection = loaded.get("projection_thresholds") or {}
+        thresholds = dict(policy.thresholds)
+        if isinstance(projection, dict):
+            resolved_thresholds = {
+                str(marker).strip().lower(): float(value)
+                for marker, value in projection.items()
+                if str(marker).strip()
+            }
+            default_threshold = float(
+                resolved_thresholds.get(
+                    "default",
+                    min(thresholds.values()) if thresholds else 0.015,
+                )
+            )
+            row_markers = tuple(f"1{chr(ord('a') + idx)}" for idx in range(9))
+            thresholds = {
+                marker: float(resolved_thresholds.get(marker, default_threshold))
+                for marker in row_markers
+            }
+
+        abstain_policy = loaded.get("abstain_policy") or {}
+        top_floor = policy.top_score_floor
+        min_hits = policy.min_evidence_hits
+        margin = policy.margin
+        if isinstance(abstain_policy, dict):
+            configured_top_floor = abstain_policy.get("top_score_floor")
+            configured_min_hits = abstain_policy.get("min_evidence_hits")
+            configured_margin = abstain_policy.get("margin")
+            if configured_top_floor is not None:
+                top_floor = max(0.0, float(configured_top_floor))
+            if configured_min_hits is not None:
+                min_hits = max(1, int(configured_min_hits))
+            if configured_margin is not None:
+                margin = max(0.0, float(configured_margin))
+
+        policy = RowProjectionPolicy(
+            thresholds=thresholds,
+            top_score_floor=float(top_floor),
+            min_evidence_hits=max(1, int(min_hits)),
+            margin=max(0.0, float(margin)),
+        )
+
+    env_top_floor = str(os.getenv("SQLKB_ROW_PROJECTION_TOP_SCORE_FLOOR", "")).strip()
+    env_min_hits = str(os.getenv("SQLKB_ROW_PROJECTION_MIN_EVIDENCE_HITS", "")).strip()
+    env_margin = str(os.getenv("SQLKB_ROW_PROJECTION_MARGIN", "")).strip()
+    top_floor = policy.top_score_floor
+    min_hits = policy.min_evidence_hits
+    margin = policy.margin
+    if env_top_floor:
+        top_floor = max(0.0, float(env_top_floor))
+    if env_min_hits:
+        min_hits = max(1, int(env_min_hits))
+    if env_margin:
+        margin = max(0.0, float(env_margin))
+
+    return RowProjectionPolicy(
+        thresholds=dict(policy.thresholds),
+        top_score_floor=float(top_floor),
+        min_evidence_hits=max(1, int(min_hits)),
+        margin=max(0.0, float(margin)),
+    )
+
 
 CHUNK_REQUIRED_QUERY_IDS = {
     "chunk_corpus_v1_all",
@@ -298,6 +390,7 @@ def _rewrite_query_text(
     token_expansions_raw = rules.get("token_expansions") or {}
     row_terms_raw = rules.get("row_marker_terms") or {}
     mode_terms_raw = rules.get("mode_terms") or {}
+    suppress_tokens_raw = rules.get("suppress_tokens_when_present") or {}
 
     token_expansions = {
         str(token).strip().lower(): [
@@ -320,13 +413,29 @@ def _rewrite_query_text(
         for mode_name, values in mode_terms_raw.items()
         if str(mode_name).strip()
     }
+    suppress_tokens = {
+        str(token).strip().lower(): {
+            str(trigger).strip().lower() for trigger in list(values or []) if str(trigger).strip()
+        }
+        for token, values in suppress_tokens_raw.items()
+        if str(token).strip()
+    }
 
     tokens_in_order = [match.group(0).lower() for match in TOKEN_RE.finditer(original.lower())]
-    seen = set(tokens_in_order)
+    base_seen = set(tokens_in_order)
+    suppressed_tokens = {
+        token
+        for token in tokens_in_order
+        if token in suppress_tokens and suppress_tokens[token].intersection(base_seen)
+    }
+    filtered_tokens = [token for token in tokens_in_order if token not in suppressed_tokens]
+    seen = set(filtered_tokens)
     added_terms: list[str] = []
     strategy_tags = [strategy]
+    if suppressed_tokens:
+        strategy_tags.append("token-suppression")
 
-    for token in tokens_in_order:
+    for token in filtered_tokens:
         for term in token_expansions.get(token, []):
             if term in seen:
                 continue
@@ -357,7 +466,7 @@ def _rewrite_query_text(
     if mode_terms_added:
         strategy_tags.append("mode-terms")
 
-    rewritten = " ".join(tokens_in_order + added_terms).strip() or original
+    rewritten = " ".join(filtered_tokens + added_terms).strip() or original
     return {
         "enabled": True,
         "strategy_tags": strategy_tags,
@@ -1886,51 +1995,57 @@ def _build_row_projection(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _apply_abstain_policy(
     projection: list[dict[str, Any]],
+    *,
+    policy: RowProjectionPolicy,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    thresholds = dict(policy.thresholds)
+    top_score_floor = float(policy.top_score_floor)
+    min_evidence_hits = max(1, int(policy.min_evidence_hits))
+    margin_threshold = max(0.0, float(policy.margin))
     if not projection:
         return [], {
             "active": True,
             "reason_code": "NO_ROW_SIGNAL",
             "detail": "No row marker evidence was generated from retrieved chunks",
-            "thresholds": ROW_PROJECTION_THRESHOLDS,
+            "thresholds": thresholds,
         }
 
     top = projection[0]
     top_marker = str(top.get("row_marker", "")).strip().lower()
     top_score = float(top.get("score", 0.0))
     top_hits = int(top.get("evidence_hits", 0))
-    threshold = float(ROW_PROJECTION_THRESHOLDS.get(top_marker, 0.015))
+    threshold = float(thresholds.get(top_marker, 0.015))
+    effective_threshold = max(float(threshold), float(top_score_floor))
 
-    if top_hits < ROW_PROJECTION_MIN_EVIDENCE_HITS:
+    if top_hits < min_evidence_hits:
         return [], {
             "active": True,
             "reason_code": "INSUFFICIENT_EVIDENCE",
             "detail": (
-                f"Top row {top_marker} has evidence_hits={top_hits}, "
-                f"required={ROW_PROJECTION_MIN_EVIDENCE_HITS}"
+                f"Top row {top_marker} has evidence_hits={top_hits}, required={min_evidence_hits}"
             ),
-            "thresholds": ROW_PROJECTION_THRESHOLDS,
+            "thresholds": thresholds,
         }
 
-    if top_score < threshold:
+    if top_score < effective_threshold:
         return [], {
             "active": True,
             "reason_code": "ROW_SCORE_BELOW_THRESHOLD",
-            "detail": f"Top row {top_marker} score={top_score:.6f} threshold={threshold:.6f}",
-            "thresholds": ROW_PROJECTION_THRESHOLDS,
+            "detail": (
+                f"Top row {top_marker} score={top_score:.6f} threshold={effective_threshold:.6f}"
+            ),
+            "thresholds": thresholds,
         }
 
     if len(projection) > 1:
         second_score = float(projection[1].get("score", 0.0))
         margin = top_score - second_score
-        if margin < ROW_PROJECTION_MARGIN:
+        if margin < margin_threshold:
             return [], {
                 "active": True,
                 "reason_code": "LOW_CONFIDENCE_MARGIN",
-                "detail": (
-                    f"Top-vs-second margin={margin:.6f} required>={ROW_PROJECTION_MARGIN:.6f}"
-                ),
-                "thresholds": ROW_PROJECTION_THRESHOLDS,
+                "detail": (f"Top-vs-second margin={margin:.6f} required>={margin_threshold:.6f}"),
+                "thresholds": thresholds,
             }
 
     selected: list[dict[str, Any]] = []
@@ -1938,8 +2053,8 @@ def _apply_abstain_policy(
         marker = str(row.get("row_marker", "")).strip().lower()
         score = float(row.get("score", 0.0))
         hits = int(row.get("evidence_hits", 0))
-        min_score = float(ROW_PROJECTION_THRESHOLDS.get(marker, threshold))
-        if hits < ROW_PROJECTION_MIN_EVIDENCE_HITS:
+        min_score = float(thresholds.get(marker, threshold))
+        if hits < min_evidence_hits:
             continue
         if score < min_score:
             continue
@@ -1952,25 +2067,30 @@ def _apply_abstain_policy(
             "active": True,
             "reason_code": "NO_ROW_ABOVE_THRESHOLD",
             "detail": "No row markers satisfied score and evidence thresholds",
-            "thresholds": ROW_PROJECTION_THRESHOLDS,
+            "thresholds": thresholds,
         }
 
     return selected, {
         "active": False,
         "reason_code": "NONE",
         "detail": "Row projection produced calibrated labels",
-        "thresholds": ROW_PROJECTION_THRESHOLDS,
+        "thresholds": thresholds,
     }
 
 
 def _apply_corpus_row_policy(
     rows: list[dict[str, Any]], *, query_text: str, corpus: str
 ) -> list[dict[str, Any]]:
-    if str(corpus).strip().lower() != "core_docs":
-        return rows
-    from retrieval.query_policies.core_docs import apply_target_hint_preference
+    normalized_corpus = str(corpus).strip().lower()
+    if normalized_corpus == "core_docs":
+        from retrieval.query_policies.core_docs import apply_target_hint_preference
 
-    return apply_target_hint_preference(rows, query_text=query_text)
+        return apply_target_hint_preference(rows, query_text=query_text)
+    if normalized_corpus == "rust_reference":
+        from retrieval.query_policies.rust_reference import apply_intent_path_preference
+
+        return apply_intent_path_preference(rows, query_text=query_text)
+    return rows
 
 
 def execute_retrieval_query(
@@ -2000,6 +2120,7 @@ def execute_retrieval_query(
     hybrid_lexical_min: int = 0,
     hybrid_semantic_min: int = 0,
     corpus: str = "",
+    row_projection_policy: RowProjectionPolicy | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     semantic_retry_events: list[dict[str, Any]] = []
@@ -2029,6 +2150,7 @@ def execute_retrieval_query(
     resolved_lexical_floor_count = runtime_config.hybrid_lexical_floor_count
     resolved_lexical_floor_share = runtime_config.hybrid_lexical_floor_share
     normalized_candidate_policy = runtime_config.hybrid_candidate_policy
+    resolved_row_projection_policy = row_projection_policy or _row_projection_policy_from_globals()
     resolved_hybrid_rerank_pool_size = runtime_config.hybrid_rerank_pool_size
     resolved_hybrid_lexical_min = runtime_config.hybrid_lexical_min
     resolved_hybrid_semantic_min = runtime_config.hybrid_semantic_min
@@ -2136,7 +2258,10 @@ def execute_retrieval_query(
         rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
         projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
-        row_projection, abstain = _apply_abstain_policy(row_projection_all)
+        row_projection, abstain = _apply_abstain_policy(
+            row_projection_all,
+            policy=resolved_row_projection_policy,
+        )
         timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
@@ -2198,7 +2323,10 @@ def execute_retrieval_query(
         rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
         projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
-        row_projection, abstain = _apply_abstain_policy(row_projection_all)
+        row_projection, abstain = _apply_abstain_policy(
+            row_projection_all,
+            policy=resolved_row_projection_policy,
+        )
         timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
@@ -2276,7 +2404,10 @@ def execute_retrieval_query(
         rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
         projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
-        row_projection, abstain = _apply_abstain_policy(row_projection_all)
+        row_projection, abstain = _apply_abstain_policy(
+            row_projection_all,
+            policy=resolved_row_projection_policy,
+        )
         timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
@@ -2333,7 +2464,10 @@ def execute_retrieval_query(
         workload["union_pool_size"] = int(len(semantic_rows))
         projection_started = time.perf_counter()
         row_projection_all = _build_row_projection(rows)
-        row_projection, abstain = _apply_abstain_policy(row_projection_all)
+        row_projection, abstain = _apply_abstain_policy(
+            row_projection_all,
+            policy=resolved_row_projection_policy,
+        )
         timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
         return {
@@ -2488,7 +2622,10 @@ def execute_retrieval_query(
     workload["union_pool_size"] = int(len(merged))
     projection_started = time.perf_counter()
     row_projection_all = _build_row_projection(rows)
-    row_projection, abstain = _apply_abstain_policy(row_projection_all)
+    row_projection, abstain = _apply_abstain_policy(
+        row_projection_all,
+        policy=resolved_row_projection_policy,
+    )
     timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
     duration_ms = (time.perf_counter() - started) * 1000.0
     return {
@@ -2579,24 +2716,7 @@ def main() -> int:
     contract_path = runtime_paths.contract_path
     query_log_root = runtime_paths.query_log_root
     rewrite_path = runtime_paths.rewrite_rules_path
-
-    global ROW_PROJECTION_THRESHOLDS
-    policy_path = (root / str(get_corpus_adapter(corpus).config.default_eval_policy_path)).resolve()
-    if policy_path.exists():
-        policy = load_eval_policy(policy_path)
-        projection = policy.get("projection_thresholds") or {}
-        if isinstance(projection, dict):
-            resolved_thresholds = {
-                str(marker).strip().lower(): float(value)
-                for marker, value in projection.items()
-                if str(marker).strip()
-            }
-            default_threshold = float(resolved_thresholds.get("default", 0.015))
-            row_markers = tuple(f"1{chr(ord('a') + idx)}" for idx in range(9))
-            ROW_PROJECTION_THRESHOLDS = {
-                marker: float(resolved_thresholds.get(marker, default_threshold))
-                for marker in row_markers
-            }
+    row_projection_policy = resolve_row_projection_policy(root=root, corpus=corpus)
 
     rewrite_mode = str(args.rewrite_mode)
     if rewrite_mode == "auto" and not rewrite_path.exists():
@@ -2651,6 +2771,7 @@ def main() -> int:
                 hybrid_lexical_min=int(args.hybrid_lexical_min),
                 hybrid_semantic_min=int(args.hybrid_semantic_min),
                 corpus=corpus,
+                row_projection_policy=row_projection_policy,
             )
             if not bool(args.include_score_breakdown):
                 result = _without_score_breakdown(result)
