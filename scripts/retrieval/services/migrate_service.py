@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from datetime import UTC, datetime
 from pathlib import Path
+import sqlite3
 
 from retrieval.core.provenance import (
     apply_pending_migrations,
@@ -31,6 +33,27 @@ def run(args: Namespace, *, root: Path) -> int:
     status = run_main(migrate_main, argv)
     if status != 0:
         return status
+
+    if defaults.corpus == "guidelines_repo":
+        connection = sqlite3.connect(defaults.db_path)
+        try:
+            row = connection.execute("SELECT COUNT(*) FROM snapshots").fetchone()
+            count = int(row[0]) if row else 0
+            if count == 0:
+                ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+                connection.execute(
+                    "INSERT INTO snapshots(snapshot_id, commit_sha, source_url, fetched_at, sha256) VALUES(?, ?, ?, ?, ?)",
+                    (
+                        f"bootstrap-{ts}",
+                        "bootstrap",
+                        "bootstrap://guidelines_repo",
+                        datetime.now(UTC).isoformat(timespec="seconds"),
+                        canonical_json_hash({"bootstrap": True, "corpus": defaults.corpus}),
+                    ),
+                )
+                connection.commit()
+        finally:
+            connection.close()
 
     latest_migration_id, _ = apply_pending_migrations(defaults.db_path, root=root)
     latest_run = read_latest_pipeline_run(defaults.db_path, corpus=defaults.corpus)
