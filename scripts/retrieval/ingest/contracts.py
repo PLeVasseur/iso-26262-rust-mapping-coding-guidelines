@@ -22,6 +22,7 @@ class ChunkInput:
     sections: list[Any]
     target_min_tokens: int
     target_max_tokens: int
+    overlap_percent: float = 0.0
 
 
 @dataclass(frozen=True)

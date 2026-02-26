@@ -296,6 +296,11 @@ def parse_args() -> argparse.Namespace:
         default=60.0,
         help="Minimum seconds between progress events (final batch always logs)",
     )
+    parser.add_argument(
+        "--allow-provenance-mismatch",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 

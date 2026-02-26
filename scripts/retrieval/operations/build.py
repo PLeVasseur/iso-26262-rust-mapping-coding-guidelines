@@ -19,6 +19,7 @@ import yaml
 
 from retrieval.core.provenance import (
     apply_pending_migrations,
+    canonical_json_hash,
     compute_source_state_from_db,
     record_pipeline_run,
 )
@@ -2642,6 +2643,7 @@ def _update_manifest(
     row_metadata_report_path: Path,
     counts: dict[str, int],
     chunk_count: int,
+    chunk_overlap_percent: float,
     retrieval_mode: str,
     retrieval_corpus: str,
     semantic_profile_version: str,
@@ -2693,6 +2695,7 @@ def _update_manifest(
         },
         "chunk_stats": {
             "chunk_count": int(chunk_count),
+            "chunk_overlap_percent": float(chunk_overlap_percent),
         },
     }
 
@@ -2729,6 +2732,7 @@ def build_rust_reference_db(
     ingest_strategy: str = "rust_md_v1",
     chunk_target_min_tokens: int = 150,
     chunk_target_max_tokens: int = 500,
+    chunk_overlap_percent: float = 0.0,
     allow_provenance_mismatch: bool = False,
 ) -> dict[str, Any]:
     report_root = report_root or (db_path.parents[1] / "reports" / "rust_reference")
@@ -2737,6 +2741,10 @@ def build_rust_reference_db(
         raise ValueError(
             "Unsupported retrieval corpus "
             f"'{retrieval_corpus}'; expected one of {sorted(RETRIEVAL_CORPUS_VALUES)}"
+        )
+    if float(chunk_overlap_percent) < 0.0 or float(chunk_overlap_percent) > 0.45:
+        raise ValueError(
+            f"chunk_overlap_percent must be within [0.0, 0.45]; got {chunk_overlap_percent}"
         )
     if not str(reference_revision or "").strip():
         raise ValueError("Pinned source revision is required; pass --reference-revision explicitly")
@@ -2780,6 +2788,7 @@ def build_rust_reference_db(
             sections=sections,
             target_min_tokens=int(chunk_target_min_tokens),
             target_max_tokens=int(chunk_target_max_tokens),
+            overlap_percent=float(chunk_overlap_percent),
         )
     )
     chunks = [
@@ -2951,6 +2960,7 @@ def build_rust_reference_db(
         row_metadata_report_path=row_metadata_report_path,
         counts=counts,
         chunk_count=len(chunks),
+        chunk_overlap_percent=float(chunk_overlap_percent),
         retrieval_mode=retrieval_mode,
         retrieval_corpus=retrieval_corpus,
         semantic_profile_version=semantic_profile_version,
@@ -2959,8 +2969,12 @@ def build_rust_reference_db(
     )
 
     source_state = compute_source_state_from_db(db_path)
-    model_fingerprint = _sha256_text(
-        "::".join((str(embedding_model_id), str(reranker_model_id), str(embedding_dim)))
+    model_fingerprint = canonical_json_hash(
+        {
+            "embed_model_id": str(embedding_model_id),
+            "reranker_model_id": str(reranker_model_id),
+            "embedding_dim": int(embedding_dim),
+        }
     )
     pipeline_fingerprint = record_pipeline_run(
         db_path=db_path,
@@ -2973,6 +2987,7 @@ def build_rust_reference_db(
         ingest_params={
             "target_min_tokens": int(chunk_target_min_tokens),
             "target_max_tokens": int(chunk_target_max_tokens),
+            "overlap_percent": float(chunk_overlap_percent),
         },
         retrieval_profile_id="rust_reference_control",
         eval_policy_id="rust_reference",
@@ -3003,6 +3018,7 @@ def build_rust_reference_db(
         "ingest_strategy_version": strategy.strategy_version,
         "chunk_target_min_tokens": int(chunk_target_min_tokens),
         "chunk_target_max_tokens": int(chunk_target_max_tokens),
+        "chunk_overlap_percent": float(chunk_overlap_percent),
         "pipeline_fingerprint": pipeline_fingerprint,
         "semantic_profile_version": semantic_profile_version,
         "rows_total": counts["applicable"] + counts["not_applicable"],
@@ -3164,6 +3180,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum target tokens per generated chunk",
     )
     parser.add_argument(
+        "--chunk-overlap-percent",
+        type=float,
+        default=0.0,
+        help="Chunk overlap ratio [0.0, 0.45] for source-structure chunking",
+    )
+    parser.add_argument(
         "--allow-provenance-mismatch",
         action="store_true",
         help="Record build run even if provenance mismatch override is active",
@@ -3212,6 +3234,7 @@ def run_rust_reference_build(*, args: argparse.Namespace, root: Path) -> dict[st
         ingest_strategy=args.ingest_strategy,
         chunk_target_min_tokens=args.chunk_target_min_tokens,
         chunk_target_max_tokens=args.chunk_target_max_tokens,
+        chunk_overlap_percent=args.chunk_overlap_percent,
         allow_provenance_mismatch=args.allow_provenance_mismatch,
     )
 

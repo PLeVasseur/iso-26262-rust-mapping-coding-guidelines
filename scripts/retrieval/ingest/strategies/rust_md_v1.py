@@ -77,6 +77,31 @@ def _split_oversized_chunk(text: str, max_tokens: int) -> list[str]:
     return [chunk for chunk in chunks if chunk]
 
 
+def _tail_blocks_for_overlap(
+    blocks: list[dict[str, Any]], overlap_tokens: int
+) -> list[dict[str, Any]]:
+    if overlap_tokens <= 0 or not blocks:
+        return []
+    tail: list[dict[str, Any]] = []
+    total = 0
+    for block in reversed(blocks):
+        tail.insert(0, block)
+        total += int(block.get("tokens", 0))
+        if total >= overlap_tokens:
+            break
+    return tail
+
+
+def _stage_chunk(blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "raw": "\n\n".join(str(block["raw"]) for block in blocks).strip(),
+        "clean": " ".join(str(block["clean"]) for block in blocks).strip(),
+        "tokens": int(sum(int(block["tokens"]) for block in blocks)),
+        "start": int(blocks[0]["start"]),
+        "end": int(blocks[-1]["end"]),
+    }
+
+
 @dataclass(frozen=True)
 class RustMarkdownV1Strategy:
     strategy_id: str = "rust_md_v1"
@@ -89,6 +114,8 @@ class RustMarkdownV1Strategy:
     def build_chunks(self, chunk_input: ChunkInput) -> ChunkResult:
         target_min = max(40, int(chunk_input.target_min_tokens))
         target_max = max(target_min, int(chunk_input.target_max_tokens))
+        overlap_percent = max(0.0, min(0.45, float(chunk_input.overlap_percent)))
+        overlap_tokens = int(round(float(target_max) * overlap_percent))
 
         chunks: list[dict[str, Any]] = []
         spans: list[dict[str, Any]] = []
@@ -136,61 +163,37 @@ class RustMarkdownV1Strategy:
                 continue
 
             staged_chunks: list[dict[str, Any]] = []
-            current_raw: list[str] = []
-            current_clean: list[str] = []
+            current_blocks: list[dict[str, Any]] = []
             current_tokens = 0
-            current_start = int(block_payloads[0]["start"])
-            current_end = int(block_payloads[0]["end"])
 
             for block in block_payloads:
                 block_tokens = int(block["tokens"])
-                if current_clean and (current_tokens + block_tokens) > target_max:
-                    staged_chunks.append(
-                        {
-                            "raw": "\n\n".join(current_raw).strip(),
-                            "clean": " ".join(current_clean).strip(),
-                            "tokens": int(current_tokens),
-                            "start": int(current_start),
-                            "end": int(current_end),
-                        }
+                if current_blocks and (current_tokens + block_tokens) > target_max:
+                    staged_chunks.append(_stage_chunk(current_blocks))
+                    current_blocks = _tail_blocks_for_overlap(current_blocks, overlap_tokens)
+                    current_tokens = int(
+                        sum(int(current_block["tokens"]) for current_block in current_blocks)
                     )
-                    current_raw = []
-                    current_clean = []
-                    current_tokens = 0
-                    current_start = int(block["start"])
-                    current_end = int(block["end"])
 
-                if not current_clean:
-                    current_start = int(block["start"])
-                current_end = int(block["end"])
-                current_raw.append(str(block["raw"]))
-                current_clean.append(str(block["clean"]))
+                current_blocks.append(block)
                 current_tokens += block_tokens
 
                 if current_tokens >= target_min:
-                    staged_chunks.append(
-                        {
-                            "raw": "\n\n".join(current_raw).strip(),
-                            "clean": " ".join(current_clean).strip(),
-                            "tokens": int(current_tokens),
-                            "start": int(current_start),
-                            "end": int(current_end),
-                        }
+                    staged_chunks.append(_stage_chunk(current_blocks))
+                    current_blocks = _tail_blocks_for_overlap(current_blocks, overlap_tokens)
+                    current_tokens = int(
+                        sum(int(current_block["tokens"]) for current_block in current_blocks)
                     )
-                    current_raw = []
-                    current_clean = []
-                    current_tokens = 0
 
-            if current_clean:
-                staged_chunks.append(
-                    {
-                        "raw": "\n\n".join(current_raw).strip(),
-                        "clean": " ".join(current_clean).strip(),
-                        "tokens": int(current_tokens),
-                        "start": int(current_start),
-                        "end": int(current_end),
-                    }
-                )
+            if current_blocks:
+                candidate = _stage_chunk(current_blocks)
+                previous = staged_chunks[-1] if staged_chunks else None
+                if previous is None or (
+                    str(previous.get("clean", "")) != str(candidate.get("clean", ""))
+                    or int(previous.get("start", -1)) != int(candidate.get("start", -1))
+                    or int(previous.get("end", -1)) != int(candidate.get("end", -1))
+                ):
+                    staged_chunks.append(candidate)
 
             exploded_chunks: list[dict[str, Any]] = []
             for staged in staged_chunks:

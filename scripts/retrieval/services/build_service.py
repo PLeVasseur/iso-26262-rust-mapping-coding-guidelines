@@ -31,6 +31,8 @@ def run(args: Namespace, *, root: Path) -> int:
         str(defaults.chunk_target_min_tokens),
         "--chunk-target-max-tokens",
         str(defaults.chunk_target_max_tokens),
+        "--chunk-overlap-percent",
+        str(defaults.chunk_overlap_percent),
     ]
     argv.extend(list(args.extra_args or []))
     return run_main(build_main, argv)
