@@ -10,6 +10,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+guidelines-integration = []
+guidelines-export = []
+
 semantic-local = [
   "torch>=2.2,<3",
   "transformers>=4.48,<5",

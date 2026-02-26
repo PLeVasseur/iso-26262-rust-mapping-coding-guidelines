@@ -1,0 +1,41 @@
+version: 1
+corpus: guidelines_repo
+paths:
+  db: .cache/sqlite_kb/current/guidelines_repo.sqlite
+  contract: config/sqlite_query_contracts/guidelines_repo.yaml
+  eval_testset: data/query_testsets/guidelines_repo_placeholder.yaml
+  rewrite_rules: config/sqlite_query_rewrite/guidelines_repo_rewrite.yaml
+  query_log_root: .cache/sqlite_kb/query_logs/guidelines_repo
+  report_root: .cache/sqlite_kb/reports/guidelines_repo
+  eval_policy: config/eval_policies/guidelines_repo.yaml
+defaults:
+  profile: guidelines_repo_control
+sources:
+  guidelines_repo_root: ../safety-critical-rust-coding-guidelines
+  guidelines_repo_revision: fa92ce41cca3b55e3e66201177aab5a031bcdc58
+  known_good_exemplar_ids: []
+  ingest_include_globs:
+  - src/coding-guidelines/**/*.rst
+  ingest_exclude_globs:
+  - src/coding-guidelines/generated/**
+  - build/**
+  - .venv/**
+ingest:
+  strategy: guidelines_artifacts_v1
+  chunking:
+    target_min_tokens: 150
+    target_max_tokens: 500
+    overlap_percent: 0.0
+provenance:
+  hard_fail_on_mismatch: true
+capabilities:
+  query: false
+  eval: false
+  build: true
+  materialize: false
+  smoke: false
+  capture: false
+  verify: false
+  validate: false
+  migrate: true
+  inspect: true

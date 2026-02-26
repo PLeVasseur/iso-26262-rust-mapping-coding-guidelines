@@ -1,0 +1,13 @@
+{
+  "contract_version": "1",
+  "artifact": "build/html/guidelines-ids.json",
+  "required_guideline_keys": [
+    "id",
+    "checksum",
+    "rationale",
+    "compliant_example",
+    "non_compliant_example"
+  ],
+  "allow_optional_bibliography": true,
+  "allow_additional_keys": true
+}
