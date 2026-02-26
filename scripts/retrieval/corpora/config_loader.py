@@ -33,6 +33,7 @@ class CorpusRuntimeDefaults:
     supports_verify: bool
     supports_validate: bool
     supports_migrate: bool
+    supports_inspect: bool
 
 
 def _resolve(root: Path, raw: str | Path) -> Path:
@@ -114,4 +115,5 @@ def load_corpus_runtime_defaults(*, root: Path, corpus: str) -> CorpusRuntimeDef
         supports_verify=bool(capabilities.get("verify", adapter_cfg.supports_verify)),
         supports_validate=bool(capabilities.get("validate", adapter_cfg.supports_validate)),
         supports_migrate=bool(capabilities.get("migrate", adapter_cfg.supports_migrate)),
+        supports_inspect=bool(capabilities.get("inspect", adapter_cfg.supports_inspect)),
     )

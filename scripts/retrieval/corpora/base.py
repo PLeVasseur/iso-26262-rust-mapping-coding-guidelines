@@ -25,6 +25,7 @@ class CorpusAdapterConfig:
     supports_verify: bool = True
     supports_validate: bool = True
     supports_migrate: bool = True
+    supports_inspect: bool = False
 
 
 class CorpusAdapter(Protocol):
