@@ -13,4 +13,8 @@ def resolve_builder(corpus: str) -> BuilderRunner:
         from retrieval.builders.core_docs_builder import run_core_docs_build
 
         return run_core_docs_build
+    if normalized == "guidelines_repo":
+        from retrieval.builders.guidelines_repo_builder import run_guidelines_repo_build
+
+        return run_guidelines_repo_build
     raise RuntimeError(f"Unsupported build corpus: {corpus}")

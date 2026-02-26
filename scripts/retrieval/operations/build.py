@@ -3190,6 +3190,32 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Record build run even if provenance mismatch override is active",
     )
+    parser.add_argument(
+        "--guidelines-repo-root",
+        default="",
+        help="Path to sibling safety-critical-rust-coding-guidelines checkout",
+    )
+    parser.add_argument(
+        "--guidelines-repo-revision",
+        default="",
+        help="Pinned revision SHA for guidelines_repo corpus",
+    )
+    parser.add_argument(
+        "--guidelines-exemplar-id",
+        action="append",
+        default=[],
+        help="Known-good exemplar guideline ID (repeatable)",
+    )
+    parser.add_argument(
+        "--assume-built",
+        action="store_true",
+        help="Assume RF artifacts are already built and skip make.py invocation",
+    )
+    parser.add_argument(
+        "--assume-built-reason",
+        default="",
+        help="Required operator reason when --assume-built is used",
+    )
     return parser.parse_args()
 
 

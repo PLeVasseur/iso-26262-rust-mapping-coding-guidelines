@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from retrieval.ingest.contracts import IngestStrategy
+from retrieval.ingest.strategies.guidelines_artifacts_v1 import GuidelinesArtifactsV1Strategy
 from retrieval.ingest.strategies.core_docs_rustdoc_v1 import CoreDocsRustdocV1Strategy
 from retrieval.ingest.strategies.rust_md_v1 import RustMarkdownV1Strategy
 
 _STRATEGIES: dict[str, IngestStrategy] = {
     "rust_md_v1": RustMarkdownV1Strategy(),
     "core_docs_rustdoc_v1": CoreDocsRustdocV1Strategy(),
+    "guidelines_artifacts_v1": GuidelinesArtifactsV1Strategy(),
 }
 
 
