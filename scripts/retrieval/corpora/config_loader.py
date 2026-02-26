@@ -23,6 +23,7 @@ class CorpusRuntimeDefaults:
     ingest_strategy: str
     chunk_target_min_tokens: int
     chunk_target_max_tokens: int
+    chunk_overlap_percent: float
     supports_query: bool
     supports_eval: bool
     supports_build: bool
@@ -76,10 +77,16 @@ def load_corpus_runtime_defaults(*, root: Path, corpus: str) -> CorpusRuntimeDef
     )
     min_tokens = int(ingest_chunking.get("target_min_tokens", 150))
     max_tokens = int(ingest_chunking.get("target_max_tokens", 500))
+    overlap_percent = float(ingest_chunking.get("overlap_percent", 0.0))
     if min_tokens <= 0 or max_tokens <= 0 or max_tokens < min_tokens:
         raise RuntimeError(
             "Invalid ingest chunking thresholds for corpus "
             f"{normalized}: min={min_tokens}, max={max_tokens}"
+        )
+    if overlap_percent < 0.0 or overlap_percent >= 1.0:
+        raise RuntimeError(
+            "Invalid ingest chunk overlap_percent for corpus "
+            f"{normalized}: overlap_percent={overlap_percent}"
         )
 
     return CorpusRuntimeDefaults(
@@ -95,6 +102,7 @@ def load_corpus_runtime_defaults(*, root: Path, corpus: str) -> CorpusRuntimeDef
         ingest_strategy=str(ingest.get("strategy", "rust_md_v1")).strip() or "rust_md_v1",
         chunk_target_min_tokens=min_tokens,
         chunk_target_max_tokens=max_tokens,
+        chunk_overlap_percent=overlap_percent,
         supports_query=bool(capabilities.get("query", adapter_cfg.supports_query)),
         supports_eval=bool(capabilities.get("eval", adapter_cfg.supports_eval)),
         supports_build=bool(capabilities.get("build", adapter_cfg.supports_build)),

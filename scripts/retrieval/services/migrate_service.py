@@ -34,30 +34,31 @@ def run(args: Namespace, *, root: Path) -> int:
 
     latest_migration_id, _ = apply_pending_migrations(defaults.db_path, root=root)
     latest_run = read_latest_pipeline_run(defaults.db_path, corpus=defaults.corpus)
-    if latest_run is None:
-        source_state = get_corpus_adapter(defaults.corpus).compute_source_state(defaults.db_path)
-        model_fingerprint = canonical_json_hash(
-            {
-                "embed_model_id": "Qwen/Qwen3-Embedding-4B",
-                "reranker_model_id": "BAAI/bge-reranker-v2-m3",
-                "embedding_dim": 0,
-            }
-        )
-        record_pipeline_run(
-            db_path=defaults.db_path,
-            run_id=f"migrate::{defaults.corpus}",
-            corpus=defaults.corpus,
-            source_state=source_state,
-            schema_migration_id=latest_migration_id,
-            ingest_strategy=defaults.ingest_strategy,
-            ingest_strategy_version="1",
-            ingest_params={
-                "target_min_tokens": defaults.chunk_target_min_tokens,
-                "target_max_tokens": defaults.chunk_target_max_tokens,
-            },
-            retrieval_profile_id=defaults.profile_name,
-            eval_policy_id=defaults.eval_policy_path.stem,
-            model_fingerprint=model_fingerprint,
-            allow_provenance_mismatch=False,
-        )
+    source_state = get_corpus_adapter(defaults.corpus).compute_source_state(defaults.db_path)
+    model_fingerprint = canonical_json_hash(
+        {
+            "embed_model_id": "Qwen/Qwen3-Embedding-4B",
+            "reranker_model_id": "BAAI/bge-reranker-v2-m3",
+            "embedding_dim": 0,
+        }
+    )
+    run_suffix = "bootstrap" if latest_run is None else "refresh"
+    record_pipeline_run(
+        db_path=defaults.db_path,
+        run_id=f"migrate::{defaults.corpus}::{run_suffix}",
+        corpus=defaults.corpus,
+        source_state=source_state,
+        schema_migration_id=latest_migration_id,
+        ingest_strategy=defaults.ingest_strategy,
+        ingest_strategy_version="1",
+        ingest_params={
+            "target_min_tokens": defaults.chunk_target_min_tokens,
+            "target_max_tokens": defaults.chunk_target_max_tokens,
+            "overlap_percent": defaults.chunk_overlap_percent,
+        },
+        retrieval_profile_id=defaults.profile_name,
+        eval_policy_id=defaults.eval_policy_path.stem,
+        model_fingerprint=model_fingerprint,
+        allow_provenance_mismatch=False,
+    )
     return status

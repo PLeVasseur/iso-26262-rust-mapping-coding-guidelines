@@ -22,6 +22,7 @@ class CorpusConfigLoaderTests(unittest.TestCase):
         self.assertEqual(cfg.ingest_strategy, "rust_md_v1")
         self.assertEqual(cfg.chunk_target_min_tokens, 150)
         self.assertEqual(cfg.chunk_target_max_tokens, 500)
+        self.assertEqual(cfg.chunk_overlap_percent, 0.0)
         self.assertTrue(str(cfg.db_path).endswith("rust_reference.sqlite"))
 
     def test_core_docs_defaults_load(self) -> None:
@@ -30,6 +31,7 @@ class CorpusConfigLoaderTests(unittest.TestCase):
         self.assertEqual(cfg.profile_name, "core_docs_control")
         self.assertTrue(str(cfg.contract_path).endswith("core_docs.yaml"))
         self.assertEqual(cfg.ingest_strategy, "core_docs_rustdoc_v1")
+        self.assertEqual(cfg.chunk_overlap_percent, 0.0)
         self.assertTrue(cfg.supports_eval)
         self.assertTrue(cfg.supports_migrate)
 

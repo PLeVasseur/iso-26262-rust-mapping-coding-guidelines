@@ -112,6 +112,7 @@ class ProvenanceGuardTests(unittest.TestCase):
                     default_ingest_strategy="rust_md_v1",
                     chunk_target_min_tokens=120,
                     chunk_target_max_tokens=500,
+                    chunk_overlap_percent=0.0,
                     extra_args=[],
                 )
 
@@ -125,6 +126,7 @@ class ProvenanceGuardTests(unittest.TestCase):
                 default_ingest_strategy="rust_md_v1",
                 chunk_target_min_tokens=120,
                 chunk_target_max_tokens=500,
+                chunk_overlap_percent=0.0,
                 extra_args=["--allow-provenance-mismatch"],
             )
 

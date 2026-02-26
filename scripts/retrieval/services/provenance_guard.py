@@ -44,6 +44,7 @@ def enforce_provenance_guard(
     default_ingest_strategy: str,
     chunk_target_min_tokens: int,
     chunk_target_max_tokens: int,
+    chunk_overlap_percent: float,
     extra_args: list[str],
 ) -> None:
     if str(operation) == "migrate":
@@ -73,8 +74,10 @@ def enforce_provenance_guard(
 
     min_override = _get_flag_value(extra_args, "--chunk-target-min-tokens")
     max_override = _get_flag_value(extra_args, "--chunk-target-max-tokens")
+    overlap_override = _get_flag_value(extra_args, "--chunk-overlap-percent")
     min_tokens = int(min_override) if min_override else int(chunk_target_min_tokens)
     max_tokens = int(max_override) if max_override else int(chunk_target_max_tokens)
+    overlap_percent = float(overlap_override) if overlap_override else float(chunk_overlap_percent)
 
     embed_model = _get_flag_value(extra_args, "--embed-model-id") or "Qwen/Qwen3-Embedding-4B"
     reranker_model = _get_flag_value(extra_args, "--reranker-model-id") or "BAAI/bge-reranker-v2-m3"
@@ -93,7 +96,11 @@ def enforce_provenance_guard(
         schema_migration_id=latest_migration_id,
         ingest_strategy=ingest_strategy,
         ingest_strategy_version="1",
-        ingest_params={"target_min_tokens": min_tokens, "target_max_tokens": max_tokens},
+        ingest_params={
+            "target_min_tokens": min_tokens,
+            "target_max_tokens": max_tokens,
+            "overlap_percent": overlap_percent,
+        },
         retrieval_profile_id=profile_id,
         eval_policy_id=eval_policy_id,
         model_fingerprint=model_fingerprint,

@@ -18,6 +18,7 @@ ingest:
   chunking:
     target_min_tokens: 150
     target_max_tokens: 500
+    overlap_percent: 0.0
 
 provenance:
   hard_fail_on_mismatch: true

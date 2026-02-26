@@ -98,6 +98,7 @@ def main() -> int:
                 default_ingest_strategy=defaults.ingest_strategy,
                 chunk_target_min_tokens=defaults.chunk_target_min_tokens,
                 chunk_target_max_tokens=defaults.chunk_target_max_tokens,
+                chunk_overlap_percent=defaults.chunk_overlap_percent,
                 extra_args=list(args.extra_args or []),
             )
 

@@ -36,3 +36,8 @@ projection_thresholds:
   1g: 0.015
   1h: 0.015
   1i: 0.015
+
+abstain_policy:
+  top_score_floor: 0.015
+  margin: 0.005
+  min_evidence_hits: 1

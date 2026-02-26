@@ -16,6 +16,11 @@ def parse_args() -> argparse.Namespace:
         description="Validate subagent audit markdown contract (JSON+markdown)"
     )
     parser.add_argument("--audit-report-path", required=True)
+    parser.add_argument(
+        "--allow-provenance-mismatch",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args()
 
 
