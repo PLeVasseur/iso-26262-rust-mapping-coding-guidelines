@@ -39,6 +39,59 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.corpus, "core_docs")
         self.assertIn("--top-k", args.extra_args)
 
+    def test_parse_args_for_guidelines_repo_autopilot(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "guidelines-repo",
+                "autopilot",
+                "--profile",
+                "fast",
+                "--mode",
+                "publishable",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.command_family, "guidelines-repo")
+        self.assertEqual(args.guidelines_subcommand, "autopilot")
+        self.assertEqual(args.profile, "fast")
+        self.assertEqual(args.mode, "publishable")
+
+    def test_parse_args_for_guidelines_repo_doctor(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["sqlite_kb.py", "guidelines-repo", "doctor", "--mode", "exploratory"],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.command_family, "guidelines-repo")
+        self.assertEqual(args.guidelines_subcommand, "doctor")
+        self.assertEqual(args.mode, "exploratory")
+
+    def test_parse_args_for_guidelines_repo_bootstrap_verify(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["sqlite_kb.py", "guidelines-repo", "bootstrap-guidelines-repo", "--verify"],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.command_family, "guidelines-repo")
+        self.assertEqual(args.guidelines_subcommand, "bootstrap-guidelines-repo")
+        self.assertTrue(bool(args.verify))
+
+    def test_parse_args_for_guidelines_repo_bump_pin(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["sqlite_kb.py", "guidelines-repo", "bump-pin", "--revision", "abc123"],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.command_family, "guidelines-repo")
+        self.assertEqual(args.guidelines_subcommand, "bump-pin")
+        self.assertEqual(args.revision, "abc123")
+
 
 if __name__ == "__main__":
     unittest.main()

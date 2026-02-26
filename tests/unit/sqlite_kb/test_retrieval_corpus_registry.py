@@ -17,6 +17,7 @@ class RetrievalCorpusRegistryTests(unittest.TestCase):
         supported = list_supported_corpora()
         self.assertIn("rust_reference", supported)
         self.assertIn("core_docs", supported)
+        self.assertIn("guidelines_repo", supported)
 
     def test_rust_reference_adapter_defaults(self) -> None:
         config = get_corpus_adapter("rust_reference").config
@@ -40,6 +41,13 @@ class RetrievalCorpusRegistryTests(unittest.TestCase):
     def test_unsupported_corpus_raises(self) -> None:
         with self.assertRaises(ValueError):
             get_corpus_adapter("unknown")
+
+    def test_guidelines_repo_adapter_defaults(self) -> None:
+        config = get_corpus_adapter("guidelines_repo").config
+        self.assertEqual(config.corpus_name, "guidelines_repo")
+        self.assertFalse(config.supports_query)
+        self.assertTrue(config.supports_build)
+        self.assertTrue(config.supports_inspect)
 
 
 if __name__ == "__main__":

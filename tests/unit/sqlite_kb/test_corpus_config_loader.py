@@ -35,6 +35,16 @@ class CorpusConfigLoaderTests(unittest.TestCase):
         self.assertTrue(cfg.supports_eval)
         self.assertTrue(cfg.supports_migrate)
 
+    def test_guidelines_repo_defaults_load(self) -> None:
+        cfg = load_corpus_runtime_defaults(root=ROOT, corpus="guidelines_repo")
+        self.assertEqual(cfg.corpus, "guidelines_repo")
+        self.assertEqual(cfg.profile_name, "guidelines_repo_control")
+        self.assertFalse(cfg.supports_query)
+        self.assertTrue(cfg.supports_build)
+        self.assertTrue(cfg.supports_migrate)
+        self.assertTrue(cfg.supports_inspect)
+        self.assertTrue(str(cfg.contract_path).endswith("guidelines_repo.yaml"))
+
 
 if __name__ == "__main__":
     unittest.main()
