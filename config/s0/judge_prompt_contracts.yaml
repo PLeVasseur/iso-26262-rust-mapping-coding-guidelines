@@ -1,0 +1,131 @@
+contract_version: 1
+roles:
+  evidence_auditor:
+    prompt_template_id: judge-evidence-v1
+    prompt_template_text: Evaluate evidence grounding only for draft {{draft_id}}
+      using evidence bundle {{evidence_ids}}. Return JSON only.
+    allowed_placeholders:
+    - draft_id
+    - draft_record
+    - evidence_ids
+    - evidence_bundle
+    required_inputs:
+    - drafts_jsonl
+    - evidence_bundle
+    required_output_schema:
+      required:
+      - pass
+      - results
+    forbidden_patterns:
+    - style-only judgment
+  functional_safety_relevance:
+    prompt_template_id: judge-safety-v1
+    prompt_template_text: Evaluate functional safety relevance and significance for
+      {{draft_id}}. Return JSON only.
+    allowed_placeholders:
+    - draft_id
+    - draft_record
+    - significance_anchors
+    required_inputs:
+    - drafts_jsonl
+    - significance_anchors
+    required_output_schema:
+      required:
+      - pass
+      - results
+    forbidden_patterns:
+    - evidence grounding assertions without evidence pass
+  usability_actionability:
+    prompt_template_id: judge-usability-v1
+    prompt_template_text: Evaluate usability/actionability for {{draft_id}} and return
+      JSON only.
+    allowed_placeholders:
+    - draft_id
+    - draft_record
+    - style_rules
+    required_inputs:
+    - drafts_jsonl
+    - style_context_bundle
+    required_output_schema:
+      required:
+      - pass
+      - results
+    forbidden_patterns:
+    - candidate verdict assignment
+  golden_shape_comparator:
+    prompt_template_id: judge-shape-v1
+    prompt_template_text: Compare generated draft {{draft_file}} against nearest exemplar
+      {{exemplar_file}} and style rules. Return JSON only.
+    allowed_placeholders:
+    - draft_file
+    - exemplar_file
+    - style_rules
+    required_inputs:
+    - generated_guidelines_rst
+    - curated_exemplars
+    - style_guideline
+    required_output_schema:
+      required:
+      - results
+      - all_non_abstain_pass
+    forbidden_patterns:
+    - content-only pass without style and shape checks
+  exemplar_usage_auditor:
+    prompt_template_id: judge-exemplar-usage-v1
+    prompt_template_text: Validate exemplar usage trace for target {{target_id}}.
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - selection_trace
+    - synthesis_trace
+    required_inputs:
+    - exemplar_selection_trace
+    - synthesis_input_trace
+    - golden_exemplar_lock_report
+    required_output_schema:
+      required:
+      - run_id
+      - status
+      - results
+    forbidden_patterns:
+    - candidate verdict assignment
+  writer_output_auditor:
+    prompt_template_id: judge-writer-output-v1
+    prompt_template_text: Validate writer role outputs for draft {{draft_id}}. Return
+      JSON only.
+    allowed_placeholders:
+    - draft_id
+    - writer_outputs
+    - style_rules
+    required_inputs:
+    - writer_subagent_outputs
+    - drafts_jsonl
+    - style_context_bundle
+    required_output_schema:
+      required:
+      - run_id
+      - status
+      - results
+    forbidden_patterns:
+    - candidate verdict assignment
+  holistic_pairwise:
+    prompt_template_id: judge-holistic-v1
+    prompt_template_text: Aggregate prior judge outputs for draft {{draft_id}} under
+      candidate policy. Return JSON only.
+    allowed_placeholders:
+    - draft_id
+    - evidence_pass
+    - safety_pass
+    - usability_pass
+    - shape_pass
+    - usage_audit
+    - writer_audit
+    required_inputs:
+    - judge_pass_artifacts
+    required_output_schema:
+      required:
+      - pass
+      - results
+      - aggregate
+    forbidden_patterns:
+    - candidate verdict without policy prerequisites

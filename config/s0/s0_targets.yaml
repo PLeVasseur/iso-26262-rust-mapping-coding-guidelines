@@ -1,0 +1,6 @@
+version: 1
+manual_overrides: {}
+heuristic:
+  strong_min_evidence: 4
+  partial_min_evidence: 2
+  auto_downgrade_after_abstains: 2

@@ -1,0 +1,7 @@
+version: 1
+roles:
+- evidence_synthesizer
+- amplification_author
+- example_author
+- rationale_author
+- metadata_citation_curator

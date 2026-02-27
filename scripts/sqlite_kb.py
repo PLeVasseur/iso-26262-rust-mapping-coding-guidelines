@@ -18,6 +18,7 @@ from retrieval.services import (
     materialize_service,
     migrate_service,
     query_service,
+    s0_phase_a_service,
     smoke_service,
     validate_audit_service,
     validate_service,
@@ -109,6 +110,48 @@ def parse_args() -> argparse.Namespace:
         subparser = subparsers.add_parser(name)
         _add_common(subparser)
 
+    scaffold = subparsers.add_parser("scaffold-s0-config")
+    scaffold.add_argument("--corpus-set", choices=("s0",), default="s0")
+    scaffold.add_argument("--overwrite", action="store_true")
+    scaffold.add_argument("--run-id", default="")
+    scaffold.add_argument("--report-root", default="")
+
+    doctor = subparsers.add_parser("doctor")
+    doctor.add_argument("--corpus-set", choices=("s0",), default="s0")
+    doctor.add_argument("--mode", choices=("publishable", "exploratory"), default="publishable")
+    doctor.add_argument("--scope", choices=("drafting", "ingest", "all"), default="drafting")
+    doctor.add_argument("--run-id", default="")
+    doctor.add_argument("--report-root", default="")
+
+    enumerate_targets = subparsers.add_parser("enumerate-targets")
+    enumerate_targets.add_argument("--corpus-set", choices=("s0",), default="s0")
+    enumerate_targets.add_argument("--profile", choices=("fast", "full"), default="full")
+    enumerate_targets.add_argument(
+        "--mode", choices=("publishable", "exploratory"), default="publishable"
+    )
+    enumerate_targets.add_argument("--run-id", default="")
+    enumerate_targets.add_argument("--report-root", default="")
+
+    calibration = subparsers.add_parser("calibration-run")
+    calibration.add_argument("--corpus-set", choices=("s0",), default="s0")
+    calibration.add_argument("--profile", choices=("fast", "full"), default="full")
+    calibration.add_argument(
+        "--mode", choices=("publishable", "exploratory"), default="publishable"
+    )
+    calibration.add_argument("--run-id", default="")
+    calibration.add_argument("--report-root", default="")
+    calibration.add_argument("--no-reuse-existing", action="store_true")
+
+    enforce = subparsers.add_parser("enforce-calibration-quality")
+    enforce.add_argument("--run-id", required=True)
+    enforce.add_argument("--mode", choices=("publishable", "exploratory"), default="publishable")
+    enforce.add_argument("--report-root", default="")
+
+    packet = subparsers.add_parser("pack-reviewer-packet")
+    packet.add_argument("--kind", choices=("calibration", "pilot", "publishable"), required=True)
+    packet.add_argument("--run-id", required=True)
+    packet.add_argument("--report-root", default="")
+
     return parser.parse_args()
 
 
@@ -138,6 +181,19 @@ def main() -> int:
             raise RuntimeError(
                 f"Unsupported guidelines-repo operation: {args.guidelines_subcommand}"
             )
+
+        if args.subcommand == "scaffold-s0-config":
+            return s0_phase_a_service.run_scaffold_s0_config(args, root=root)
+        if args.subcommand == "doctor":
+            return s0_phase_a_service.run_doctor(args, root=root)
+        if args.subcommand == "enumerate-targets":
+            return s0_phase_a_service.run_enumerate_targets(args, root=root)
+        if args.subcommand == "calibration-run":
+            return s0_phase_a_service.run_calibration_run(args, root=root)
+        if args.subcommand == "enforce-calibration-quality":
+            return s0_phase_a_service.run_enforce_calibration_quality(args, root=root)
+        if args.subcommand == "pack-reviewer-packet":
+            return s0_phase_a_service.run_pack_reviewer_packet(args, root=root)
 
         defaults = load_corpus_runtime_defaults(root=root, corpus=str(args.corpus))
         support_map = {

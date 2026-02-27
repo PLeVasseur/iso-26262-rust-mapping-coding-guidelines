@@ -1,0 +1,34 @@
+version: 1
+entries:
+- id: enf-clippy
+  smoke_check_safe: true
+  command: cargo clippy --all-targets -- -D warnings
+  artifact: clippy.log
+- id: enf-fmt
+  smoke_check_safe: true
+  command: cargo fmt --check
+  artifact: fmt.log
+- id: enf-miri
+  smoke_check_safe: false
+  command: cargo miri test
+  artifact: miri.log
+- id: enf-deny-unsafe
+  smoke_check_safe: true
+  command: rg -n "unsafe\s*\{" src
+  artifact: unsafe_scan.log
+- id: enf-doc-tests
+  smoke_check_safe: true
+  command: cargo test --doc
+  artifact: doctest.log
+- id: enf-build-offline
+  smoke_check_safe: true
+  command: ./make.py --offline
+  artifact: build.log
+- id: enf-rustc-warnings
+  smoke_check_safe: true
+  command: cargo check --all-targets
+  artifact: check.log
+- id: enf-example-harness
+  smoke_check_safe: false
+  command: python scripts/extract_rust_examples.py --test
+  artifact: examples.log

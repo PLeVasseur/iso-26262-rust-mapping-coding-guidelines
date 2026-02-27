@@ -1,0 +1,8 @@
+version: 1
+defaults:
+  anchor_required: false
+corpora:
+  rust_reference:
+    anchor_required: true
+  core_docs:
+    anchor_required: false

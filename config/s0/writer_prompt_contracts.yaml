@@ -1,0 +1,154 @@
+contract_version: 1
+roles:
+  evidence_synthesizer:
+    prompt_template_id: writer-evidence-synth-v1
+    prompt_template_text: You are the Evidence Synthesizer. Target {{target_id}} row
+      {{table1_row}}. Use evidence IDs {{evidence_ids}} and exemplar IDs {{exemplar_ids}}.
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - table1_row
+    - corpus
+    - evidence_ids
+    - evidence_snippets
+    - exemplar_ids
+    - global_rules
+    required_inputs:
+    - target_metadata
+    - evidence_bundle
+    - exemplar_selection
+    - style_context.global_rules
+    required_output_schema:
+      required:
+      - target_id
+      - hazard
+      - mechanism
+      - mitigation
+      - construct_scope
+      - evidence_ids
+      - claim_to_evidence_map
+    forbidden_patterns:
+    - uncited factual claim
+    - final guideline prose
+    style_rules_ref:
+    - global_rules
+    abstain_policy: emit reasoned abstain when evidence insufficient
+  amplification_author:
+    prompt_template_id: writer-amplification-v1
+    prompt_template_text: You are the Amplification Author. Write only the guideline
+      body text for {{target_id}} using evidence synthesis and exemplars {{exemplar_ids}}.
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - table1_row
+    - evidence_synthesis
+    - exemplar_ids
+    - amplification_rules
+    required_inputs:
+    - evidence_synthesizer_output
+    - exemplar_selection
+    - style_context.global_rules
+    - style_context.amplification_rules
+    required_output_schema:
+      required:
+      - target_id
+      - guideline_amplification_text
+      - normative_strength
+      - amplification_citation_keys
+    forbidden_patterns:
+    - apply explicit controls
+    - generic cross-target boilerplate
+    style_rules_ref:
+    - global_rules
+    - amplification_rules
+    abstain_policy: emit abstain output with empty amplification citations
+  example_author:
+    prompt_template_id: writer-example-v1
+    prompt_template_text: You are the Example Author. Produce non-compliant and compliant
+      narrative+code for {{target_id}} tied to the same hazard/construct family. Return
+      JSON only.
+    allowed_placeholders:
+    - target_id
+    - evidence_synthesis
+    - amplification
+    - exemplar_ids
+    - example_rules
+    required_inputs:
+    - evidence_synthesizer_output
+    - amplification_author_output
+    - exemplar_selection
+    - style_context.global_rules
+    - style_context.example_rules
+    required_output_schema:
+      required:
+      - target_id
+      - non_compliant_narrative
+      - non_compliant_code
+      - compliant_narrative
+      - compliant_code
+      - example_citation_keys
+    forbidden_patterns:
+    - template stub code
+    - unrelated construct examples
+    style_rules_ref:
+    - global_rules
+    - example_rules
+    abstain_policy: emit abstain with empty example fields
+  rationale_author:
+    prompt_template_id: writer-rationale-v1
+    prompt_template_text: You are the Rationale Author. Produce hazard->mechanism->consequence
+      rationale for {{target_id}}. Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - evidence_synthesis
+    - examples
+    - rationale_rules
+    required_inputs:
+    - evidence_synthesizer_output
+    - example_author_output
+    - style_context.global_rules
+    - style_context.rationale_rules
+    required_output_schema:
+      required:
+      - target_id
+      - rationale_text
+      - hazard_mechanism_consequence_map
+      - rationale_citation_keys
+    forbidden_patterns:
+    - tautological rationale
+    - generic non-causal language
+    style_rules_ref:
+    - global_rules
+    - rationale_rules
+    abstain_policy: emit abstain rationale reason
+  metadata_citation_curator:
+    prompt_template_id: writer-metadata-citation-v1
+    prompt_template_text: You are the Metadata/Citation Curator. Produce style-conformant
+      metadata and bibliography rows for {{target_id}}. Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - all_writer_outputs
+    - exemplar_metadata_patterns
+    - metadata_bibliography_rules
+    required_inputs:
+    - evidence_synthesizer_output
+    - amplification_author_output
+    - example_author_output
+    - rationale_author_output
+    - style_context.global_rules
+    - style_context.metadata_bibliography_rules
+    required_output_schema:
+      required:
+      - target_id
+      - tags
+      - fls_candidate
+      - bibliography_rows
+      - citation_key_map
+      - metadata_validation_notes
+    forbidden_patterns:
+    - generic metadata defaults
+    - invalid example or bibliography id conventions
+    style_rules_ref:
+    - global_rules
+    - metadata_bibliography_rules
+    abstain_policy: emit abstain metadata with explicit note

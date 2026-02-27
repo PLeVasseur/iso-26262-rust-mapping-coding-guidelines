@@ -1,0 +1,63 @@
+version: 1
+synthesis_version: s0-v1
+two_phase_triggers:
+  draftability_not_strong: true
+  hard_rows:
+  - 1e
+  - 1h
+  - 1i
+worked_positive_examples:
+- id: pos_overflow_checked
+  row: 1e
+  safety_hazard: Silent integer overflow in release builds can corrupt safety-relevant
+    calculations.
+  construct_behavior: Operator arithmetic may wrap in release; checked/saturating
+    APIs provide explicit behavior.
+  mitigation_claim: Safety-critical arithmetic shall use checked_*, saturating_*,
+    or wrapping_* with explicit policy.
+  strength_justification: shall is required because silent wrap can propagate undetected
+    faults.
+- id: pos_refcell_try
+  row: 1d
+  safety_hazard: Runtime borrow panics can trigger unexpected control-flow failures.
+  construct_behavior: RefCell::borrow_mut panics on conflicting borrows; try_borrow_mut
+    returns Result-like control.
+  mitigation_claim: Prefer non-panicking borrow APIs in critical paths and handle
+    failure explicitly.
+  strength_justification: shall where panic-induced abort violates fault containment
+    expectations.
+- id: pos_atomic_ordering
+  row: 1h
+  safety_hazard: Incorrect atomic ordering can invalidate synchronization assumptions.
+  construct_behavior: Acquire/Release/SeqCst semantics differ materially for visibility
+    and ordering guarantees.
+  mitigation_claim: Atomic APIs shall declare and justify memory ordering choices
+    for each shared-state transition.
+  strength_justification: shall because weak ordering misuse causes non-deterministic
+    safety faults.
+worked_negative_examples:
+- id: neg_generic_warning
+  row: 1d
+  safety_hazard: This might be risky.
+  construct_behavior: Rust has several relevant features.
+  mitigation_claim: Developers should use best practices.
+  strength_justification: good practice
+- id: neg_tautological
+  row: 1e
+  safety_hazard: Unsafe code can be unsafe.
+  construct_behavior: Unsafe blocks require care.
+  mitigation_claim: Use unsafe safely.
+  strength_justification: safety
+- id: neg_uncited_semantics
+  row: 1h
+  safety_hazard: Thread bugs happen.
+  construct_behavior: Concurrency is complex.
+  mitigation_claim: Prefer stronger orderings.
+  strength_justification: better reliability
+significance_anchors:
+  '0': doc restatement
+  '1': obvious best practice
+  '2': real issue but generic mitigation
+  '3': specific hazard and concrete mitigation
+  '4': non-obvious semantics+safety interaction
+  '5': high-value incident-preventing guidance
