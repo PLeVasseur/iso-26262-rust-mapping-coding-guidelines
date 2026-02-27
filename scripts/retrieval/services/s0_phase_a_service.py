@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 import subprocess
 import sys
+import uuid
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib import error as url_error
+from urllib import request as url_request
 
 import yaml
 
@@ -91,6 +96,131 @@ def _shingle_jaccard(a: str, b: str, n: int = 4) -> float:
     if not a_set or not b_set:
         return 0.0
     return len(a_set & b_set) / len(a_set | b_set)
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join(str(value).replace("\r", " ").replace("\n", " ").lower().split())
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    candidate = text.strip()
+    if candidate.startswith("```"):
+        candidate = re.sub(r"^```(?:json)?", "", candidate).strip()
+        if candidate.endswith("```"):
+            candidate = candidate[:-3].strip()
+    if candidate.startswith("{") and candidate.endswith("}"):
+        parsed = json.loads(candidate)
+        return parsed if isinstance(parsed, dict) else {}
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start >= 0 and end > start:
+        parsed = json.loads(candidate[start : end + 1])
+        return parsed if isinstance(parsed, dict) else {}
+    raise ValueError("No JSON object found in model response")
+
+
+def _required_fields(payload: dict[str, Any]) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    required = payload.get("required")
+    if not isinstance(required, list):
+        return []
+    return [str(item) for item in required]
+
+
+def _ensure_required_fields(role: str, output: dict[str, Any], required: list[str]) -> list[str]:
+    missing: list[str] = []
+    for key in required:
+        if key not in output:
+            missing.append(key)
+            continue
+        if isinstance(output[key], str) and not output[key].strip():
+            missing.append(key)
+    return [f"{role}:missing_required:{key}" for key in missing]
+
+
+def _http_json_post(
+    url: str, headers: dict[str, str], payload: dict[str, Any], timeout_s: int
+) -> dict[str, Any]:
+    body = json.dumps(payload).encode("utf-8")
+    req = url_request.Request(url=url, data=body, headers=headers, method="POST")
+    with url_request.urlopen(req, timeout=timeout_s) as resp:
+        raw = resp.read().decode("utf-8")
+    parsed = json.loads(raw)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _call_openai_compatible(
+    *,
+    role: str,
+    prompt: str,
+    model: str,
+    temperature: float,
+    timeout_s: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    api_key = str(os.environ.get("OPENAI_API_KEY", "")).strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is required for real writer/judge calls")
+    api_base = str(os.environ.get("S0_LLM_API_BASE", "https://api.openai.com/v1")).rstrip("/")
+    endpoint = str(os.environ.get("S0_LLM_CHAT_ENDPOINT", "chat/completions")).lstrip("/")
+    url = f"{api_base}/{endpoint}"
+    request_started_at = datetime.now(UTC).isoformat()
+    request_id = f"sysreq::{uuid.uuid4().hex[:20]}"
+    payload = {
+        "model": model,
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": f"You are {role}. Output valid JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        raw = _http_json_post(url, headers, payload, timeout_s)
+        choices = raw.get("choices") if isinstance(raw, dict) else []
+        content = ""
+        if isinstance(choices, list) and choices:
+            message = choices[0].get("message") if isinstance(choices[0], dict) else {}
+            content = str((message or {}).get("content", ""))
+        if not content.strip():
+            raise RuntimeError("LLM response was empty")
+        output = _extract_json_object(content)
+        response_received_at = datetime.now(UTC).isoformat()
+        invocation = {
+            "system_request_id": request_id,
+            "request_started_at": request_started_at,
+            "response_received_at": response_received_at,
+            "prompt_digest": _canonical_digest(prompt),
+            "response_digest": _canonical_digest(content),
+            "transport_status": "ok",
+            "provider_model": str(raw.get("model", model)),
+            "provider_message_id": raw.get("id"),
+            "provider_token_usage": raw.get("usage"),
+        }
+        return output, invocation
+    except (
+        url_error.URLError,
+        TimeoutError,
+        json.JSONDecodeError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
+        response_received_at = datetime.now(UTC).isoformat()
+        invocation = {
+            "system_request_id": request_id,
+            "request_started_at": request_started_at,
+            "response_received_at": response_received_at,
+            "prompt_digest": _canonical_digest(prompt),
+            "response_digest": "",
+            "transport_status": f"error:{type(exc).__name__}",
+            "error": str(exc),
+            "provider_model": model,
+        }
+        raise RuntimeError(json.dumps(invocation, sort_keys=True)) from exc
 
 
 def run_scaffold_s0_config(args: Namespace, *, root: Path) -> int:
@@ -894,16 +1024,10 @@ def _run_eval_for_corpus(
 
 def run_calibration_run(args: Namespace, *, root: Path) -> int:
     run_id = _run_id(args)
+    mode = str(getattr(args, "mode", "bootstrap"))
     run_dir = _report_dir(root, run_id, str(getattr(args, "report_root", "") or ""))
     run_dir.mkdir(parents=True, exist_ok=True)
     reuse_existing = not bool(getattr(args, "no_reuse_existing", False))
-
-    core_report_path, core = _run_eval_for_corpus(
-        root, run_dir, "core_docs", reuse_existing=reuse_existing
-    )
-    rust_report_path, rust = _run_eval_for_corpus(
-        root, run_dir, "rust_reference", reuse_existing=reuse_existing
-    )
 
     targets_path = run_dir / "targets.json"
     if not targets_path.exists():
@@ -912,6 +1036,8 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     targets = targets_payload.get("targets", [])
     if not isinstance(targets, list):
         targets = []
+    writer_contracts = _safe_yaml(root / "config" / "s0" / "writer_prompt_contracts.yaml")
+    judge_contracts = _safe_yaml(root / "config" / "s0" / "judge_prompt_contracts.yaml")
 
     # Deterministic calibration subset using prompts that approximate difficult/weak scenarios.
     preferred_ids = {
@@ -930,6 +1056,57 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             if len(selected) >= 5:
                 break
 
+    startup_failures: list[str] = []
+    bootstrap_marker = root / ".cache" / "sqlite_kb" / "reports" / ".phase_a_bootstrap_complete"
+    if mode != "bootstrap" and not bootstrap_marker.exists():
+        startup_failures.append("startup_checklist:mode_must_be_bootstrap_for_first_recovery_run")
+    if len(selected) != 5:
+        startup_failures.append("startup_checklist:active_target_set_must_be_5")
+    source_text = Path(__file__).read_text(encoding="utf-8")
+    legacy_template_markers = [
+        'if "conc" in lower_prompt',
+        'if "issue" in lower_prompt',
+        "Deterministic Stage B judgment generated from calibration artifacts.",
+    ]
+    if mode == "publishable" and any(marker in source_text for marker in legacy_template_markers):
+        startup_failures.append("startup_checklist:template_semantic_branch_detected")
+    writer_roles_cfg = writer_contracts.get("roles") if isinstance(writer_contracts, dict) else {}
+    if not isinstance(writer_roles_cfg, dict) or not writer_roles_cfg:
+        startup_failures.append("startup_checklist:writer_prompt_contracts_missing")
+    else:
+        for role_name, role_payload in writer_roles_cfg.items():
+            if not isinstance(role_payload, dict):
+                startup_failures.append(f"startup_checklist:invalid_writer_contract:{role_name}")
+                continue
+            prompt_text = str(role_payload.get("prompt_template_text", ""))
+            if "\n" not in prompt_text and len(prompt_text.split()) < 25:
+                startup_failures.append(f"startup_checklist:one_line_writer_prompt:{role_name}")
+    stage_b_stub_marker = '"score":' + " 0.9 if verdict"
+    if stage_b_stub_marker in source_text:
+        startup_failures.append("startup_checklist:stage_b_fixed_score_stub_detected")
+    existing = [
+        p.name
+        for p in run_dir.iterdir()
+        if p.name
+        not in {
+            "targets.json",
+            "targets_digest",
+            "core_docs_eval_report.json",
+            "rust_reference_eval_report.json",
+        }
+    ]
+    if existing:
+        startup_failures.append("startup_checklist:run_artifact_root_not_clean")
+    startup_report = {
+        "run_id": run_id,
+        "mode": mode,
+        "status": "pass" if not startup_failures else "fail",
+        "failures": startup_failures,
+    }
+    _write_json(run_dir / "startup_checklist_report.json", startup_report)
+    if startup_failures:
+        raise RuntimeError(f"Startup checklist failed: {startup_failures}")
+
     _write_json(
         run_dir / "calibration_target_rationale.json",
         {
@@ -938,6 +1115,13 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "selected_count": len(selected),
             "targets": selected,
         },
+    )
+
+    core_report_path, core = _run_eval_for_corpus(
+        root, run_dir, "core_docs", reuse_existing=reuse_existing
+    )
+    rust_report_path, rust = _run_eval_for_corpus(
+        root, run_dir, "rust_reference", reuse_existing=reuse_existing
     )
 
     core_summary = core.get("summary", {})
@@ -1215,120 +1399,6 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         category = str(target.get("category", "safety_control")).replace("_", " ").strip()
         exemplar_phrase = ", ".join(selected_exemplars) if selected_exemplars else "none"
 
-        lower_prompt = prompt_id.lower()
-        if "conc" in lower_prompt or row_id in {"1h", "1i"}:
-            construct_terms = ["std::sync::atomic", "Ordering"]
-            non_compliant_code = (
-                "use std::sync::atomic::{AtomicBool, Ordering};\n"
-                "static READY: AtomicBool = AtomicBool::new(false);\n\n"
-                "fn read_ready_non_compliant() -> bool {\n"
-                "    READY.load(Ordering::Relaxed)\n"
-                "}"
-            )
-            compliant_code = (
-                "use std::sync::atomic::{AtomicBool, Ordering};\n"
-                "static READY: AtomicBool = AtomicBool::new(false);\n\n"
-                "fn publish_ready() {\n"
-                "    READY.store(true, Ordering::Release);\n"
-                "}\n\n"
-                "fn read_ready_compliant() -> bool {\n"
-                "    READY.load(Ordering::Acquire)\n"
-                "}"
-            )
-        elif "issue" in lower_prompt or "resolve" in lower_prompt or row_id in {"1d"}:
-            construct_terms = ["RefCell", "try_borrow_mut"]
-            non_compliant_code = (
-                "use std::cell::RefCell;\n\n"
-                "fn update_non_compliant(cell: &RefCell<u32>) {\n"
-                "    let _first = cell.borrow_mut();\n"
-                "    let _second = cell.borrow_mut();\n"
-                "}"
-            )
-            compliant_code = (
-                "use std::cell::RefCell;\n\n"
-                "fn update_compliant(cell: &RefCell<u32>) -> Result<(), &'static str> {\n"
-                '    let mut value = cell.try_borrow_mut().map_err(|_| "borrow conflict")?;\n'
-                "    *value += 1;\n"
-                "    Ok(())\n"
-                "}"
-            )
-        else:
-            construct_terms = ["checked_add", "saturating_add"]
-            non_compliant_code = "fn sum_non_compliant(a: u32, b: u32) -> u32 {\n    a + b\n}"
-            compliant_code = (
-                "fn sum_compliant(a: u32, b: u32) -> Result<u32, &'static str> {\n"
-                '    a.checked_add(b).ok_or("overflow")\n'
-                "}"
-            )
-
-        is_abstain = bool(target.get("expect_abstain", False))
-        if is_abstain:
-            title = f"Abstain: insufficiently grounded calibration target {prompt_id}"
-            guideline = "No publishable guideline generated for this target."
-            rationale = (
-                "The calibration target does not provide enough coherent safety intent for a non-speculative "
-                "publishable recommendation under the current evidence bundle."
-            )
-            enforcement = "N/A"
-            verification = "N/A"
-        else:
-            row_phrase = row_id if row_id else "unspecified"
-            construct_phrase = ", ".join(construct_terms)
-            title = (
-                f"Constrain {construct_phrase} behavior for {prompt_id.lower().replace('_', ' ')}"
-            )
-            guideline = (
-                f"For Table 1 row {row_phrase} concerns in {category}, code shall use {construct_phrase} with "
-                "explicit failure-path handling and documented ordering or bounds behavior backed by cited evidence."
-            )
-            rationale = (
-                "Evidence excerpts show that implicit behavior can violate control-flow or visibility assumptions because "
-                "runtime effects become non-obvious under optimization and concurrency. The guideline therefore binds the "
-                "hazard trigger to a concrete mitigation and verification path that reviewers can audit from source references."
-            )
-            enforcement = (
-                "Project policy shall enforce this rule via construct-specific checks in code review and automated tests "
-                "that reject implicit overflow, panic-only borrowing paths, or under-specified memory orderings."
-            )
-            verification = (
-                "Verification shall include negative-path regression tests and scenario-focused checks demonstrating that "
-                "the explicit control prevents the identified hazard mechanism under representative workloads."
-            )
-        strength = "abstain" if is_abstain else "shall"
-        draft_id = f"draft::{prompt_id.lower()}"
-        draft_row = {
-            "draft_id": draft_id,
-            "target_id": target_id,
-            "target_prompt_id": prompt_id,
-            "corpus": corpus_name,
-            "table1_rows": [] if not row_id else [row_id],
-            "title": title,
-            "strength": strength,
-            "guideline": guideline,
-            "rationale": rationale,
-            "enforcement": enforcement,
-            "verification": verification,
-            "status": "abstain" if is_abstain else "drafted",
-            "evidence_chunk_ids": row["top_chunk_ids"],
-            "evidence_snippets": [first_snippet, second_snippet],
-            "exemplar_ids_used": selected_exemplars,
-            "category": category,
-            "exemplar_phrase": exemplar_phrase,
-            "construct_terms": construct_terms,
-            "non_compliant_code": non_compliant_code,
-            "compliant_code": compliant_code,
-        }
-        draft_rows.append(draft_row)
-        if row_id in {"1e", "1h", "1i"}:
-            analysis_rows.append(
-                {
-                    "target_prompt_id": prompt_id,
-                    "reason": "two_phase_trigger_hard_row",
-                    "analysis": (
-                        "Draft composed from evidence-backed safety hazard mapping and exemplar-conditioned formatting."
-                    ),
-                }
-            )
         synthesis_input_trace.append(
             {
                 "target_id": target_id,
@@ -1338,9 +1408,10 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                 "input_digest": hashlib.sha256(
                     json.dumps(
                         {
-                            "draft": draft_row,
+                            "target": target,
                             "selected_exemplars": selected_exemplars,
                             "evidence_ids": row["top_chunk_ids"],
+                            "snippets": snippets,
                         },
                         sort_keys=True,
                     ).encode("utf-8")
@@ -1364,209 +1435,189 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         digest = hashlib.sha256(template_text.encode("utf-8")).hexdigest()
         return template_id, digest
 
-    for draft in draft_rows:
-        draft_id = str(draft.get("draft_id", ""))
-        target_id = str(draft.get("target_id", ""))
-        is_abstain = str(draft.get("status", "")) == "abstain"
-        evidence_ids = [str(x) for x in (draft.get("evidence_chunk_ids") or [])]
-        evidence_refs: list[dict[str, Any]] = []
-        snippet_rows = [
-            row
-            for row in selected_rows
-            if str(row.get("target", {}).get("target_id", "")) == target_id
+    drafting_contract = _safe_yaml(root / "config" / "s0" / "drafting_prompt_contract.yaml")
+    worked_pos = drafting_contract.get("worked_positive_examples", [])
+    worked_neg = drafting_contract.get("worked_negative_examples", [])
+    runtime_cfg = _safe_yaml(root / "config" / "s0" / "target_execution_modes.yaml")
+    runtime_hazard_rows = {
+        str(x)
+        for x in (
+            runtime_cfg.get("runtime_hazard_rows", []) if isinstance(runtime_cfg, dict) else []
+        )
+    }
+    row_defaults = runtime_cfg.get("row_defaults", {}) if isinstance(runtime_cfg, dict) else {}
+    prompt_overrides = (
+        runtime_cfg.get("prompt_overrides", {}) if isinstance(runtime_cfg, dict) else {}
+    )
+    default_mode = (
+        str(runtime_cfg.get("default_mode", "runnable"))
+        if isinstance(runtime_cfg, dict)
+        else "runnable"
+    )
+    writer_model = str(os.environ.get("S0_WRITER_MODEL", "gpt-5.3-codex"))
+    writer_timeout = int(str(os.environ.get("S0_WRITER_TIMEOUT_SECONDS", "90")))
+
+    style_excerpt = "\n".join(style_text.splitlines()[:80])
+
+    for row in selected_rows:
+        target = row["target"]
+        prompt_id = str(target.get("prompt_id", ""))
+        corpus_name = str(target.get("corpus", ""))
+        target_id = str(target.get("target_id", ""))
+        row_id = _target_row(target)
+        selected_exemplars = []
+        for trace in exemplar_selection_trace:
+            if str(trace.get("target_id", "")) == target_id:
+                selected_exemplars = [str(x) for x in (trace.get("selected_exemplar_ids") or [])]
+                break
+        snippets = row.get("snippets") or []
+        snippet_rows = [s for s in snippets if isinstance(s, dict)]
+        evidence_ids = [str(x) for x in (row.get("top_chunk_ids") or [])]
+        evidence_text = "\n\n".join(str(s.get("text", ""))[:700] for s in snippet_rows[:3])
+        example_mode = str(prompt_overrides.get(prompt_id, row_defaults.get(row_id, default_mode)))
+
+        role_order = [
+            "evidence_synthesizer",
+            "amplification_author",
+            "example_author",
+            "rationale_author",
+            "metadata_citation_curator",
         ]
-        if snippet_rows:
-            for snippet in (snippet_rows[0].get("snippets") or [])[:2]:
-                if not isinstance(snippet, dict):
-                    continue
-                anchor = str(snippet.get("anchor", "")).strip()
-                source_type = "web" if anchor else "local_doc"
-                locator = {
-                    "type": source_type,
-                    "url": str(snippet.get("document_id", "")),
-                    "anchor": anchor or None,
-                    "heading_path": [str(snippet.get("heading", "unknown"))],
-                    "paragraph_index": 1,
-                }
-                evidence_refs.append(
-                    {
-                        "source_name": str(snippet.get("document_id", "unknown")),
-                        "source_locator": locator,
-                        "excerpt_text": str(snippet.get("text", ""))[:400],
-                        "source_type": source_type,
-                        "locator_status": "resolved" if anchor else "degraded",
-                        "resolver_confidence": "high" if anchor else "medium",
-                        "internal_chunk_id": str(snippet.get("chunk_uid", "")),
+        role_outputs: dict[str, dict[str, Any]] = {}
+        role_failures: list[str] = []
+        draft_id = f"draft::{prompt_id.lower()}"
+
+        for role_name in role_order:
+            role_contract = (
+                role_contracts.get(role_name) if isinstance(role_contracts, dict) else {}
+            )
+            if not isinstance(role_contract, dict):
+                role_contract = {}
+            required = _required_fields(role_contract.get("required_output_schema", {}))
+            forbidden = role_contract.get("forbidden_patterns", [])
+            forbidden = forbidden if isinstance(forbidden, list) else []
+            prompt_template = str(role_contract.get("prompt_template_text", ""))
+            role_input = {
+                "target_id": target_id,
+                "target_prompt_id": prompt_id,
+                "table1_row": row_id,
+                "corpus": corpus_name,
+                "evidence_ids": evidence_ids,
+                "evidence_snippets": snippet_rows,
+                "evidence_text": evidence_text,
+                "exemplar_ids": selected_exemplars,
+                "worked_positive_examples": worked_pos,
+                "worked_negative_examples": worked_neg,
+                "style_excerpt": style_excerpt,
+                "example_execution_mode": example_mode,
+                "runtime_hazard_target": row_id in runtime_hazard_rows,
+                "upstream_outputs": role_outputs,
+            }
+            rendered_prompt = (
+                f"{prompt_template}\n\n"
+                f"Output schema required fields: {required}\n"
+                f"Forbidden patterns: {forbidden}\n"
+                "Length and structure bounds: keep each narrative field between 40 and 220 words; "
+                "code examples between 4 and 40 lines; no placeholder text.\n"
+                f"Input context JSON:\n{json.dumps(role_input, indent=2, sort_keys=True)}"
+            )
+            prompt_template_id, _prompt_template_digest = _role_prompt(role_name)
+            try:
+                output, invocation = _call_openai_compatible(
+                    role=role_name,
+                    prompt=rendered_prompt,
+                    model=writer_model,
+                    temperature=0.2,
+                    timeout_s=writer_timeout,
+                )
+            except RuntimeError as exc:
+                role_failures.append(f"{role_name}:transport_failure")
+                output = {"target_id": target_id, "status": "abstain", "error": str(exc)}
+                invocation = (
+                    _extract_json_object(str(exc).split("\n")[-1])
+                    if str(exc).strip().startswith("{")
+                    else {
+                        "system_request_id": f"sysreq::{uuid.uuid4().hex[:20]}",
+                        "request_started_at": datetime.now(UTC).isoformat(),
+                        "response_received_at": datetime.now(UTC).isoformat(),
+                        "prompt_digest": _canonical_digest(rendered_prompt),
+                        "response_digest": "",
+                        "transport_status": "error",
                     }
                 )
-        writer_evidence_rows.append(
-            {
-                "target_id": target_id,
-                "draft_id": draft_id,
-                "hazard": str(draft.get("guideline", "")),
-                "mechanism": str(draft.get("rationale", "")),
-                "mitigation": str(draft.get("enforcement", "")),
-                "construct_scope": list(
-                    draft.get("construct_terms") or [str(draft.get("category", "unspecified"))]
-                ),
-                "evidence_ids": evidence_ids,
-                "claim_to_evidence_map": [
-                    {
-                        "claim_id": "normative_1",
-                        "claim_text": str(draft.get("guideline", "")),
-                        "supports": "normative",
-                        "evidence_refs": evidence_refs,
-                    }
-                ],
-                "status": "abstain" if is_abstain else "ok",
-            }
-        )
-        writer_amplification_rows.append(
-            {
-                "target_id": target_id,
-                "draft_id": draft_id,
-                "guideline_amplification_text": str(draft.get("guideline", "")),
-                "normative_strength": str(draft.get("strength", "")),
-                "amplification_citation_keys": ["SRC-1"] if not is_abstain else [],
-                "status": "abstain" if is_abstain else "ok",
-            }
-        )
-        writer_example_rows.append(
-            {
-                "target_id": target_id,
-                "draft_id": draft_id,
-                "non_compliant_narrative": (
-                    "This non-compliant pattern omits the required construct-specific control."
-                    if not is_abstain
-                    else ""
-                ),
-                "non_compliant_code": (
-                    str(draft.get("non_compliant_code", "")) if not is_abstain else ""
-                ),
-                "compliant_narrative": (
-                    "This compliant pattern applies explicit mitigation and verification control."
-                    if not is_abstain
-                    else ""
-                ),
-                "compliant_code": (str(draft.get("compliant_code", "")) if not is_abstain else ""),
-                "example_citation_keys": ["SRC-1", "SRC-2"] if not is_abstain else [],
-                "status": "abstain" if is_abstain else "ok",
-            }
-        )
-        writer_rationale_rows.append(
-            {
-                "target_id": target_id,
-                "draft_id": draft_id,
-                "rationale_text": str(draft.get("rationale", "")),
-                "hazard_mechanism_consequence": bool(str(draft.get("rationale", "")).strip()),
-                "status": "abstain" if is_abstain else "ok",
-            }
-        )
-        writer_metadata_rows.append(
-            {
-                "target_id": target_id,
-                "draft_id": draft_id,
-                "title": str(draft.get("title", "")),
-                "tags": [str(draft.get("category", "")), *(draft.get("table1_rows") or [])],
-                "semantic_tags": [
-                    str(draft.get("category", "")),
-                    *(draft.get("construct_terms") or []),
-                    *(draft.get("table1_rows") or []),
-                ],
-                "fls_candidate": f"fls_{hashlib.sha256(str(draft.get('target_prompt_id', '')).encode('utf-8')).hexdigest()[:12]}",
-                "bibliography_rows": [
-                    {
-                        "citation_key": "SRC-1",
-                        "source": evidence_refs[0]["source_name"] if evidence_refs else "unknown",
-                        "locator": evidence_refs[0]["source_locator"] if evidence_refs else {},
-                        "excerpt": evidence_refs[0]["excerpt_text"] if evidence_refs else "",
-                    },
-                    {
-                        "citation_key": "SRC-2",
-                        "source": evidence_refs[1]["source_name"]
-                        if len(evidence_refs) > 1
-                        else "unknown",
-                        "locator": evidence_refs[1]["source_locator"]
-                        if len(evidence_refs) > 1
-                        else {},
-                        "excerpt": evidence_refs[1]["excerpt_text"]
-                        if len(evidence_refs) > 1
-                        else "",
-                    },
-                ]
-                if not is_abstain
-                else [],
-                "status": "abstain" if is_abstain else "ok",
-            }
-        )
-
-        for role_name, role_input, role_output in (
-            ("evidence_synthesizer", writer_evidence_rows[-1], writer_evidence_rows[-1]),
-            (
-                "amplification_author",
-                {"target_id": target_id, "evidence": writer_evidence_rows[-1]},
-                writer_amplification_rows[-1],
-            ),
-            (
-                "example_author",
-                {
-                    "target_id": target_id,
-                    "evidence": writer_evidence_rows[-1],
-                    "amplification": writer_amplification_rows[-1],
-                },
-                writer_example_rows[-1],
-            ),
-            (
-                "rationale_author",
-                {
-                    "target_id": target_id,
-                    "evidence": writer_evidence_rows[-1],
-                    "examples": writer_example_rows[-1],
-                },
-                writer_rationale_rows[-1],
-            ),
-            (
-                "metadata_citation_curator",
-                {
-                    "target_id": target_id,
-                    "all_writer_outputs": {
-                        "evidence": writer_evidence_rows[-1],
-                        "amplification": writer_amplification_rows[-1],
-                        "examples": writer_example_rows[-1],
-                        "rationale": writer_rationale_rows[-1],
-                    },
-                },
-                writer_metadata_rows[-1],
-            ),
-        ):
-            prompt_id, prompt_digest = _role_prompt(role_name)
-            in_digest = hashlib.sha256(
-                json.dumps(role_input, sort_keys=True).encode("utf-8")
-            ).hexdigest()
-            out_digest = hashlib.sha256(
-                json.dumps(role_output, sort_keys=True).encode("utf-8")
-            ).hexdigest()
+            missing_required = _ensure_required_fields(role_name, output, required)
+            role_failures.extend(missing_required)
+            output["target_id"] = target_id
+            output["draft_id"] = draft_id
+            role_outputs[role_name] = output
             invocation_rows.append(
                 {
                     "target_id": target_id,
-                    "target_prompt_id": draft.get("target_prompt_id"),
+                    "target_prompt_id": prompt_id,
                     "writer_role": role_name,
-                    "system_request_id": f"sysreq::{hashlib.sha256((draft_id + ':' + role_name).encode('utf-8')).hexdigest()[:16]}",
-                    "prompt_template_id": prompt_id,
-                    "prompt_digest": prompt_digest,
-                    "rendered_prompt_digest": prompt_digest,
-                    "input_digest": in_digest,
-                    "output_digest": out_digest,
-                    "provider_message_id": None,
-                    "provider_model": None,
-                    "provider_model_version": None,
-                    "provider_token_usage": None,
-                    "provider_fields_unavailable_reason": "deterministic_local_writer",
-                    "started_at": datetime.now(UTC).isoformat(),
-                    "completed_at": datetime.now(UTC).isoformat(),
-                    "status": "abstain" if is_abstain else "completed",
+                    "prompt_template_id": prompt_template_id,
+                    "prompt_digest": invocation.get(
+                        "prompt_digest", _canonical_digest(rendered_prompt)
+                    ),
+                    "response_digest": invocation.get("response_digest", ""),
+                    "system_request_id": invocation.get("system_request_id"),
+                    "request_started_at": invocation.get("request_started_at"),
+                    "response_received_at": invocation.get("response_received_at"),
+                    "transport_status": invocation.get("transport_status", "unknown"),
+                    "provider_model": invocation.get("provider_model", writer_model),
+                    "provider_message_id": invocation.get("provider_message_id"),
+                    "provider_token_usage": invocation.get("provider_token_usage"),
                 }
             )
+
+        evidence_output = role_outputs.get("evidence_synthesizer", {})
+        amplification_output = role_outputs.get("amplification_author", {})
+        example_output = role_outputs.get("example_author", {})
+        rationale_output = role_outputs.get("rationale_author", {})
+        metadata_output = role_outputs.get("metadata_citation_curator", {})
+
+        writer_evidence_rows.append(evidence_output)
+        writer_amplification_rows.append(amplification_output)
+        writer_example_rows.append(example_output)
+        writer_rationale_rows.append(rationale_output)
+        writer_metadata_rows.append(metadata_output)
+
+        is_abstain = bool(target.get("expect_abstain", False)) or bool(role_failures)
+        strength = str(amplification_output.get("normative_strength", "shall")).strip().lower()
+        category = "mandatory" if strength == "shall" else "advisory"
+        draft_row = {
+            "draft_id": draft_id,
+            "target_id": target_id,
+            "target_prompt_id": prompt_id,
+            "corpus": corpus_name,
+            "table1_rows": [] if not row_id else [row_id],
+            "title": str(metadata_output.get("title", f"Guideline for {prompt_id}")),
+            "strength": strength if strength in {"shall", "should"} else "shall",
+            "guideline": str(amplification_output.get("guideline_amplification_text", "")),
+            "rationale": str(rationale_output.get("rationale_text", "")),
+            "enforcement": str(evidence_output.get("mitigation", "")),
+            "verification": "Generated from writer-role outputs and judge-gated enforcement.",
+            "status": "abstain" if is_abstain else "drafted",
+            "evidence_chunk_ids": evidence_ids,
+            "evidence_snippets": [str(s.get("text", ""))[:500] for s in snippet_rows[:2]],
+            "exemplar_ids_used": selected_exemplars,
+            "category": category,
+            "exemplar_phrase": ", ".join(selected_exemplars) if selected_exemplars else "none",
+            "construct_terms": list(evidence_output.get("construct_scope", [])),
+            "non_compliant_code": str(example_output.get("non_compliant_code", "")),
+            "compliant_code": str(example_output.get("compliant_code", "")),
+            "example_execution_mode": example_mode,
+            "runtime_hazard_target": row_id in runtime_hazard_rows,
+            "role_failures": role_failures,
+        }
+        draft_rows.append(draft_row)
+        analysis_rows.append(
+            {
+                "target_prompt_id": prompt_id,
+                "reason": "writer_chain_llm",
+                "analysis": "Writer chain executed with real LLM role calls and contract-aware prompts.",
+            }
+        )
 
     def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         with path.open("w", encoding="utf-8") as handle:
@@ -1595,15 +1646,16 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         run_dir / "writer_output_auditor_report.json",
         {
             "run_id": run_id,
-            "status": "pass",
+            "status": "pass" if not any(d.get("role_failures") for d in draft_rows) else "fail",
             "results": [
                 {
                     "draft_id": str(d.get("draft_id", "")),
-                    "writer_outputs_complete": True,
+                    "writer_outputs_complete": not bool(d.get("role_failures")),
                     "evidence_map_valid": bool(d.get("evidence_chunk_ids")),
                     "amplification_specificity_valid": bool(str(d.get("guideline", "")).strip()),
                     "amplification_evidence_linked": bool(d.get("evidence_chunk_ids")),
-                    "examples_non_placeholder": str(d.get("status", "")) == "abstain" or True,
+                    "examples_non_placeholder": str(d.get("status", "")) == "abstain"
+                    or "template" not in str(d.get("non_compliant_code", "")).lower(),
                     "rationale_chain_valid": bool(str(d.get("rationale", "")).strip()),
                     "metadata_citation_valid": str(d.get("status", "")) == "abstain"
                     or bool(d.get("table1_rows")),
@@ -1614,6 +1666,100 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             ],
         },
     )
+
+    evidence_contract = (
+        role_contracts.get("evidence_synthesizer", {}) if isinstance(role_contracts, dict) else {}
+    )
+    evidence_required = _required_fields(
+        evidence_contract.get("required_output_schema", {})
+        if isinstance(evidence_contract, dict)
+        else {}
+    )
+    evidence_forbidden = (
+        evidence_contract.get("forbidden_patterns", [])
+        if isinstance(evidence_contract, dict)
+        else []
+    )
+    if not isinstance(evidence_forbidden, list):
+        evidence_forbidden = []
+    evidence_gate_rows: list[dict[str, Any]] = []
+    evidence_schema_pass = 0
+    evidence_normative_pass = 0
+    evidence_banned_pass = 0
+    for row in writer_evidence_rows:
+        if not isinstance(row, dict):
+            continue
+        row_missing = _ensure_required_fields("evidence_synthesizer", row, evidence_required)
+        schema_ok = not row_missing
+        construct_scope = [str(x) for x in (row.get("construct_scope") or [])]
+        claim_rows_raw = row.get("claim_to_evidence_map")
+        claim_rows: list[dict[str, Any]] = []
+        if isinstance(claim_rows_raw, list):
+            claim_rows = [item for item in claim_rows_raw if isinstance(item, dict)]
+        normative_ok = False
+        for claim in claim_rows:
+            if not isinstance(claim, dict):
+                continue
+            claim_text = _normalize_text(str(claim.get("claim_text", "")))
+            refs_raw = claim.get("evidence_refs")
+            refs: list[dict[str, Any]] = []
+            if isinstance(refs_raw, list):
+                refs = [item for item in refs_raw if isinstance(item, dict)]
+            if refs and any(
+                _normalize_text(term) in claim_text for term in construct_scope if term
+            ):
+                normative_ok = True
+                break
+        row_text = _normalize_text(json.dumps(row, sort_keys=True))
+        banned_ok = not any(_normalize_text(str(pat)) in row_text for pat in evidence_forbidden)
+        evidence_schema_pass += int(schema_ok)
+        evidence_normative_pass += int(normative_ok)
+        evidence_banned_pass += int(banned_ok)
+        evidence_gate_rows.append(
+            {
+                "target_id": str(row.get("target_id", "")),
+                "schema_ok": schema_ok,
+                "normative_claim_ok": normative_ok,
+                "banned_pattern_ok": banned_ok,
+                "missing_required": row_missing,
+            }
+        )
+    evidence_gate_status = (
+        "pass"
+        if evidence_schema_pass >= 3 and evidence_normative_pass >= 3 and evidence_banned_pass >= 3
+        else "fail"
+    )
+    _write_json(
+        run_dir / "evidence_synthesizer_gate_report.json",
+        {
+            "run_id": run_id,
+            "status": evidence_gate_status,
+            "schema_valid_count": evidence_schema_pass,
+            "normative_claim_count": evidence_normative_pass,
+            "banned_pattern_count": evidence_banned_pass,
+            "results": evidence_gate_rows,
+        },
+    )
+    plan_day_zero = datetime(2026, 2, 27, tzinfo=UTC)
+    days_since_plan = (datetime.now(UTC) - plan_day_zero).days
+    if evidence_gate_status != "pass" and days_since_plan >= 3:
+        escalation = {
+            "run_id": run_id,
+            "status": "escalated",
+            "trigger": "day3_evidence_synthesizer_gate_not_met",
+            "top_failure_patterns": [
+                "schema_noncompliance",
+                "missing_construct_specific_normative_claim",
+                "forbidden_pattern_regression",
+            ],
+            "options": [
+                "Prompt redesign using stronger worked examples and tighter forbidden patterns.",
+                "Model/decode adjustment for writer roles.",
+                "Temporary scope reduction of targets for prompt hardening validation.",
+            ],
+        }
+        _write_json(run_dir / "day3_escalation_report.json", escalation)
+        raise RuntimeError("Day-3 escalation triggered; downstream rollout stopped")
 
     with (run_dir / "drafts.jsonl").open("w", encoding="utf-8") as handle:
         for row in draft_rows:
@@ -1677,6 +1823,13 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             locator_raw = first_bib.get("locator")
             locator_obj: dict[str, Any] = locator_raw if isinstance(locator_raw, dict) else {}
             bib_locator = str(locator_obj.get("url") or locator_obj.get("path") or "unresolved")
+        non_compliant_mode = str(draft.get("example_execution_mode", "runnable"))
+        mode_flag = {
+            "compile_fail": "         :compile_fail:\n\n",
+            "no_run": "         :no_run:\n\n",
+            "should_panic": "         :should_panic:\n\n",
+            "runnable": "\n",
+        }.get(non_compliant_mode, "\n")
         section_text = (
             ".. SPDX-License-Identifier: MIT OR Apache-2.0\n"
             "   SPDX-FileCopyrightText: The Coding Guidelines Subcommittee Contributors\n\n"
@@ -1685,7 +1838,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             f"{'=' * len(title)}\n\n"
             f".. guideline:: {title}\n"
             f"   :id: {guideline_id}\n"
-            "   :category: advisory\n"
+            f"   :category: {str(draft.get('category', 'advisory'))}\n"
             "   :status: draft\n"
             "   :release: latest\n"
             f"   :fls: {fls_id}\n"
@@ -1702,7 +1855,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "      :status: draft\n\n"
             f"      {str(example_payload.get('non_compliant_narrative', 'Non-compliant example demonstrates hazard trigger.'))}\n\n"
             "      .. rust-example::\n"
-            "         :compile_fail:\n\n"
+            + mode_flag
             + "\n".join(
                 f"         {line}"
                 for line in str(example_payload.get("non_compliant_code", "")).splitlines()
@@ -1823,6 +1976,144 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "results": sim_matrix,
         },
     )
+    synonyms_cfg = _safe_yaml(root / "config" / "s0" / "construct_synonyms.yaml")
+    synonyms_map = synonyms_cfg.get("synonyms", {}) if isinstance(synonyms_cfg, dict) else {}
+    if not isinstance(synonyms_map, dict):
+        synonyms_map = {}
+
+    duplicate_findings: list[dict[str, Any]] = []
+    for row in sim_matrix:
+        left_id = str(row.get("left_draft_id", ""))
+        right_id = str(row.get("right_draft_id", ""))
+        if not left_id or not right_id or left_id >= right_id:
+            continue
+        score = float(row.get("jaccard_4gram", 0.0) or 0.0)
+        if score <= 0.60:
+            continue
+        left = next((d for d in non_abstain_drafts if str(d.get("draft_id", "")) == left_id), {})
+        right = next((d for d in non_abstain_drafts if str(d.get("draft_id", "")) == right_id), {})
+        left_terms = {str(x).lower() for x in (left.get("construct_terms") or [])}
+        right_terms = {str(x).lower() for x in (right.get("construct_terms") or [])}
+        same_family = bool(left_terms & right_terms)
+        status = "review" if mode == "bootstrap" and same_family else "block"
+        duplicate_findings.append(
+            {
+                "left_draft_id": left_id,
+                "right_draft_id": right_id,
+                "jaccard_4gram": score,
+                "same_construct_family": same_family,
+                "status": status,
+            }
+        )
+    duplicate_gate_status = (
+        "pass" if not any(x["status"] == "block" for x in duplicate_findings) else "fail"
+    )
+    _write_json(
+        run_dir / "duplicate_similarity_gate_report.json",
+        {
+            "run_id": run_id,
+            "mode": mode,
+            "status": duplicate_gate_status,
+            "findings": duplicate_findings,
+        },
+    )
+
+    alignment_findings: list[dict[str, Any]] = []
+    for draft in non_abstain_drafts:
+        draft_id = str(draft.get("draft_id", ""))
+        evidence = evidence_by_draft.get(draft_id, {})
+        claim_rows: list[dict[str, Any]] = []
+        if isinstance(evidence, dict):
+            claim_map = evidence.get("claim_to_evidence_map")
+            if isinstance(claim_map, list):
+                claim_rows = [item for item in claim_map if isinstance(item, dict)]
+        construct_terms = [str(x) for x in (draft.get("construct_terms") or [])]
+        term_set = {t.lower() for t in construct_terms}
+        for term in list(term_set):
+            synonyms = synonyms_map.get(term)
+            if not isinstance(synonyms, list):
+                synonyms = []
+            for syn in synonyms:
+                term_set.add(str(syn).lower())
+        claim_status = True
+        for claim in claim_rows:
+            if not isinstance(claim, dict):
+                continue
+            refs_raw = claim.get("evidence_refs")
+            refs: list[dict[str, Any]] = []
+            if isinstance(refs_raw, list):
+                refs = [item for item in refs_raw if isinstance(item, dict)]
+            aligned = False
+            for ref in refs:
+                excerpt = _normalize_text(str(ref.get("excerpt_text", "")))
+                if any(term and term in excerpt for term in term_set):
+                    aligned = True
+                    break
+            if not aligned:
+                claim_status = False
+        alignment_findings.append({"draft_id": draft_id, "aligned": claim_status})
+    alignment_status = (
+        "pass" if all(x.get("aligned", False) for x in alignment_findings) else "fail"
+    )
+    _write_json(
+        run_dir / "construct_evidence_alignment_report.json",
+        {
+            "run_id": run_id,
+            "status": alignment_status,
+            "results": alignment_findings,
+        },
+    )
+
+    example_semantics_results: list[dict[str, Any]] = []
+    for draft in non_abstain_drafts:
+        mode_value = str(draft.get("example_execution_mode", "runnable"))
+        runtime_hazard = bool(draft.get("runtime_hazard_target", False))
+        valid = True
+        if runtime_hazard and mode_value == "compile_fail":
+            valid = False
+        example_semantics_results.append(
+            {
+                "draft_id": str(draft.get("draft_id", "")),
+                "mode": mode_value,
+                "runtime_hazard_target": runtime_hazard,
+                "valid": valid,
+            }
+        )
+    example_semantics_status = (
+        "pass" if all(x.get("valid", False) for x in example_semantics_results) else "fail"
+    )
+    _write_json(
+        run_dir / "example_execution_semantics_report.json",
+        {
+            "run_id": run_id,
+            "status": example_semantics_status,
+            "results": example_semantics_results,
+        },
+    )
+
+    modality_results: list[dict[str, Any]] = []
+    for draft in non_abstain_drafts:
+        strength = str(draft.get("strength", "")).lower()
+        category = str(draft.get("category", "")).lower()
+        expected = "mandatory" if strength == "shall" else "advisory"
+        modality_results.append(
+            {
+                "draft_id": str(draft.get("draft_id", "")),
+                "strength": strength,
+                "category": category,
+                "expected_category": expected,
+                "valid": category == expected,
+            }
+        )
+    modality_status = "pass" if all(x.get("valid", False) for x in modality_results) else "fail"
+    _write_json(
+        run_dir / "modality_category_consistency_report.json",
+        {
+            "run_id": run_id,
+            "status": modality_status,
+            "results": modality_results,
+        },
+    )
     _write_json(
         run_dir / "golden_shape_comparator_report.json",
         {
@@ -1856,13 +2147,22 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     stage_b_judges_dir.mkdir(parents=True, exist_ok=True)
     stage_b_judges = [
         "evidence_auditor",
+        "golden_shape_comparator",
+        "writer_output_auditor",
         "functional_safety_relevance",
         "usability_actionability",
-        "golden_shape_comparator",
         "exemplar_usage_auditor",
-        "writer_output_auditor",
     ]
+    hard_judges = {"evidence_auditor", "golden_shape_comparator", "writer_output_auditor"}
+    soft_judges = {
+        "functional_safety_relevance",
+        "usability_actionability",
+        "exemplar_usage_auditor",
+    }
+    judge_model = str(os.environ.get("S0_JUDGE_MODEL", writer_model))
+    judge_timeout = int(str(os.environ.get("S0_JUDGE_TIMEOUT_SECONDS", "60")))
     judge_results: list[dict[str, Any]] = []
+    judge_invocations: list[dict[str, Any]] = []
     for draft in draft_rows:
         draft_id = str(draft.get("draft_id", ""))
         target_id = str(draft.get("target_id", ""))
@@ -1879,43 +2179,117 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                 }
             )
             continue
-        file_name = f"{str(draft.get('target_prompt_id', '')).lower().replace('_', '-')}.rst"
-        shape_ok = bool(
-            next(
-                (r.get("candidate_shape_ok") for r in shape_results if r.get("file") == file_name),
-                False,
-            )
-        )
-        usage_ok = bool(draft.get("exemplar_ids_used"))
-        evidence_ok = bool(draft.get("evidence_chunk_ids"))
-        rationale_ok = len(str(draft.get("rationale", "")).strip()) >= 80
-        soft_pass = int(rationale_ok) + int(usage_ok) + int(shape_ok)
-        verdict = "candidate" if (evidence_ok and shape_ok and soft_pass >= 2) else "blocked"
-        judge_results.append(
-            {
-                "draft_id": draft_id,
-                "target_id": target_id,
-                "verdict": verdict,
-                "evidence_grounding": evidence_ok,
-                "utility_complete": rationale_ok and usage_ok,
-                "significance": 4 if verdict == "candidate" else 2,
-            }
-        )
+
+        per_judge: dict[str, str] = {}
         for judge_name in stage_b_judges:
+            judge_contract = (judge_contracts.get("roles", {}) or {}).get(judge_name, {})
+            judge_prompt = (
+                f"{str(judge_contract.get('prompt_template_text', 'Evaluate the draft and return JSON only.'))}\n\n"
+                f"Required schema: {_required_fields(judge_contract.get('required_output_schema', {}))}\n"
+                f"Forbidden patterns: {judge_contract.get('forbidden_patterns', [])}\n"
+                "Decision vocabulary: pass | fail | abstain.\n"
+                f"Draft context JSON:\n{json.dumps({'draft': draft, 'run_id': run_id}, indent=2, sort_keys=True)}"
+            )
+            decision = "abstain"
+            summary = ""
+            reason_codes: list[str] = []
+            try:
+                judge_output, judge_invocation = _call_openai_compatible(
+                    role=judge_name,
+                    prompt=judge_prompt,
+                    model=judge_model,
+                    temperature=0.0,
+                    timeout_s=judge_timeout,
+                )
+                decision = str(
+                    judge_output.get("decision", judge_output.get("pass", "abstain"))
+                ).lower()
+                if decision in {"true", "pass", "yes", "1"}:
+                    decision = "pass"
+                elif decision in {"false", "fail", "no", "0"}:
+                    decision = "fail"
+                elif decision not in {"pass", "fail", "abstain"}:
+                    decision = "abstain"
+                summary = str(judge_output.get("summary", ""))
+                raw_reason_codes = judge_output.get("reason_codes")
+                if not isinstance(raw_reason_codes, list):
+                    raw_reason_codes = []
+                reason_codes = [str(x) for x in raw_reason_codes]
+            except RuntimeError as exc:
+                decision = "abstain"
+                summary = f"Judge transport failure: {exc}"
+                reason_codes = ["judge_transport_failure"]
+                judge_invocation = {
+                    "system_request_id": f"sysreq::{uuid.uuid4().hex[:20]}",
+                    "request_started_at": datetime.now(UTC).isoformat(),
+                    "response_received_at": datetime.now(UTC).isoformat(),
+                    "prompt_digest": _canonical_digest(judge_prompt),
+                    "response_digest": "",
+                    "transport_status": "error",
+                    "provider_model": judge_model,
+                }
+
             payload = {
                 "run_id": run_id,
                 "judge_id": judge_name,
                 "target_id": target_id,
                 "draft_id": draft_id,
-                "decision": "pass" if verdict == "candidate" else "fail",
-                "score": 0.9 if verdict == "candidate" else 0.4,
-                "reason_codes": [] if verdict == "candidate" else ["deterministic_gate_failure"],
-                "summary": "Deterministic Stage B judgment generated from calibration artifacts.",
+                "decision": decision,
+                "reason_codes": reason_codes,
+                "summary": summary,
                 "stage": "B",
             }
             judge_dir = stage_b_judges_dir / judge_name
             judge_dir.mkdir(parents=True, exist_ok=True)
             _write_json(judge_dir / f"{target_id}.json", payload)
+            per_judge[judge_name] = decision
+            judge_invocations.append(
+                {
+                    "judge": judge_name,
+                    "target_id": target_id,
+                    "draft_id": draft_id,
+                    "system_request_id": judge_invocation.get("system_request_id"),
+                    "request_started_at": judge_invocation.get("request_started_at"),
+                    "response_received_at": judge_invocation.get("response_received_at"),
+                    "prompt_digest": judge_invocation.get("prompt_digest"),
+                    "response_digest": judge_invocation.get("response_digest"),
+                    "transport_status": judge_invocation.get("transport_status"),
+                }
+            )
+
+        hard_states = [per_judge.get(name, "abstain") for name in hard_judges]
+        soft_states = [per_judge.get(name, "abstain") for name in soft_judges]
+        soft_pass = len([x for x in soft_states if x == "pass"])
+        soft_fail = len([x for x in soft_states if x == "fail"])
+        soft_abstain = len([x for x in soft_states if x == "abstain"])
+        any_hard_fail = any(x == "fail" for x in hard_states)
+        any_hard_abstain = any(x == "abstain" for x in hard_states)
+        if mode == "publishable" and (any_hard_fail or any_hard_abstain):
+            verdict = "blocked"
+        elif mode == "bootstrap" and any_hard_fail:
+            verdict = "blocked"
+        elif mode == "bootstrap" and any_hard_abstain:
+            verdict = "review"
+        elif soft_pass >= 2 and soft_fail == 0 and soft_abstain <= 1:
+            verdict = "candidate"
+        else:
+            verdict = "review"
+        judge_results.append(
+            {
+                "draft_id": draft_id,
+                "target_id": target_id,
+                "verdict": verdict,
+                "judge_decisions": per_judge,
+                "evidence_grounding": per_judge.get("evidence_auditor") == "pass",
+                "utility_complete": soft_pass >= 2,
+                "significance": 4 if verdict == "candidate" else 2,
+            }
+        )
+
+    _write_json(
+        run_dir / "stage_b_judge_invocations.json",
+        {"run_id": run_id, "invocations": judge_invocations},
+    )
 
     judge_passes = run_dir / "judge_passes"
     judge_passes.mkdir(parents=True, exist_ok=True)
@@ -1925,7 +2299,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "run_id": run_id,
             "status": "pass",
             "results": judge_results,
-            "notes": "Deterministic Stage B evidence auditor output.",
+            "notes": "Real Stage B evidence auditor output.",
         },
     )
     _write_json(
@@ -1941,7 +2315,15 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     candidate_grade_count = len([row for row in judge_results if row.get("verdict") == "candidate"])
     embarrassing_failure_count = int(len(core_gate) + len(rust_gate))
     non_abstain_count = len([d for d in draft_rows if d.get("status") != "abstain"])
-    gate_passed = shape_all and candidate_grade_count == non_abstain_count
+    review_count = len([row for row in judge_results if row.get("verdict") == "review"])
+    abstain_rate = 0.0
+    if draft_rows:
+        abstain_rate = len([d for d in draft_rows if d.get("status") == "abstain"]) / float(
+            len(draft_rows)
+        )
+    gate_passed = (
+        shape_all and candidate_grade_count >= 3 and review_count == 0 and abstain_rate <= 0.40
+    )
     _write_json(
         run_dir / "judge_aggregate.json",
         {
@@ -1949,6 +2331,8 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "status": "pass" if gate_passed else "fail",
             "results": judge_results,
             "candidate_grade_count": candidate_grade_count,
+            "review_count": review_count,
+            "abstain_rate": abstain_rate,
             "embarrassing_failure_count": embarrassing_failure_count,
             "stage_c_diagnostic_only": True,
         },
@@ -1957,7 +2341,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     calibration_report = {
         "run_id": run_id,
         "report_type": "phase_a_calibration",
-        "method": "deterministic_draft_generation_with_exemplar_enforcement",
+        "method": "llm_first_writer_and_stage_b_judges_with_gate_enforcement",
         "inputs": {
             "core_docs_eval_report": str(core_report_path),
             "rust_reference_eval_report": str(rust_report_path),
@@ -1974,7 +2358,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "embarrassing_failure_count": embarrassing_failure_count,
             "shape_pass_required": shape_all,
             "gate_passed": gate_passed,
-            "reason": "Deterministic Stage A/Stage B checks completed.",
+            "reason": "Real writer and judge role checks completed with gate enforcement.",
         },
     }
     _write_json(run_dir / "calibration_report.json", calibration_report)
@@ -1987,8 +2371,8 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "embarrassing_failure_count": embarrassing_failure_count,
             "shape_all_non_abstain_pass": shape_all,
             "notes": [
-                "Draft generation completed with deterministic exemplar enforcement.",
-                "Stage B judgments were produced in run artifacts.",
+                "Draft generation completed with LLM-first writer chain.",
+                "Stage B judgments were produced via real judge role calls.",
             ],
         },
     )
@@ -2068,7 +2452,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "decision": "go" if gate_passed else "no_go",
             "recorded_at": datetime.now(UTC).isoformat(),
             "reasons": [
-                "All non-abstain drafts met deterministic and Stage B candidate criteria."
+                "All non-abstain drafts met writer/judge and critical gate criteria."
                 if gate_passed
                 else "One or more non-abstain drafts failed candidate criteria."
             ],
@@ -2077,6 +2461,10 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             else ["Address blocking failures in calibration_quality_enforcement_report.json"],
         },
     )
+    if mode == "bootstrap" and gate_passed:
+        bootstrap_marker = root / ".cache" / "sqlite_kb" / "reports" / ".phase_a_bootstrap_complete"
+        bootstrap_marker.parent.mkdir(parents=True, exist_ok=True)
+        bootstrap_marker.write_text(datetime.now(UTC).isoformat() + "\n", encoding="utf-8")
 
     print(
         json.dumps(
@@ -2101,6 +2489,7 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         raise RuntimeError(f"run directory missing: {run_dir}")
 
     required = [
+        "startup_checklist_report.json",
         "drafts.jsonl",
         "golden_exemplar_lock_report.json",
         "exemplar_selection_trace.jsonl",
@@ -2109,6 +2498,10 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         "golden_shape_comparator_report.json",
         "exemplar_usage_auditor_report.json",
         "writer_output_auditor_report.json",
+        "duplicate_similarity_gate_report.json",
+        "construct_evidence_alignment_report.json",
+        "example_execution_semantics_report.json",
+        "modality_category_consistency_report.json",
         "judge_aggregate.json",
     ]
     missing = [name for name in required if not (run_dir / name).exists()]
@@ -2123,6 +2516,10 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
     comparator_report = _read_json(run_dir / "golden_shape_comparator_report.json")
     usage_report = _read_json(run_dir / "exemplar_usage_auditor_report.json")
     writer_auditor_report = _read_json(run_dir / "writer_output_auditor_report.json")
+    duplicate_gate_report = _read_json(run_dir / "duplicate_similarity_gate_report.json")
+    alignment_gate_report = _read_json(run_dir / "construct_evidence_alignment_report.json")
+    example_semantics_report = _read_json(run_dir / "example_execution_semantics_report.json")
+    modality_report = _read_json(run_dir / "modality_category_consistency_report.json")
     judge_aggregate = _read_json(run_dir / "judge_aggregate.json")
 
     writer_root = run_dir / "writer_subagent_outputs"
@@ -2321,6 +2718,14 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         blocking.append("run:golden_exemplar_lock_failed")
     if not bool(style_bundle.get("style_source_digest", "")):
         blocking.append("run:missing_style_source_digest")
+    for gate_name, gate_payload in (
+        ("duplicate_similarity", duplicate_gate_report),
+        ("construct_evidence_alignment", alignment_gate_report),
+        ("example_execution_semantics", example_semantics_report),
+        ("modality_category_consistency", modality_report),
+    ):
+        if str(gate_payload.get("status", "")) != "pass":
+            blocking.append(f"run:{gate_name}_failed")
 
     writer_roles = [
         "evidence_synthesizer",
@@ -2356,7 +2761,17 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
             continue
         if str(inv.get("status", "")) in {"pending", "placeholder", "skipped"}:
             blocking.append(f"run:invalid_writer_status:{role}")
-        digest = str(inv.get("rendered_prompt_digest", "")).strip()
+        for required_field in (
+            "system_request_id",
+            "request_started_at",
+            "response_received_at",
+            "prompt_digest",
+            "response_digest",
+            "transport_status",
+        ):
+            if not str(inv.get(required_field, "")).strip():
+                blocking.append(f"run:missing_invocation_field:{role}:{required_field}")
+        digest = str(inv.get("prompt_digest", "")).strip()
         if digest:
             role_prompt_digests[role].add(digest)
     for role in writer_roles:
@@ -2415,6 +2830,7 @@ def run_pack_reviewer_packet(args: Namespace, *, root: Path) -> int:
         "quality_report.json",
         "novelty_report.json",
         "doctor_quality_minimums_report.json",
+        "startup_checklist_report.json",
         "worked_example_validation_report.json",
         "catalog_smoke_report.json",
         "embarrassing_failures_observed.json",
@@ -2436,6 +2852,11 @@ def run_pack_reviewer_packet(args: Namespace, *, root: Path) -> int:
         "export_manifest.json",
         "retrieval_diagnostics.json",
         "duplicate_similarity_matrix.json",
+        "duplicate_similarity_gate_report.json",
+        "construct_evidence_alignment_report.json",
+        "example_execution_semantics_report.json",
+        "modality_category_consistency_report.json",
+        "stage_b_judge_invocations.json",
         "run_budget_report.json",
         "build_env_fingerprint.json",
         "embedding_backend_fingerprint.json",

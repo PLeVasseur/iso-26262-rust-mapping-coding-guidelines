@@ -2,8 +2,10 @@ contract_version: 1
 roles:
   evidence_auditor:
     prompt_template_id: judge-evidence-v1
-    prompt_template_text: Evaluate evidence grounding only for draft {{draft_id}}
-      using evidence bundle {{evidence_ids}}. Return JSON only.
+    prompt_template_text: |
+      Evaluate evidence grounding for draft {{draft_id}} using evidence bundle {{evidence_ids}}.
+      Apply schema, worked examples, and forbidden patterns from prompt context.
+      Return JSON only.
     allowed_placeholders:
     - draft_id
     - draft_record
@@ -20,8 +22,9 @@ roles:
     - style-only judgment
   functional_safety_relevance:
     prompt_template_id: judge-safety-v1
-    prompt_template_text: Evaluate functional safety relevance and significance for
-      {{draft_id}}. Return JSON only.
+    prompt_template_text: |
+      Evaluate functional safety relevance and significance for {{draft_id}}.
+      Return JSON only.
     allowed_placeholders:
     - draft_id
     - draft_record
@@ -37,8 +40,9 @@ roles:
     - evidence grounding assertions without evidence pass
   usability_actionability:
     prompt_template_id: judge-usability-v1
-    prompt_template_text: Evaluate usability/actionability for {{draft_id}} and return
-      JSON only.
+    prompt_template_text: |
+      Evaluate usability/actionability for {{draft_id}}.
+      Return JSON only.
     allowed_placeholders:
     - draft_id
     - draft_record
@@ -54,8 +58,9 @@ roles:
     - candidate verdict assignment
   golden_shape_comparator:
     prompt_template_id: judge-shape-v1
-    prompt_template_text: Compare generated draft {{draft_file}} against nearest exemplar
-      {{exemplar_file}} and style rules. Return JSON only.
+    prompt_template_text: |
+      Compare generated draft {{draft_file}} against nearest exemplar {{exemplar_file}} and style rules.
+      Return JSON only.
     allowed_placeholders:
     - draft_file
     - exemplar_file
@@ -72,7 +77,8 @@ roles:
     - content-only pass without style and shape checks
   exemplar_usage_auditor:
     prompt_template_id: judge-exemplar-usage-v1
-    prompt_template_text: Validate exemplar usage trace for target {{target_id}}.
+    prompt_template_text: |
+      Validate exemplar usage trace for target {{target_id}}.
       Return JSON only.
     allowed_placeholders:
     - target_id
@@ -91,8 +97,9 @@ roles:
     - candidate verdict assignment
   writer_output_auditor:
     prompt_template_id: judge-writer-output-v1
-    prompt_template_text: Validate writer role outputs for draft {{draft_id}}. Return
-      JSON only.
+    prompt_template_text: |
+      Validate writer role outputs for draft {{draft_id}}.
+      Return JSON only.
     allowed_placeholders:
     - draft_id
     - writer_outputs
@@ -110,8 +117,10 @@ roles:
     - candidate verdict assignment
   holistic_pairwise:
     prompt_template_id: judge-holistic-v1
-    prompt_template_text: Aggregate prior judge outputs for draft {{draft_id}} under
-      candidate policy. Return JSON only.
+    prompt_template_text: |
+      Aggregate prior judge outputs for draft {{draft_id}} under candidate policy.
+      This role is diagnostic-only.
+      Return JSON only.
     allowed_placeholders:
     - draft_id
     - evidence_pass

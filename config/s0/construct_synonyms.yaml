@@ -1,0 +1,28 @@
+version: 1
+synonyms:
+  AtomicBool:
+    - std::sync::atomic
+    - Ordering
+  Ordering:
+    - std::sync::atomic
+    - AtomicBool
+  RefCell:
+    - std::cell::RefCell
+    - borrow_mut
+    - try_borrow_mut
+  borrow_mut:
+    - RefCell
+    - try_borrow_mut
+  try_borrow_mut:
+    - RefCell
+    - borrow_mut
+  checked_add:
+    - checked_*
+    - saturating_add
+  saturating_add:
+    - checked_add
+    - wrapping_add
+  shall:
+    - mandatory
+  should:
+    - advisory

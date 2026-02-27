@@ -2,9 +2,12 @@ contract_version: 1
 roles:
   evidence_synthesizer:
     prompt_template_id: writer-evidence-synth-v1
-    prompt_template_text: You are the Evidence Synthesizer. Target {{target_id}} row
-      {{table1_row}}. Use evidence IDs {{evidence_ids}} and exemplar IDs {{exemplar_ids}}.
-      Return JSON only.
+    prompt_template_text: |
+      You are the Evidence Synthesizer for ISO 26262 Table 1 recovery.
+      Produce only JSON for target {{target_id}} row {{table1_row}}.
+      Bind each normative claim to cited evidence IDs from {{evidence_ids}}.
+      Use worked positive/negative examples and style excerpts included in the prompt context.
+      Never emit final publishable prose or uncited factual assertions.
     allowed_placeholders:
     - target_id
     - table1_row
@@ -35,9 +38,11 @@ roles:
     abstain_policy: emit reasoned abstain when evidence insufficient
   amplification_author:
     prompt_template_id: writer-amplification-v1
-    prompt_template_text: You are the Amplification Author. Write only the guideline
-      body text for {{target_id}} using evidence synthesis and exemplars {{exemplar_ids}}.
-      Return JSON only.
+    prompt_template_text: |
+      You are the Amplification Author.
+      Write construct-specific normative body text for {{target_id}} using evidence synthesis and exemplars {{exemplar_ids}}.
+      Follow style excerpts and forbidden patterns in prompt context.
+      Return JSON only with explicit normative strength.
     allowed_placeholders:
     - target_id
     - table1_row
@@ -64,9 +69,11 @@ roles:
     abstain_policy: emit abstain output with empty amplification citations
   example_author:
     prompt_template_id: writer-example-v1
-    prompt_template_text: You are the Example Author. Produce non-compliant and compliant
-      narrative+code for {{target_id}} tied to the same hazard/construct family. Return
-      JSON only.
+    prompt_template_text: |
+      You are the Example Author.
+      Produce non-compliant and compliant narrative plus Rust code for {{target_id}} in the same construct family.
+      Keep code aligned to normative constructs and execution semantics constraints in prompt context.
+      Return JSON only.
     allowed_placeholders:
     - target_id
     - evidence_synthesis
@@ -96,8 +103,11 @@ roles:
     abstain_policy: emit abstain with empty example fields
   rationale_author:
     prompt_template_id: writer-rationale-v1
-    prompt_template_text: You are the Rationale Author. Produce hazard->mechanism->consequence
-      rationale for {{target_id}}. Return JSON only.
+    prompt_template_text: |
+      You are the Rationale Author.
+      Produce a clear hazard -> mechanism -> consequence causal chain for {{target_id}}.
+      Keep rationale non-tautological and evidence-aligned.
+      Return JSON only.
     allowed_placeholders:
     - target_id
     - evidence_synthesis
@@ -123,8 +133,11 @@ roles:
     abstain_policy: emit abstain rationale reason
   metadata_citation_curator:
     prompt_template_id: writer-metadata-citation-v1
-    prompt_template_text: You are the Metadata/Citation Curator. Produce style-conformant
-      metadata and bibliography rows for {{target_id}}. Return JSON only.
+    prompt_template_text: |
+      You are the Metadata/Citation Curator.
+      Produce style-conformant metadata and bibliography rows for {{target_id}}.
+      Ensure citation keys are auditable and modality/category alignment is correct.
+      Return JSON only.
     allowed_placeholders:
     - target_id
     - all_writer_outputs

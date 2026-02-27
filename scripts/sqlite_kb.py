@@ -118,7 +118,9 @@ def parse_args() -> argparse.Namespace:
 
     doctor = subparsers.add_parser("doctor")
     doctor.add_argument("--corpus-set", choices=("s0",), default="s0")
-    doctor.add_argument("--mode", choices=("publishable", "exploratory"), default="publishable")
+    doctor.add_argument(
+        "--mode", choices=("bootstrap", "publishable", "exploratory"), default="bootstrap"
+    )
     doctor.add_argument("--scope", choices=("drafting", "ingest", "all"), default="drafting")
     doctor.add_argument("--run-id", default="")
     doctor.add_argument("--report-root", default="")
@@ -127,7 +129,7 @@ def parse_args() -> argparse.Namespace:
     enumerate_targets.add_argument("--corpus-set", choices=("s0",), default="s0")
     enumerate_targets.add_argument("--profile", choices=("fast", "full"), default="full")
     enumerate_targets.add_argument(
-        "--mode", choices=("publishable", "exploratory"), default="publishable"
+        "--mode", choices=("bootstrap", "publishable", "exploratory"), default="bootstrap"
     )
     enumerate_targets.add_argument("--run-id", default="")
     enumerate_targets.add_argument("--report-root", default="")
@@ -136,7 +138,7 @@ def parse_args() -> argparse.Namespace:
     calibration.add_argument("--corpus-set", choices=("s0",), default="s0")
     calibration.add_argument("--profile", choices=("fast", "full"), default="full")
     calibration.add_argument(
-        "--mode", choices=("publishable", "exploratory"), default="publishable"
+        "--mode", choices=("bootstrap", "publishable", "exploratory"), default="bootstrap"
     )
     calibration.add_argument("--run-id", default="")
     calibration.add_argument("--report-root", default="")
@@ -144,7 +146,9 @@ def parse_args() -> argparse.Namespace:
 
     enforce = subparsers.add_parser("enforce-calibration-quality")
     enforce.add_argument("--run-id", required=True)
-    enforce.add_argument("--mode", choices=("publishable", "exploratory"), default="publishable")
+    enforce.add_argument(
+        "--mode", choices=("bootstrap", "publishable", "exploratory"), default="bootstrap"
+    )
     enforce.add_argument("--report-root", default="")
 
     packet = subparsers.add_parser("pack-reviewer-packet")
