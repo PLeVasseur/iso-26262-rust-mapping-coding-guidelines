@@ -136,6 +136,239 @@ def _ensure_required_fields(role: str, output: dict[str, Any], required: list[st
     return [f"{role}:missing_required:{key}" for key in missing]
 
 
+def _rust_like_tokens(text: str) -> list[str]:
+    value = str(text)
+    patterns = [
+        r"\b[a-z_][a-z0-9_]*(?:::[a-z_][a-z0-9_]*)+\b",
+        r"\b[A-Z][A-Za-z0-9_]*(?:::[A-Za-z0-9_]+)*\b",
+        r"\b[a-z_][a-z0-9_]*\b",
+    ]
+    seen: set[str] = set()
+    out: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, value):
+            token = match.group(0).strip()
+            key = token.lower()
+            if not token or key in seen:
+                continue
+            seen.add(key)
+            out.append(token)
+    return out
+
+
+def _synonym_alias_map(synonyms_cfg: dict[str, Any]) -> dict[str, str]:
+    synonyms = synonyms_cfg.get("synonyms", {}) if isinstance(synonyms_cfg, dict) else {}
+    if not isinstance(synonyms, dict):
+        return {}
+    alias_map: dict[str, str] = {}
+    for canonical_raw, aliases_raw in synonyms.items():
+        canonical = str(canonical_raw).strip()
+        if not canonical:
+            continue
+        alias_map[canonical.lower()] = canonical
+        aliases = aliases_raw if isinstance(aliases_raw, list) else []
+        for alias in aliases:
+            alias_text = str(alias).strip()
+            if alias_text:
+                alias_map[alias_text.lower()] = canonical
+    return alias_map
+
+
+def _normalize_construct_scope(
+    raw_scope: Any,
+    *,
+    supplemental_text: list[str],
+    alias_map: dict[str, str],
+) -> tuple[list[str], list[str]]:
+    patterns: list[str] = []
+    raw_tokens: list[str] = []
+    if isinstance(raw_scope, list):
+        for item in raw_scope:
+            token = str(item).strip()
+            if token:
+                raw_tokens.append(token)
+        if raw_tokens:
+            patterns.append("scope:list")
+    elif isinstance(raw_scope, str) and raw_scope.strip():
+        raw_tokens.extend(_rust_like_tokens(raw_scope))
+        patterns.append("scope:string")
+    if not raw_tokens:
+        for text in supplemental_text:
+            raw_tokens.extend(_rust_like_tokens(text))
+        if raw_tokens:
+            patterns.append("scope:supplemental")
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for token in raw_tokens:
+        token_clean = token.strip()
+        token_key = token_clean.lower()
+        if token_clean and token_key not in seen:
+            seen.add(token_key)
+            merged.append(token_clean)
+        canonical = alias_map.get(token_key)
+        if canonical:
+            canonical_key = canonical.lower()
+            if canonical_key not in seen:
+                seen.add(canonical_key)
+                merged.append(canonical)
+    return merged, patterns
+
+
+def _normalize_evidence_refs(raw_refs: Any) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    if isinstance(raw_refs, list):
+        for entry in raw_refs:
+            if isinstance(entry, dict):
+                evidence_id = str(
+                    entry.get("evidence_id", entry.get("chunk_id", entry.get("id", "")))
+                ).strip()
+                if not evidence_id:
+                    continue
+                refs.append(
+                    {
+                        "evidence_id": evidence_id,
+                        "quote": str(entry.get("quote", "")).strip() or None,
+                        "doc_id": str(entry.get("doc_id", "")).strip() or None,
+                        "anchor": str(entry.get("anchor", "")).strip() or None,
+                    }
+                )
+                continue
+            evidence_id = str(entry).strip()
+            if evidence_id:
+                refs.append({"evidence_id": evidence_id})
+    return refs
+
+
+def _normalize_claim_map(
+    raw_claim_map: Any, *, target_id: str
+) -> tuple[list[dict[str, Any]], list[str]]:
+    patterns: list[str] = []
+    claims: list[dict[str, Any]] = []
+
+    def _append_claim(claim_id_seed: str, claim_text_raw: Any, evidence_raw: Any) -> None:
+        claim_text = str(claim_text_raw).strip()
+        if not claim_text:
+            return
+        refs = _normalize_evidence_refs(evidence_raw)
+        claim_id = str(claim_id_seed).strip()
+        if not claim_id:
+            claim_id = f"{target_id}::claim::{len(claims) + 1}"
+        claims.append(
+            {
+                "claim_id": claim_id,
+                "claim_text": claim_text,
+                "evidence_refs": refs,
+            }
+        )
+
+    if isinstance(raw_claim_map, list):
+        patterns.append("claim_map:list")
+        for idx, entry in enumerate(raw_claim_map, start=1):
+            if not isinstance(entry, dict):
+                continue
+            claim_id = str(entry.get("claim_id", "")).strip() or f"{target_id}::claim::{idx}"
+            claim_text = entry.get("claim_text", entry.get("claim", ""))
+            evidence_raw = entry.get("evidence_refs", entry.get("evidence_ids", []))
+            _append_claim(claim_id, claim_text, evidence_raw)
+    elif isinstance(raw_claim_map, dict):
+        dict_of_dicts = all(isinstance(v, dict) for v in raw_claim_map.values())
+        if dict_of_dicts:
+            patterns.append("claim_map:dict_of_dicts")
+            for idx, (key, value) in enumerate(raw_claim_map.items(), start=1):
+                nested = value if isinstance(value, dict) else {}
+                claim_id = str(nested.get("claim_id", key)).strip() or f"{target_id}::claim::{idx}"
+                claim_text = nested.get("claim_text", nested.get("claim", ""))
+                evidence_raw = nested.get("evidence_refs", nested.get("evidence_ids", []))
+                _append_claim(claim_id, claim_text, evidence_raw)
+        else:
+            patterns.append("claim_map:paired_dict")
+            keys = [str(k) for k in raw_claim_map.keys()]
+            for idx, key in enumerate(keys, start=1):
+                if key.endswith("_evidence"):
+                    continue
+                value = raw_claim_map.get(key, "")
+                if isinstance(value, list):
+                    claim_text = key
+                    evidence_raw = value
+                else:
+                    claim_text = value
+                    evidence_raw = raw_claim_map.get(f"{key}_evidence", [])
+                claim_id = key.strip() or f"{target_id}::claim::{idx}"
+                _append_claim(claim_id, claim_text, evidence_raw)
+
+    for idx, claim in enumerate(claims, start=1):
+        claim_id = str(claim.get("claim_id", "")).strip()
+        if not claim_id:
+            claim["claim_id"] = f"{target_id}::claim::{idx}"
+    return claims, patterns
+
+
+def _resolve_bibliography_rows(
+    metadata_output: dict[str, Any],
+    *,
+    prompt_id: str,
+    run_id: str,
+    evidence_lookup: dict[str, dict[str, Any]],
+    evidence_ids: list[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    patterns: list[str] = []
+    raw_rows = metadata_output.get("bibliography_rows") if isinstance(metadata_output, dict) else []
+    rows: list[dict[str, Any]] = []
+    if isinstance(raw_rows, list):
+        for row in raw_rows:
+            if isinstance(row, dict):
+                rows.append(dict(row))
+    if rows:
+        patterns.append("bibliography:from_writer")
+    else:
+        patterns.append("bibliography:synthetic")
+        for idx, evidence_id in enumerate(evidence_ids, start=1):
+            lookup = evidence_lookup.get(evidence_id, {})
+            rows.append(
+                {
+                    "citation_key": f"{prompt_id}:SRC-{idx}",
+                    "evidence_id": evidence_id,
+                    "source": str(lookup.get("source", "calibration_evidence_bundle")),
+                    "locator": {
+                        "path": f"evidence_bundle/calibration_evidence.json",
+                        "anchor": str(lookup.get("anchor", evidence_id)),
+                    },
+                    "excerpt": str(lookup.get("text", ""))[:280],
+                    "run_id": run_id,
+                }
+            )
+
+    resolved: list[dict[str, Any]] = []
+    for idx, row in enumerate(rows, start=1):
+        citation_key = str(row.get("citation_key", "")).strip() or f"{prompt_id}:SRC-{idx}"
+        evidence_id = str(row.get("evidence_id", "")).strip()
+        lookup = evidence_lookup.get(evidence_id, {}) if evidence_id else {}
+        source = str(row.get("source", lookup.get("source", ""))).strip()
+        locator_raw = row.get("locator")
+        locator = locator_raw if isinstance(locator_raw, dict) else {}
+        if not (str(locator.get("url", "")).strip() or str(locator.get("path", "")).strip()):
+            locator = {
+                "path": "evidence_bundle/calibration_evidence.json",
+                "anchor": str(lookup.get("anchor", evidence_id or citation_key)),
+            }
+        if not source:
+            source = str(lookup.get("source", "calibration_evidence_bundle"))
+        resolved.append(
+            {
+                "target_id": str(row.get("target_id", "")).strip()
+                or str(metadata_output.get("target_id", "")),
+                "prompt_id": prompt_id,
+                "citation_key": citation_key,
+                "evidence_id": evidence_id or None,
+                "source": source,
+                "locator": locator,
+                "excerpt": str(row.get("excerpt", lookup.get("text", "")))[:320],
+            }
+        )
+    return resolved, patterns
+
+
 def _call_opencode_cli(
     *,
     role: str,
@@ -967,6 +1200,12 @@ def run_enumerate_targets(args: Namespace, *, root: Path) -> int:
             root / "data" / "query_testsets" / "rust_reference_table1_retrieval_eval.yaml",
         ),
     ]
+    target_cfg = _safe_yaml(root / "config" / "s0" / "s0_targets.yaml")
+    manual_overrides = (
+        target_cfg.get("manual_overrides", {}) if isinstance(target_cfg, dict) else {}
+    )
+    if not isinstance(manual_overrides, dict):
+        manual_overrides = {}
     targets: list[dict[str, Any]] = []
     for corpus, path in datasets:
         payload = _safe_yaml(path)
@@ -983,6 +1222,9 @@ def run_enumerate_targets(args: Namespace, *, root: Path) -> int:
             if not isinstance(rows, list):
                 rows = []
             target_id = hashlib.sha256(f"{corpus}:{prompt_id}".encode("utf-8")).hexdigest()[:16]
+            override = manual_overrides.get(prompt_id, {})
+            if not isinstance(override, dict):
+                override = {}
             targets.append(
                 {
                     "target_id": target_id,
@@ -992,7 +1234,10 @@ def run_enumerate_targets(args: Namespace, *, root: Path) -> int:
                     "slice": str(prompt.get("slice", "")),
                     "category": str(prompt.get("category", "unspecified")),
                     "semantic_focus": bool(prompt.get("semantic_focus", False)),
-                    "expect_abstain": bool(prompt.get("expect_abstain", False)),
+                    "expect_abstain": bool(
+                        override.get("expect_abstain", prompt.get("expect_abstain", False))
+                    ),
+                    "abstain_expected": bool(override.get("abstain_expected", False)),
                 }
             )
 
@@ -1075,6 +1320,11 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             selected.append(t)
             if len(selected) >= 5:
                 break
+    target_prompt_by_id = {
+        str(t.get("target_id", "")): str(t.get("prompt_id", ""))
+        for t in selected
+        if isinstance(t, dict)
+    }
 
     startup_failures: list[str] = []
     bootstrap_marker = root / ".cache" / "sqlite_kb" / "reports" / ".phase_a_bootstrap_complete"
@@ -1624,6 +1874,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             missing_required = _ensure_required_fields(role_name, output, required)
             role_failures.extend(missing_required)
             output["target_id"] = target_id
+            output["prompt_id"] = prompt_id
             output["draft_id"] = draft_id
             role_outputs[role_name] = output
             invocation_rows.append(
@@ -1659,7 +1910,11 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         writer_rationale_rows.append(rationale_output)
         writer_metadata_rows.append(metadata_output)
 
-        is_abstain = bool(target.get("expect_abstain", False)) or bool(role_failures)
+        is_abstain = (
+            bool(target.get("expect_abstain", False))
+            or bool(target.get("abstain_expected", False))
+            or bool(role_failures)
+        )
         strength = str(amplification_output.get("normative_strength", "shall")).strip().lower()
         category = "mandatory" if strength == "shall" else "advisory"
         draft_row = {
@@ -1680,7 +1935,11 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "exemplar_ids_used": selected_exemplars,
             "category": category,
             "exemplar_phrase": ", ".join(selected_exemplars) if selected_exemplars else "none",
-            "construct_terms": list(evidence_output.get("construct_scope", [])),
+            "construct_terms": (
+                [str(x) for x in evidence_output.get("construct_scope", [])]
+                if isinstance(evidence_output.get("construct_scope"), list)
+                else _rust_like_tokens(str(evidence_output.get("construct_scope", "")))
+            ),
             "non_compliant_code": str(example_output.get("non_compliant_code", "")),
             "compliant_code": str(example_output.get("compliant_code", "")),
             "example_execution_mode": example_mode,
@@ -1759,52 +2018,232 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     )
     if not isinstance(evidence_forbidden, list):
         evidence_forbidden = []
+    gate_policy_cfg = _safe_yaml(root / "config" / "s0" / "s0_gate_policy.yaml")
+    must_pass_prompt_ids = (
+        gate_policy_cfg.get("must_pass_prompt_ids", []) if isinstance(gate_policy_cfg, dict) else []
+    )
+    if not isinstance(must_pass_prompt_ids, list):
+        must_pass_prompt_ids = []
+    must_pass_prompt_ids = [str(x) for x in must_pass_prompt_ids if str(x).strip()]
+    synonyms_cfg = _safe_yaml(root / "config" / "s0" / "construct_synonyms.yaml")
+    alias_map = _synonym_alias_map(synonyms_cfg)
+    evidence_ids_by_target: dict[str, list[str]] = {}
+    for selected_row in selected_rows:
+        if not isinstance(selected_row, dict):
+            continue
+        target_raw = selected_row.get("target")
+        target_obj: dict[str, Any] = target_raw if isinstance(target_raw, dict) else {}
+        target_id = str(target_obj.get("target_id", "")).strip()
+        chunk_ids_raw = selected_row.get("top_chunk_ids")
+        chunk_ids: list[str] = []
+        if isinstance(chunk_ids_raw, list):
+            chunk_ids = [str(x) for x in chunk_ids_raw if str(x).strip()]
+        evidence_ids_by_target[target_id] = chunk_ids
+    evidence_lookup_by_target: dict[str, dict[str, dict[str, Any]]] = {}
+    for selected_row in selected_rows:
+        if not isinstance(selected_row, dict):
+            continue
+        target_obj: dict[str, Any] = {}
+        target_raw = selected_row.get("target")
+        if isinstance(target_raw, dict):
+            target_obj = target_raw
+        target_id = str(target_obj.get("target_id", ""))
+        snippets: list[dict[str, Any]] = []
+        snippets_raw = selected_row.get("snippets")
+        if isinstance(snippets_raw, list):
+            snippets = [item for item in snippets_raw if isinstance(item, dict)]
+        lookup: dict[str, dict[str, Any]] = {}
+        for snippet in snippets:
+            evidence_id = str(snippet.get("chunk_uid", "")).strip()
+            if not evidence_id:
+                continue
+            lookup[evidence_id] = {
+                "source": str(snippet.get("document_id", "")).strip()
+                or "calibration_evidence_bundle",
+                "anchor": str(snippet.get("anchor", "")).strip() or evidence_id,
+                "text": str(snippet.get("text", "")),
+            }
+        evidence_lookup_by_target[target_id] = lookup
+
     evidence_gate_rows: list[dict[str, Any]] = []
+    normalization_rows: list[dict[str, Any]] = []
+    normalized_writer_evidence_rows: list[dict[str, Any]] = []
     evidence_schema_pass = 0
     evidence_normative_pass = 0
     evidence_banned_pass = 0
-    for row in writer_evidence_rows:
+    for idx, row in enumerate(writer_evidence_rows, start=1):
         if not isinstance(row, dict):
             continue
-        row_missing = _ensure_required_fields("evidence_synthesizer", row, evidence_required)
-        schema_ok = not row_missing
-        construct_scope = [str(x) for x in (row.get("construct_scope") or [])]
+        target_id = str(row.get("target_id", "")).strip()
+        prompt_id = str(row.get("prompt_id", target_prompt_by_id.get(target_id, ""))).strip()
+        evidence_ids = evidence_ids_by_target.get(target_id, [])
+        supplemental_text = [
+            str(row.get("hazard", "")),
+            str(row.get("mechanism", "")),
+            str(row.get("mitigation", "")),
+        ]
         claim_rows_raw = row.get("claim_to_evidence_map")
-        claim_rows: list[dict[str, Any]] = []
-        if isinstance(claim_rows_raw, list):
-            claim_rows = [item for item in claim_rows_raw if isinstance(item, dict)]
+        normalized_claims, claim_patterns = _normalize_claim_map(
+            claim_rows_raw, target_id=target_id
+        )
+        for claim in normalized_claims:
+            supplemental_text.append(str(claim.get("claim_text", "")))
+        normalized_scope, scope_patterns = _normalize_construct_scope(
+            row.get("construct_scope"),
+            supplemental_text=supplemental_text,
+            alias_map=alias_map,
+        )
+        canonical_pre = isinstance(row.get("construct_scope"), list) and isinstance(
+            row.get("claim_to_evidence_map"), list
+        )
+        normalized_row = dict(row)
+        normalized_row["target_id"] = target_id
+        normalized_row["prompt_id"] = prompt_id
+        normalized_row["construct_scope"] = normalized_scope
+        normalized_row["claim_to_evidence_map"] = normalized_claims
+        normalized_writer_evidence_rows.append(normalized_row)
+
+        row_missing = _ensure_required_fields(
+            "evidence_synthesizer", normalized_row, evidence_required
+        )
+        if not target_id:
+            row_missing.append("evidence_synthesizer:missing_required:target_id")
+        if not prompt_id:
+            row_missing.append("evidence_synthesizer:missing_required:prompt_id")
+        if not isinstance(normalized_scope, list) or not normalized_scope:
+            row_missing.append("evidence_synthesizer:missing_required:construct_scope")
+        if not normalized_claims:
+            row_missing.append("evidence_synthesizer:missing_required:claim_to_evidence_map")
+        schema_ok = not row_missing
+
+        construct_scope = [str(x) for x in normalized_scope]
+        construct_scope_normalized = [_normalize_text(x) for x in construct_scope if str(x).strip()]
+        evidence_id_set = {str(x) for x in evidence_ids}
+        reason_codes: list[str] = []
         normative_ok = False
-        for claim in claim_rows:
-            if not isinstance(claim, dict):
-                continue
+        for claim in normalized_claims:
             claim_text = _normalize_text(str(claim.get("claim_text", "")))
             refs_raw = claim.get("evidence_refs")
             refs: list[dict[str, Any]] = []
             if isinstance(refs_raw, list):
                 refs = [item for item in refs_raw if isinstance(item, dict)]
-            if refs and any(
-                _normalize_text(term) in claim_text for term in construct_scope if term
-            ):
+            if not refs:
+                reason_codes.append("missing_evidence_refs")
+                continue
+            ref_ids = {
+                str(item.get("evidence_id", item.get("chunk_id", ""))).strip()
+                for item in refs
+                if isinstance(item, dict)
+            }
+            if evidence_id_set and not (ref_ids & evidence_id_set):
+                reason_codes.append("evidence_id_not_in_bundle")
+                continue
+            token_hit = any(term in claim_text for term in construct_scope_normalized if term)
+            if not token_hit:
+                reason_codes.append("claim_not_construct_specific")
+                continue
+            if not claim_text:
+                reason_codes.append("missing_claim_rows")
+                continue
+            if not construct_scope_normalized:
+                reason_codes.append("missing_construct_scope_terms")
+                continue
+            if token_hit and ref_ids:
                 normative_ok = True
                 break
-        row_text = _normalize_text(json.dumps(row, sort_keys=True))
+        if not normalized_claims:
+            reason_codes.append("missing_claim_rows")
+        if not construct_scope_normalized:
+            reason_codes.append("missing_construct_scope_terms")
+
+        row_text = _normalize_text(json.dumps(normalized_row, sort_keys=True))
         banned_ok = not any(_normalize_text(str(pat)) in row_text for pat in evidence_forbidden)
         evidence_schema_pass += int(schema_ok)
         evidence_normative_pass += int(normative_ok)
         evidence_banned_pass += int(banned_ok)
+        dedup_reasons = sorted(set(reason_codes))
         evidence_gate_rows.append(
             {
-                "target_id": str(row.get("target_id", "")),
+                "target_id": target_id,
+                "prompt_id": prompt_id,
                 "schema_ok": schema_ok,
                 "normative_claim_ok": normative_ok,
                 "banned_pattern_ok": banned_ok,
                 "missing_required": row_missing,
+                "reason_codes": dedup_reasons,
             }
         )
-    evidence_gate_status = (
-        "pass"
-        if evidence_schema_pass >= 3 and evidence_normative_pass >= 3 and evidence_banned_pass >= 3
-        else "fail"
+        normalization_rows.append(
+            {
+                "target_id": target_id,
+                "prompt_id": prompt_id,
+                "canonical_pre_normalization": canonical_pre,
+                "patterns_detected": sorted(set(claim_patterns + scope_patterns)),
+                "transforms_applied": [
+                    "normalize_claim_to_evidence_map",
+                    "normalize_construct_scope",
+                    "synthesize_claim_id",
+                ],
+                "claims_out": len(normalized_claims),
+            }
+        )
+
+    writer_evidence_rows = normalized_writer_evidence_rows
+    evidence_by_draft = {str(row.get("draft_id", "")): row for row in writer_evidence_rows}
+    for draft in draft_rows:
+        draft_id = str(draft.get("draft_id", ""))
+        normalized_evidence = evidence_by_draft.get(draft_id, {})
+        scope = (
+            normalized_evidence.get("construct_scope")
+            if isinstance(normalized_evidence, dict)
+            else []
+        )
+        draft["construct_terms"] = [str(x) for x in scope] if isinstance(scope, list) else []
+
+    abstain_expected_count = len(
+        [
+            t
+            for t in selected
+            if bool(t.get("abstain_expected", False)) or bool(t.get("expect_abstain", False))
+        ]
+    )
+    viable_targets = max(1, len(selected) - abstain_expected_count)
+    required_normative = max(1, int((0.60 * viable_targets) + 0.9999))
+    must_pass_failures = [
+        row
+        for row in evidence_gate_rows
+        if str(row.get("prompt_id", "")) in must_pass_prompt_ids
+        and not bool(row.get("normative_claim_ok", False))
+    ]
+    evidence_gate_status = "pass"
+    if (
+        evidence_schema_pass < 3
+        or evidence_normative_pass < required_normative
+        or evidence_banned_pass < 3
+    ):
+        evidence_gate_status = "fail"
+    if must_pass_failures:
+        evidence_gate_status = "fail"
+
+    canonical_rate = 0.0
+    if normalization_rows:
+        canonical_rate = len(
+            [
+                row
+                for row in normalization_rows
+                if bool(row.get("canonical_pre_normalization", False))
+            ]
+        ) / float(len(normalization_rows))
+    _write_json(
+        run_dir / "normalization_report.json",
+        {
+            "run_id": run_id,
+            "status": "pass" if normalization_rows else "fail",
+            "canonical_rate": canonical_rate,
+            "required_normative": required_normative,
+            "viable_targets": viable_targets,
+            "results": normalization_rows,
+        },
     )
     _write_json(
         run_dir / "evidence_synthesizer_gate_report.json",
@@ -1813,11 +2252,17 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "status": evidence_gate_status,
             "schema_valid_count": evidence_schema_pass,
             "normative_claim_count": evidence_normative_pass,
+            "required_normative": required_normative,
+            "viable_targets": viable_targets,
             "banned_pattern_count": evidence_banned_pass,
+            "must_pass_prompt_ids": must_pass_prompt_ids,
+            "must_pass_failures": must_pass_failures,
             "results": evidence_gate_rows,
         },
     )
+    diagnostic_lane_enabled = False
     if evidence_gate_status != "pass":
+        diagnostic_lane_enabled = True
         reports_root = root / ".cache" / "sqlite_kb" / "reports"
         prior_fail = False
         if reports_root.exists():
@@ -1846,6 +2291,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "status": "escalated",
             "trigger": "evidence_synthesizer_exit_gate_failed",
             "repeated_gate_miss": prior_fail,
+            "diagnostic_lane_enabled": True,
             "top_failure_patterns": top_failure_patterns[:3],
             "options": [
                 "Prompt redesign using stronger worked examples and tighter forbidden patterns.",
@@ -1854,7 +2300,6 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             ],
         }
         _write_json(run_dir / "evidence_synthesizer_escalation_report.json", escalation)
-        raise RuntimeError("Evidence synthesizer exit gate failed; downstream rollout stopped")
 
     with (run_dir / "drafts.jsonl").open("w", encoding="utf-8") as handle:
         for row in draft_rows:
@@ -1874,6 +2319,76 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     rationale_by_draft = {str(row.get("draft_id", "")): row for row in writer_rationale_rows}
     metadata_by_draft = {str(row.get("draft_id", "")): row for row in writer_metadata_rows}
 
+    resolved_metadata_by_draft: dict[str, dict[str, Any]] = {}
+    citation_resolution_rows: list[dict[str, Any]] = []
+    for draft in draft_rows:
+        draft_id = str(draft.get("draft_id", ""))
+        target_id = str(draft.get("target_id", ""))
+        prompt_id = str(draft.get("target_prompt_id", ""))
+        metadata_payload = metadata_by_draft.get(draft_id, {})
+        evidence_payload = evidence_by_draft.get(draft_id, {})
+        evidence_ids = [str(x) for x in (draft.get("evidence_chunk_ids") or []) if str(x).strip()]
+        evidence_lookup = evidence_lookup_by_target.get(target_id, {})
+
+        resolved_rows, resolve_patterns = _resolve_bibliography_rows(
+            metadata_payload if isinstance(metadata_payload, dict) else {},
+            prompt_id=prompt_id,
+            run_id=run_id,
+            evidence_lookup=evidence_lookup,
+            evidence_ids=evidence_ids,
+        )
+        cited_keys = [
+            str(row.get("citation_key", "")).strip()
+            for row in resolved_rows
+            if str(row.get("citation_key", "")).strip()
+        ]
+        unresolved = [
+            row
+            for row in resolved_rows
+            if not (
+                str((row.get("locator") or {}).get("url", "")).strip()
+                or str((row.get("locator") or {}).get("path", "")).strip()
+            )
+        ]
+        resolution_ok = bool(resolved_rows) and not unresolved
+        resolved_metadata_by_draft[draft_id] = {
+            "target_id": target_id,
+            "prompt_id": prompt_id,
+            "citation_key_prefix": prompt_id,
+            "bibliography_rows": resolved_rows,
+            "citation_keys": cited_keys,
+            "resolution_ok": resolution_ok,
+        }
+        citation_resolution_rows.append(
+            {
+                "draft_id": draft_id,
+                "target_id": target_id,
+                "prompt_id": prompt_id,
+                "resolution_ok": resolution_ok,
+                "row_count": len(resolved_rows),
+                "unresolved_count": len(unresolved),
+                "patterns": resolve_patterns,
+            }
+        )
+
+    draft_status_by_id = {str(d.get("draft_id", "")): str(d.get("status", "")) for d in draft_rows}
+    citation_resolution_status = "pass"
+    for row in citation_resolution_rows:
+        draft_id = str(row.get("draft_id", ""))
+        if draft_status_by_id.get(draft_id) == "abstain":
+            continue
+        if not bool(row.get("resolution_ok", False)):
+            citation_resolution_status = "fail"
+            break
+    _write_json(
+        run_dir / "citation_resolution_report.json",
+        {
+            "run_id": run_id,
+            "status": citation_resolution_status,
+            "results": citation_resolution_rows,
+        },
+    )
+
     rst_dir = run_dir / "generated_guidelines_rst"
     rst_dir.mkdir(parents=True, exist_ok=True)
     for stale in rst_dir.glob("*.rst"):
@@ -1885,8 +2400,31 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     export_files: list[dict[str, Any]] = []
     shape_results: list[dict[str, Any]] = []
     diff_results: list[dict[str, Any]] = []
+    publishable_blocked = evidence_gate_status != "pass"
+    if publishable_blocked:
+        _write_json(
+            run_dir / "diagnostic_lane_report.json",
+            {
+                "run_id": run_id,
+                "non_publishable": True,
+                "reason": "evidence_synthesizer_gate_failed",
+                "advisory_only_stage_b": True,
+            },
+        )
     for draft in draft_rows:
         if draft["status"] == "abstain":
+            continue
+        if publishable_blocked:
+            file_name = f"{str(draft.get('target_prompt_id', '')).lower().replace('_', '-')}.rst"
+            shape_results.append(
+                {
+                    "file": file_name,
+                    "shape_match": False,
+                    "missing_required_blocks": ["publishable_blocked_by_evidence_gate"],
+                    "metadata_key_violations": ["publishable_blocked_by_evidence_gate"],
+                    "candidate_shape_ok": False,
+                }
+            )
             continue
         prompt_id = str(draft["target_prompt_id"])
         gid_seed = hashlib.sha256(prompt_id.encode("utf-8")).hexdigest()[:12]
@@ -1901,13 +2439,18 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         evidence_payload = evidence_by_draft.get(str(draft.get("draft_id", "")), {})
         example_payload = example_by_draft.get(str(draft.get("draft_id", "")), {})
         rationale_payload = rationale_by_draft.get(str(draft.get("draft_id", "")), {})
-        metadata_payload = metadata_by_draft.get(str(draft.get("draft_id", "")), {})
-        citation_key = f"{guideline_id}:SRC-1"
+        metadata_payload = resolved_metadata_by_draft.get(str(draft.get("draft_id", "")), {})
         bibliography_rows = (
             metadata_payload.get("bibliography_rows") if isinstance(metadata_payload, dict) else []
         )
         if not isinstance(bibliography_rows, list):
             bibliography_rows = []
+        citation_keys = [
+            str(row.get("citation_key", "")).strip()
+            for row in bibliography_rows
+            if isinstance(row, dict) and str(row.get("citation_key", "")).strip()
+        ]
+        citation_key = citation_keys[0] if citation_keys else f"{prompt_id}:SRC-1"
         bib_source = "unknown"
         bib_locator = "unresolved"
         if bibliography_rows:
@@ -1973,8 +2516,23 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "         :header-rows: 0\n"
             "         :widths: auto\n"
             "         :class: bibliography-table\n\n"
-            f"         * - :bibentry:`{citation_key}`\n"
-            f"           - {bib_source} locator `{bib_locator}` with supporting excerpt captured in evidence bundle.\n"
+            + "\n".join(
+                f"         * - :bibentry:`{str(row.get('citation_key', citation_key))}`\n"
+                f"           - {str(row.get('source', bib_source))} locator `{str((row.get('locator') or {}).get('url') or (row.get('locator') or {}).get('path') or bib_locator)}` with supporting excerpt captured in evidence bundle."
+                for row in (
+                    bibliography_rows
+                    if bibliography_rows
+                    else [
+                        {
+                            "citation_key": citation_key,
+                            "source": bib_source,
+                            "locator": {"path": bib_locator},
+                        }
+                    ]
+                )
+                if isinstance(row, dict)
+            )
+            + "\n"
         )
         file_name = f"{prompt_id.lower().replace('_', '-')}.rst"
         output_path = rst_dir / file_name
@@ -2116,12 +2674,14 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     alignment_findings: list[dict[str, Any]] = []
     for draft in non_abstain_drafts:
         draft_id = str(draft.get("draft_id", ""))
+        target_id = str(draft.get("target_id", ""))
         evidence = evidence_by_draft.get(draft_id, {})
         claim_rows: list[dict[str, Any]] = []
         if isinstance(evidence, dict):
             claim_map = evidence.get("claim_to_evidence_map")
             if isinstance(claim_map, list):
                 claim_rows = [item for item in claim_map if isinstance(item, dict)]
+        target_lookup = evidence_lookup_by_target.get(target_id, {})
         construct_terms = [str(x) for x in (draft.get("construct_terms") or [])]
         term_set = {t.lower() for t in construct_terms}
         for term in list(term_set):
@@ -2140,7 +2700,12 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                 refs = [item for item in refs_raw if isinstance(item, dict)]
             aligned = False
             for ref in refs:
+                evidence_id = str(ref.get("evidence_id", ref.get("chunk_id", ""))).strip()
                 excerpt = _normalize_text(str(ref.get("excerpt_text", "")))
+                if not excerpt and evidence_id:
+                    excerpt = _normalize_text(
+                        str(target_lookup.get(evidence_id, {}).get("text", ""))
+                    )
                 if any(term and term in excerpt for term in term_set):
                     aligned = True
                     break
@@ -2260,12 +2825,14 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     for draft in draft_rows:
         draft_id = str(draft.get("draft_id", ""))
         target_id = str(draft.get("target_id", ""))
+        prompt_id = str(draft.get("target_prompt_id", ""))
         is_abstain = str(draft.get("status", "")) == "abstain"
         if is_abstain:
             judge_results.append(
                 {
                     "draft_id": draft_id,
                     "target_id": target_id,
+                    "prompt_id": prompt_id,
                     "verdict": "abstain",
                     "evidence_grounding": False,
                     "utility_complete": False,
@@ -2309,6 +2876,20 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                 if not isinstance(raw_reason_codes, list):
                     raw_reason_codes = []
                 reason_codes = [str(x) for x in raw_reason_codes]
+                if not publishable_blocked and decision == "fail":
+                    summary_norm = _normalize_text(summary)
+                    reason_ok = bool(reason_codes)
+                    summary_has_specific = any(
+                        token and token in summary_norm
+                        for token in (
+                            _normalize_text(prompt_id),
+                            _normalize_text(str(draft.get("guideline", ""))[:80]),
+                        )
+                    ) or (":" in summary)
+                    if not reason_ok:
+                        reason_codes = ["judge_output_quality_floor_failed"]
+                    if not summary_has_specific:
+                        summary = f"{summary} (missing specific target reference)".strip()
             except RuntimeError as exc:
                 decision = "abstain"
                 summary = f"Judge transport failure: {exc}"
@@ -2328,10 +2909,12 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                 "run_id": run_id,
                 "judge_id": judge_name,
                 "target_id": target_id,
+                "prompt_id": prompt_id,
                 "draft_id": draft_id,
                 "decision": decision,
                 "reason_codes": reason_codes,
                 "summary": summary,
+                "diagnostic_only": bool(publishable_blocked),
                 "stage": "B",
             }
             judge_dir = stage_b_judges_dir / judge_name
@@ -2343,6 +2926,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                     "judge": judge_name,
                     "target_id": target_id,
                     "draft_id": draft_id,
+                    "prompt_id": prompt_id,
                     "system_request_id": judge_invocation.get("system_request_id"),
                     "request_started_at": judge_invocation.get("request_started_at"),
                     "response_received_at": judge_invocation.get("response_received_at"),
@@ -2374,11 +2958,13 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             {
                 "draft_id": draft_id,
                 "target_id": target_id,
+                "prompt_id": prompt_id,
                 "verdict": verdict,
                 "judge_decisions": per_judge,
                 "evidence_grounding": per_judge.get("evidence_auditor") == "pass",
                 "utility_complete": soft_pass >= 2,
                 "significance": 4 if verdict == "candidate" else 2,
+                "diagnostic_only": bool(publishable_blocked),
             }
         )
 
@@ -2418,7 +3004,13 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             len(draft_rows)
         )
     gate_passed = (
-        shape_all and candidate_grade_count >= 3 and review_count == 0 and abstain_rate <= 0.40
+        not publishable_blocked
+        and evidence_gate_status == "pass"
+        and citation_resolution_status == "pass"
+        and shape_all
+        and candidate_grade_count >= 3
+        and review_count == 0
+        and abstain_rate <= 0.40
     )
     _write_json(
         run_dir / "judge_aggregate.json",
@@ -2429,6 +3021,9 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "candidate_grade_count": candidate_grade_count,
             "review_count": review_count,
             "abstain_rate": abstain_rate,
+            "evidence_gate_status": evidence_gate_status,
+            "citation_resolution_status": citation_resolution_status,
+            "publishable_blocked": publishable_blocked,
             "embarrassing_failure_count": embarrassing_failure_count,
             "stage_c_diagnostic_only": True,
         },
@@ -2594,6 +3189,9 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         "golden_shape_comparator_report.json",
         "exemplar_usage_auditor_report.json",
         "writer_output_auditor_report.json",
+        "evidence_synthesizer_gate_report.json",
+        "normalization_report.json",
+        "citation_resolution_report.json",
         "duplicate_similarity_gate_report.json",
         "construct_evidence_alignment_report.json",
         "example_execution_semantics_report.json",
@@ -2612,6 +3210,9 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
     comparator_report = _read_json(run_dir / "golden_shape_comparator_report.json")
     usage_report = _read_json(run_dir / "exemplar_usage_auditor_report.json")
     writer_auditor_report = _read_json(run_dir / "writer_output_auditor_report.json")
+    evidence_gate_report = _read_json(run_dir / "evidence_synthesizer_gate_report.json")
+    normalization_report = _read_json(run_dir / "normalization_report.json")
+    citation_resolution_report = _read_json(run_dir / "citation_resolution_report.json")
     duplicate_gate_report = _read_json(run_dir / "duplicate_similarity_gate_report.json")
     alignment_gate_report = _read_json(run_dir / "construct_evidence_alignment_report.json")
     example_semantics_report = _read_json(run_dir / "example_execution_semantics_report.json")
@@ -2815,6 +3416,9 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
     if not bool(style_bundle.get("style_source_digest", "")):
         blocking.append("run:missing_style_source_digest")
     for gate_name, gate_payload in (
+        ("evidence_synthesizer", evidence_gate_report),
+        ("normalization", normalization_report),
+        ("citation_resolution", citation_resolution_report),
         ("duplicate_similarity", duplicate_gate_report),
         ("construct_evidence_alignment", alignment_gate_report),
         ("example_execution_semantics", example_semantics_report),

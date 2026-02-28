@@ -2,6 +2,10 @@ version: 1
 rewrite_mode: auto
 top_k: 10
 candidate_limit: 5000
+must_pass_prompt_ids:
+  - CORE-CONC-003
+  - CORE-SAFE-003
+  - RET-ISSUE-005
 dedup:
 - span_hash
 - normalized_excerpt_hash
