@@ -11,9 +11,6 @@ from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib import error as url_error
-from urllib import request as url_request
-
 import yaml
 
 
@@ -139,18 +136,7 @@ def _ensure_required_fields(role: str, output: dict[str, Any], required: list[st
     return [f"{role}:missing_required:{key}" for key in missing]
 
 
-def _http_json_post(
-    url: str, headers: dict[str, str], payload: dict[str, Any], timeout_s: int
-) -> dict[str, Any]:
-    body = json.dumps(payload).encode("utf-8")
-    req = url_request.Request(url=url, data=body, headers=headers, method="POST")
-    with url_request.urlopen(req, timeout=timeout_s) as resp:
-        raw = resp.read().decode("utf-8")
-    parsed = json.loads(raw)
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _call_openai_compatible(
+def _call_opencode_cli(
     *,
     role: str,
     prompt: str,
@@ -158,34 +144,64 @@ def _call_openai_compatible(
     temperature: float,
     timeout_s: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    api_key = str(os.environ.get("OPENAI_API_KEY", "")).strip()
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is required for real writer/judge calls")
-    api_base = str(os.environ.get("S0_LLM_API_BASE", "https://api.openai.com/v1")).rstrip("/")
-    endpoint = str(os.environ.get("S0_LLM_CHAT_ENDPOINT", "chat/completions")).lstrip("/")
-    url = f"{api_base}/{endpoint}"
+    _ = temperature
     request_started_at = datetime.now(UTC).isoformat()
     request_id = f"sysreq::{uuid.uuid4().hex[:20]}"
-    payload = {
-        "model": model,
-        "temperature": temperature,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": f"You are {role}. Output valid JSON only."},
-            {"role": "user", "content": prompt},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    system_prompt = (
+        f"You are {role}. Output one valid JSON object only. "
+        "Do not include markdown fences or explanatory text."
+    )
+    command = ["opencode", "run", "--format", "json", "--agent", "plan"]
+    model_value = model.strip()
+    if model_value:
+        command.extend(["--model", model_value])
+    command.append(f"{system_prompt}\n\n{prompt}")
     try:
-        raw = _http_json_post(url, headers, payload, timeout_s)
-        choices = raw.get("choices") if isinstance(raw, dict) else []
-        content = ""
-        if isinstance(choices, list) and choices:
-            message = choices[0].get("message") if isinstance(choices[0], dict) else {}
-            content = str((message or {}).get("content", ""))
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+        if completed.returncode != 0:
+            stderr_text = completed.stderr.strip()
+            raise RuntimeError(
+                f"opencode_run_failed: rc={completed.returncode} stderr={stderr_text}"
+            )
+        content_parts: list[str] = []
+        provider_message_id: str | None = None
+        provider_token_usage: dict[str, Any] | None = None
+        for line in completed.stdout.splitlines():
+            raw_line = line.strip()
+            if not raw_line:
+                continue
+            event = json.loads(raw_line)
+            if not isinstance(event, dict):
+                continue
+            event_type = str(event.get("type", ""))
+            if event_type == "text":
+                part_raw = event.get("part")
+                part: dict[str, Any] = part_raw if isinstance(part_raw, dict) else {}
+                text = str(part.get("text", ""))
+                if text:
+                    content_parts.append(text)
+                metadata_raw = part.get("metadata")
+                metadata: dict[str, Any] = metadata_raw if isinstance(metadata_raw, dict) else {}
+                openai_meta_raw = metadata.get("openai")
+                openai_meta: dict[str, Any] = (
+                    openai_meta_raw if isinstance(openai_meta_raw, dict) else {}
+                )
+                item_id = str(openai_meta.get("itemId", "")).strip()
+                if item_id:
+                    provider_message_id = item_id
+            if event_type == "step_finish":
+                part_raw = event.get("part")
+                part: dict[str, Any] = part_raw if isinstance(part_raw, dict) else {}
+                tokens = part.get("tokens")
+                if isinstance(tokens, dict):
+                    provider_token_usage = tokens
+        content = "\n".join(content_parts).strip()
         if not content.strip():
             raise RuntimeError("LLM response was empty")
         output = _extract_json_object(content)
@@ -197,13 +213,14 @@ def _call_openai_compatible(
             "prompt_digest": _canonical_digest(prompt),
             "response_digest": _canonical_digest(content),
             "transport_status": "ok",
-            "provider_model": str(raw.get("model", model)),
-            "provider_message_id": raw.get("id"),
-            "provider_token_usage": raw.get("usage"),
+            "provider_model": model_value or "opencode/default",
+            "provider_message_id": provider_message_id,
+            "provider_token_usage": provider_token_usage,
+            "transport_backend": "opencode_cli",
         }
         return output, invocation
     except (
-        url_error.URLError,
+        subprocess.SubprocessError,
         TimeoutError,
         json.JSONDecodeError,
         ValueError,
@@ -218,7 +235,8 @@ def _call_openai_compatible(
             "response_digest": "",
             "transport_status": f"error:{type(exc).__name__}",
             "error": str(exc),
-            "provider_model": model,
+            "provider_model": model_value or "opencode/default",
+            "transport_backend": "opencode_cli",
         }
         raise RuntimeError(json.dumps(invocation, sort_keys=True)) from exc
 
@@ -1038,6 +1056,8 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         targets = []
     writer_contracts = _safe_yaml(root / "config" / "s0" / "writer_prompt_contracts.yaml")
     judge_contracts = _safe_yaml(root / "config" / "s0" / "judge_prompt_contracts.yaml")
+    writer_model = str(os.environ.get("S0_WRITER_MODEL", "")).strip()
+    judge_model = str(os.environ.get("S0_JUDGE_MODEL", "")).strip() or writer_model
 
     # Deterministic calibration subset using prompts that approximate difficult/weak scenarios.
     preferred_ids = {
@@ -1084,17 +1104,73 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     stage_b_stub_marker = '"score":' + " 0.9 if verdict"
     if stage_b_stub_marker in source_text:
         startup_failures.append("startup_checklist:stage_b_fixed_score_stub_detected")
-    existing = [
-        p.name
-        for p in run_dir.iterdir()
-        if p.name
-        not in {
-            "targets.json",
-            "targets_digest",
-            "core_docs_eval_report.json",
-            "rust_reference_eval_report.json",
-        }
-    ]
+    try:
+        version_probe = subprocess.run(
+            ["opencode", "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if version_probe.returncode != 0:
+            startup_failures.append("startup_checklist:opencode_cli_unavailable")
+    except (subprocess.SubprocessError, OSError):
+        startup_failures.append("startup_checklist:opencode_cli_unavailable")
+    try:
+        probe_command = ["opencode", "run", "--format", "json", "--agent", "plan"]
+        if writer_model:
+            probe_command.extend(["--model", writer_model])
+        probe_command.append(
+            'Return exactly this JSON object and nothing else: {"opencode_health":"ok"}'
+        )
+        model_probe = subprocess.run(
+            probe_command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if model_probe.returncode != 0:
+            startup_failures.append("startup_checklist:opencode_model_routing_unavailable")
+        else:
+            probe_text_parts: list[str] = []
+            for line in model_probe.stdout.splitlines():
+                raw_line = line.strip()
+                if not raw_line:
+                    continue
+                parsed_line = json.loads(raw_line)
+                if not isinstance(parsed_line, dict):
+                    continue
+                if str(parsed_line.get("type", "")) != "text":
+                    continue
+                part_raw = parsed_line.get("part")
+                part = part_raw if isinstance(part_raw, dict) else {}
+                text = str(part.get("text", ""))
+                if text:
+                    probe_text_parts.append(text)
+            probe_content = "\n".join(probe_text_parts).strip()
+            try:
+                probe_json = _extract_json_object(probe_content)
+            except (ValueError, json.JSONDecodeError):
+                probe_json = {}
+            if str(probe_json.get("opencode_health", "")) != "ok":
+                startup_failures.append("startup_checklist:opencode_non_interactive_probe_failed")
+    except (subprocess.SubprocessError, OSError):
+        startup_failures.append("startup_checklist:opencode_model_routing_unavailable")
+    allowed_run_artifacts = {
+        "targets.json",
+        "targets_digest",
+        "core_docs_eval_report.json",
+        "rust_reference_eval_report.json",
+        "doctor_report.json",
+        "doctor_quality_minimums_report.json",
+        "worked_example_validation_report.json",
+        "prompt_contract_validation_report.json",
+        "catalog_smoke_report.json",
+        "build_env_fingerprint.json",
+        "embedding_backend_fingerprint.json",
+    }
+    existing = [p.name for p in run_dir.iterdir() if p.name not in allowed_run_artifacts]
     if existing:
         startup_failures.append("startup_checklist:run_artifact_root_not_clean")
     startup_report = {
@@ -1454,7 +1530,6 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         if isinstance(runtime_cfg, dict)
         else "runnable"
     )
-    writer_model = str(os.environ.get("S0_WRITER_MODEL", "gpt-5.3-codex"))
     writer_timeout = int(str(os.environ.get("S0_WRITER_TIMEOUT_SECONDS", "90")))
 
     style_excerpt = "\n".join(style_text.splitlines()[:80])
@@ -1523,7 +1598,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             )
             prompt_template_id, _prompt_template_digest = _role_prompt(role_name)
             try:
-                output, invocation = _call_openai_compatible(
+                output, invocation = _call_opencode_cli(
                     role=role_name,
                     prompt=rendered_prompt,
                     model=writer_model,
@@ -1543,6 +1618,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                         "prompt_digest": _canonical_digest(rendered_prompt),
                         "response_digest": "",
                         "transport_status": "error",
+                        "transport_backend": "opencode_cli",
                     }
                 )
             missing_required = _ensure_required_fields(role_name, output, required)
@@ -1564,6 +1640,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                     "request_started_at": invocation.get("request_started_at"),
                     "response_received_at": invocation.get("response_received_at"),
                     "transport_status": invocation.get("transport_status", "unknown"),
+                    "transport_backend": invocation.get("transport_backend", "opencode_cli"),
                     "provider_model": invocation.get("provider_model", writer_model),
                     "provider_message_id": invocation.get("provider_message_id"),
                     "provider_token_usage": invocation.get("provider_token_usage"),
@@ -1740,26 +1817,44 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "results": evidence_gate_rows,
         },
     )
-    plan_day_zero = datetime(2026, 2, 27, tzinfo=UTC)
-    days_since_plan = (datetime.now(UTC) - plan_day_zero).days
-    if evidence_gate_status != "pass" and days_since_plan >= 3:
+    if evidence_gate_status != "pass":
+        reports_root = root / ".cache" / "sqlite_kb" / "reports"
+        prior_fail = False
+        if reports_root.exists():
+            prior_runs = sorted(
+                [p for p in reports_root.iterdir() if p.is_dir() and p.name != run_id],
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+            for prior in prior_runs:
+                prior_report = prior / "evidence_synthesizer_gate_report.json"
+                if not prior_report.exists():
+                    continue
+                prior_payload = _read_json(prior_report)
+                if str(prior_payload.get("status", "")) == "fail":
+                    prior_fail = True
+                break
+        top_failure_patterns: list[str] = []
+        if evidence_schema_pass < 3:
+            top_failure_patterns.append("schema_noncompliance")
+        if evidence_normative_pass < 3:
+            top_failure_patterns.append("missing_construct_specific_normative_claim")
+        if evidence_banned_pass < 3:
+            top_failure_patterns.append("forbidden_pattern_regression")
         escalation = {
             "run_id": run_id,
             "status": "escalated",
-            "trigger": "day3_evidence_synthesizer_gate_not_met",
-            "top_failure_patterns": [
-                "schema_noncompliance",
-                "missing_construct_specific_normative_claim",
-                "forbidden_pattern_regression",
-            ],
+            "trigger": "evidence_synthesizer_exit_gate_failed",
+            "repeated_gate_miss": prior_fail,
+            "top_failure_patterns": top_failure_patterns[:3],
             "options": [
                 "Prompt redesign using stronger worked examples and tighter forbidden patterns.",
                 "Model/decode adjustment for writer roles.",
                 "Temporary scope reduction of targets for prompt hardening validation.",
             ],
         }
-        _write_json(run_dir / "day3_escalation_report.json", escalation)
-        raise RuntimeError("Day-3 escalation triggered; downstream rollout stopped")
+        _write_json(run_dir / "evidence_synthesizer_escalation_report.json", escalation)
+        raise RuntimeError("Evidence synthesizer exit gate failed; downstream rollout stopped")
 
     with (run_dir / "drafts.jsonl").open("w", encoding="utf-8") as handle:
         for row in draft_rows:
@@ -2159,7 +2254,6 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         "usability_actionability",
         "exemplar_usage_auditor",
     }
-    judge_model = str(os.environ.get("S0_JUDGE_MODEL", writer_model))
     judge_timeout = int(str(os.environ.get("S0_JUDGE_TIMEOUT_SECONDS", "60")))
     judge_results: list[dict[str, Any]] = []
     judge_invocations: list[dict[str, Any]] = []
@@ -2194,7 +2288,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             summary = ""
             reason_codes: list[str] = []
             try:
-                judge_output, judge_invocation = _call_openai_compatible(
+                judge_output, judge_invocation = _call_opencode_cli(
                     role=judge_name,
                     prompt=judge_prompt,
                     model=judge_model,
@@ -2227,6 +2321,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                     "response_digest": "",
                     "transport_status": "error",
                     "provider_model": judge_model,
+                    "transport_backend": "opencode_cli",
                 }
 
             payload = {
@@ -2254,6 +2349,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                     "prompt_digest": judge_invocation.get("prompt_digest"),
                     "response_digest": judge_invocation.get("response_digest"),
                     "transport_status": judge_invocation.get("transport_status"),
+                    "transport_backend": judge_invocation.get("transport_backend", "opencode_cli"),
                 }
             )
 
@@ -2768,9 +2864,12 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
             "prompt_digest",
             "response_digest",
             "transport_status",
+            "transport_backend",
         ):
             if not str(inv.get(required_field, "")).strip():
                 blocking.append(f"run:missing_invocation_field:{role}:{required_field}")
+        if str(inv.get("transport_backend", "")).strip() != "opencode_cli":
+            blocking.append(f"run:invalid_transport_backend:{role}")
         digest = str(inv.get("prompt_digest", "")).strip()
         if digest:
             role_prompt_digests[role].add(digest)
