@@ -143,6 +143,7 @@ def parse_args() -> argparse.Namespace:
     calibration.add_argument("--run-id", default="")
     calibration.add_argument("--report-root", default="")
     calibration.add_argument("--no-reuse-existing", action="store_true")
+    calibration.add_argument("--resume", action="store_true")
 
     enforce = subparsers.add_parser("enforce-calibration-quality")
     enforce.add_argument("--run-id", required=True)

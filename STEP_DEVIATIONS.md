@@ -1,10 +1,10 @@
-# Step 4 Deviations
+# Step 5 Deviations
 
 ## Deviations
-- Implemented Step 4 judges as standalone modules in `scripts/judges_v2/` with direct retry-wrapper integration (`scripts.opencode_retry_wrapper`) instead of a shared `retrieval.services.llm_client` facade, because that facade is introduced in later extraction work.
-- Kept all Step 4 runtime wiring standalone (`run_scope_check.py`, `run_judges.py`, `validate_judge_calibration.py`) and did not modify `scripts/retrieval/services/s0_phase_a_service.py` or `gates/go_no_go.py`, per v17.2 deferred-monolith integration lock.
-- Evidence auditor re-run with renderer-fixed output was performed via standalone rendered-RST calibration artifacts (`judge_calibration_bad_rst_results.json`) rather than patching legacy evidence-auditor execution flow in the monolith.
+- Runtime target definitions are currently sourced from `data/query_testsets/*.yaml` in `run_enumerate_targets`; this step therefore staged new targets in both query testsets and `config/s0/s0_targets.yaml` metadata.
+- The step draft uses `scripts/sqlite_query.py --query ... --output-json`; current CLI uses `--query-text` and already emits JSON for retrieval modes, so coverage checks were executed with `--query-text`.
+- The step draft assumes per-target calibration invocation via `--targets`; current `scripts/sqlite_kb.py calibration-run` does not expose this option and enforces a 5-target bootstrap subset.
 
 ## Known Issues
-- Standalone judge runner supports `--judge-mode heuristic` for deterministic testability; this can underrepresent semantic quality compared to full LLM mode and should not be used for final quality decisions.
-- `s0_gate_policy.yaml` lane policy is declared, but legacy monolith output files may not yet emit dual-lane `publishable_decision` and `diagnostic_report` sections until Step 9 wiring.
+- Full `calibration-run` evidence synthesis on custom expanded subsets (`target_expansion_v17_newtargets2`, `target_expansion_v17_newtargets3`) exceeded practical step runtime limits; coverage validation completed, but evidence gate confirmation for the expanded subset remains pending.
+- The legacy monolith still hard-codes a 5-target bootstrap selection in `run_calibration_run`; expanded target definitions are staged for downstream integration but not yet consumed by the default bootstrap selection path.

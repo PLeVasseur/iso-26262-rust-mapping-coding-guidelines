@@ -71,6 +71,19 @@ prompts:
     target_scope: any
     expect_abstain: false
 
+  - prompt_id: CORE-ERR-001
+    category: ergonomics
+    slice: issue_identification
+    query_text: When should Result and Option avoid unwrap and use explicit error propagation?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [result, option, unwrap, expect, error, propagation]
+    expected_item_kinds: [method, enum]
+    required_evidence_fields: [item_path, panic_behavior, example_snippets]
+    target_scope: any
+    expect_abstain: false
+
   # Safety and panic contracts (5)
   - prompt_id: CORE-SAFE-001
     category: safety_panic
@@ -200,6 +213,19 @@ prompts:
     relevant_terms: [lock-free, counter, atomicusize, compare_exchange, ordering]
     expected_item_kinds: [struct, method]
     required_evidence_fields: [item_path, signature, example_snippets]
+    target_scope: any
+    expect_abstain: false
+
+  - prompt_id: CORE-PTR-001
+    category: concurrency
+    slice: issue_identification
+    query_text: What are safe usage patterns for Arc and Rc reference-counted pointers?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h, 1e]
+    relevant_terms: [arc, rc, clone, reference count, send, sync]
+    expected_item_kinds: [trait, struct, method]
+    required_evidence_fields: [item_path, safety_notes, example_snippets]
     target_scope: any
     expect_abstain: false
 

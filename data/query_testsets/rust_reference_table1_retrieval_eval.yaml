@@ -166,6 +166,14 @@ prompts:
     expected_row_markers: [1h]
     relevant_terms: [concurrency, thread, send, sync, verify]
 
+  - prompt_id: REF-UNSAFE-001
+    slice: issue_identification
+    query_text: What boundaries govern raw pointer dereference and transmute in unsafe Rust?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e, 1f]
+    relevant_terms: [raw pointer, transmute, unsafe, dereference, boundary]
+
   - prompt_id: RET-NEG-001
     slice: issue_identification
     query_text: zzzxxyyqqq qqqzzz nohits

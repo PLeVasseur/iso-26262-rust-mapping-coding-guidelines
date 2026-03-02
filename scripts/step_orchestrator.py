@@ -83,6 +83,8 @@ class StepResult:
     agent_signaled_complete: bool = False
     retry_of_rollback: bool = False
     run_log_path: str = ""
+    recoverable_timeout: bool = False
+    resume_hint: str = ""
 
 
 def _is_ignored_search_path(path: Path) -> bool:
@@ -447,6 +449,30 @@ def _discover_checkpoint_run_dir() -> Path | None:
     return None
 
 
+def _discover_step5_resume_candidate() -> Path | None:
+    reports_root = PIPELINE_ROOT / ".cache" / "sqlite_kb" / "reports"
+    if not reports_root.exists():
+        return None
+    candidates: list[Path] = []
+    for run_dir in reports_root.glob("target_expansion_v17*"):
+        if not run_dir.is_dir():
+            continue
+        if not (run_dir / "targets.json").exists():
+            continue
+        if not (run_dir / "calibration_target_rationale.json").exists():
+            continue
+        if (
+            not (run_dir / "core_docs_eval_report.json").exists()
+            and not (run_dir / "rust_reference_eval_report.json").exists()
+        ):
+            continue
+        candidates.append(run_dir)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
 def run_integration_checkpoint(checkpoint: str, run_dir: Path | None = None) -> tuple[bool, str]:
     script = PIPELINE_ROOT / "scripts" / "integration_checkpoint.py"
     if not script.exists():
@@ -576,6 +602,8 @@ def generate_step_review(step_n: int, result: StepResult) -> Path:
     ]
     if result.halt_reason:
         lines.append(f"**Halt Reason:** {result.halt_reason}")
+    if result.resume_hint:
+        lines.append(f"**Resume Hint:** {result.resume_hint}")
     if result.run_log_path:
         lines.append(f"**Run Log:** `{result.run_log_path}`")
     lines.extend([f"**Duration:** {result.duration_s:.0f}s", "", "## Machine Check Results", ""])
@@ -646,9 +674,12 @@ def generate_step_review(step_n: int, result: StepResult) -> Path:
         else:
             lines.append("**All steps complete.**")
     else:
-        lines.append(
-            f"**Step failed.** Re-run: `python scripts/step_orchestrator.py --step {step_n}`"
-        )
+        if result.recoverable_timeout and result.resume_hint:
+            lines.append(f"**Step paused (recoverable).** {result.resume_hint}")
+        else:
+            lines.append(
+                f"**Step failed.** Re-run: `python scripts/step_orchestrator.py --step {step_n}`"
+            )
 
     review_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"  review file: {review_path}")
@@ -675,6 +706,15 @@ def execute_step(step_n: int, is_retry: bool = False) -> StepResult:
     if exit_code == -1:
         result.status = "halt"
         result.halt_reason = f"STEP_TIMEOUT: {stderr}; see {result.run_log_path}"
+        if step_n == 5:
+            resume_dir = _discover_step5_resume_candidate()
+            if resume_dir is not None:
+                result.recoverable_timeout = True
+                result.resume_hint = (
+                    "Resume candidate detected at "
+                    f"`{resume_dir.relative_to(PIPELINE_ROOT)}`. "
+                    "Re-run Step 5 and reuse this run-id if prompted."
+                )
         result.duration_s = time.monotonic() - start
         return result
     if exit_code != 0:

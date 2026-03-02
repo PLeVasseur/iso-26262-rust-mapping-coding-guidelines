@@ -68,6 +68,107 @@ def _safe_yaml(path: Path) -> dict[str, Any]:
     return {}
 
 
+def _canonical_payload_digest(payload: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _build_calibration_fingerprint(
+    *,
+    mode: str,
+    profile: str,
+    targets_payload: dict[str, Any],
+    writer_contracts: dict[str, Any],
+    judge_contracts: dict[str, Any],
+    writer_model: str,
+    judge_model: str,
+) -> dict[str, Any]:
+    fingerprint = {
+        "schema_version": "calibration_resume_v1",
+        "mode": mode,
+        "profile": profile,
+        "targets_digest": _canonical_payload_digest(targets_payload),
+        "writer_contracts_digest": _canonical_payload_digest(writer_contracts),
+        "judge_contracts_digest": _canonical_payload_digest(judge_contracts),
+        "writer_model": writer_model,
+        "judge_model": judge_model,
+    }
+    return {
+        "schema_version": "calibration_resume_v1",
+        "fingerprint": fingerprint,
+        "fingerprint_digest": _canonical_payload_digest(fingerprint),
+    }
+
+
+def _is_allowed_resume_artifact(name: str) -> bool:
+    allowed_exact = {
+        "targets.json",
+        "targets_digest",
+        "startup_checklist_report.json",
+        "calibration_target_rationale.json",
+        "calibration_resume_fingerprint.json",
+        "resume_state.json",
+        "core_docs_eval_report.json",
+        "rust_reference_eval_report.json",
+        "doctor_report.json",
+        "doctor_quality_minimums_report.json",
+        "worked_example_validation_report.json",
+        "prompt_contract_validation_report.json",
+        "catalog_smoke_report.json",
+        "build_env_fingerprint.json",
+        "embedding_backend_fingerprint.json",
+        "golden_exemplar_lock_report.json",
+        "shape_validation_report.json",
+        "format_diff_report.json",
+        "golden_shape_comparator_report.json",
+        "exemplar_usage_auditor_report.json",
+        "writer_output_auditor_report.json",
+        "normalization_report.json",
+        "evidence_synthesizer_gate_report.json",
+        "citation_resolution_report.json",
+        "duplicate_similarity_gate_report.json",
+        "construct_evidence_alignment_report.json",
+        "example_execution_semantics_report.json",
+        "modality_category_consistency_report.json",
+        "judge_aggregate.json",
+        "run_budget_report.json",
+        "summary.json",
+        "README.md",
+        "calibration_report.json",
+        "quality_report.json",
+        "novelty_report.json",
+        "embarrassing_failures_observed.json",
+        "export_manifest.json",
+        "retrieval_diagnostics.json",
+        "duplicate_similarity_matrix.json",
+        "calibration_quality_enforcement_report.json",
+        "packet_manifest.json",
+    }
+    if name in allowed_exact:
+        return True
+    if name in {
+        "evidence_bundle",
+        "writer_subagent_outputs",
+        "judge_passes",
+        "stage_b_judges",
+        "generated_guidelines_rst",
+        "rerendered_rst",
+    }:
+        return True
+    if name.endswith("_backend_attempts.jsonl"):
+        return True
+    if name.endswith(".jsonl") and (
+        name.startswith("drafts")
+        or name.startswith("analysis_memos")
+        or name.startswith("exemplar_selection_trace")
+        or name.startswith("synthesis_input_trace")
+        or name.startswith("stage_b_judge_invocations")
+    ):
+        return True
+    return False
+
+
 def _canonical_bytes(text: str) -> bytes:
     normalized = "\n".join(
         part.rstrip() for part in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -1288,9 +1389,11 @@ def _run_eval_for_corpus(
 def run_calibration_run(args: Namespace, *, root: Path) -> int:
     run_id = _run_id(args)
     mode = str(getattr(args, "mode", "bootstrap"))
+    profile = str(getattr(args, "profile", "full"))
     run_dir = _report_dir(root, run_id, str(getattr(args, "report_root", "") or ""))
     run_dir.mkdir(parents=True, exist_ok=True)
     reuse_existing = not bool(getattr(args, "no_reuse_existing", False))
+    resume_requested = bool(getattr(args, "resume", False))
 
     targets_path = run_dir / "targets.json"
     if not targets_path.exists():
@@ -1303,6 +1406,21 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     judge_contracts = _safe_yaml(root / "config" / "s0" / "judge_prompt_contracts.yaml")
     writer_model = str(os.environ.get("S0_WRITER_MODEL", "")).strip()
     judge_model = str(os.environ.get("S0_JUDGE_MODEL", "")).strip() or writer_model
+    fingerprint_path = run_dir / "calibration_resume_fingerprint.json"
+    resume_state_path = run_dir / "resume_state.json"
+    fingerprint_record = _build_calibration_fingerprint(
+        mode=mode,
+        profile=profile,
+        targets_payload=targets_payload,
+        writer_contracts=writer_contracts,
+        judge_contracts=judge_contracts,
+        writer_model=writer_model,
+        judge_model=judge_model,
+    )
+    existing_fingerprint = _read_json(fingerprint_path) if fingerprint_path.exists() else {}
+    existing_digest = str(existing_fingerprint.get("fingerprint_digest", ""))
+    fingerprint_digest = str(fingerprint_record.get("fingerprint_digest", ""))
+    fingerprint_match = (not existing_digest) or (existing_digest == fingerprint_digest)
 
     # Deterministic calibration subset using prompts that approximate difficult/weak scenarios.
     preferred_ids = {
@@ -1407,7 +1525,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                 startup_failures.append("startup_checklist:opencode_non_interactive_probe_failed")
     except (subprocess.SubprocessError, OSError):
         startup_failures.append("startup_checklist:opencode_model_routing_unavailable")
-    allowed_run_artifacts = {
+    clean_run_artifacts = {
         "targets.json",
         "targets_digest",
         "core_docs_eval_report.json",
@@ -1420,18 +1538,71 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         "build_env_fingerprint.json",
         "embedding_backend_fingerprint.json",
     }
-    existing = [p.name for p in run_dir.iterdir() if p.name not in allowed_run_artifacts]
-    if existing:
-        startup_failures.append("startup_checklist:run_artifact_root_not_clean")
+
+    existing_entries = sorted(p.name for p in run_dir.iterdir())
+    resume_candidate_markers = {
+        "calibration_target_rationale.json",
+        "core_docs_backend_attempts.jsonl",
+        "core_docs_eval_report.json",
+        "rust_reference_backend_attempts.jsonl",
+        "rust_reference_eval_report.json",
+        "writer_subagent_outputs",
+        "evidence_bundle",
+    }
+    resume_candidate = any((run_dir / marker).exists() for marker in resume_candidate_markers)
+    resume_mode = (resume_requested or resume_candidate) and reuse_existing
+
+    unknown_existing: list[str] = []
+    if resume_mode:
+        for name in existing_entries:
+            if not _is_allowed_resume_artifact(name):
+                unknown_existing.append(name)
+        if unknown_existing:
+            startup_failures.append("startup_checklist:resume_unknown_artifacts_present")
+        if existing_digest and not fingerprint_match:
+            startup_failures.append("startup_checklist:resume_fingerprint_mismatch")
+    else:
+        non_clean = [name for name in existing_entries if name not in clean_run_artifacts]
+        if non_clean:
+            startup_failures.append("startup_checklist:run_artifact_root_not_clean")
+
     startup_report = {
         "run_id": run_id,
         "mode": mode,
+        "resume_requested": resume_requested,
+        "resume_mode": resume_mode,
+        "resume_candidate": resume_candidate,
+        "fingerprint_match": fingerprint_match,
+        "resume_unknown_artifacts": unknown_existing,
         "status": "pass" if not startup_failures else "fail",
         "failures": startup_failures,
     }
     _write_json(run_dir / "startup_checklist_report.json", startup_report)
     if startup_failures:
         raise RuntimeError(f"Startup checklist failed: {startup_failures}")
+
+    _write_json(fingerprint_path, fingerprint_record)
+
+    prior_resume_state = _read_json(resume_state_path) if resume_state_path.exists() else {}
+    attempt_index = int(prior_resume_state.get("attempt_index", 0)) + 1
+
+    core_report_preexisting = (run_dir / "core_docs_eval_report.json").exists()
+    rust_report_preexisting = (run_dir / "rust_reference_eval_report.json").exists()
+    _write_json(
+        resume_state_path,
+        {
+            "run_id": run_id,
+            "attempt_index": attempt_index,
+            "resume_requested": resume_requested,
+            "resume_mode": resume_mode,
+            "reuse_existing": reuse_existing,
+            "fingerprint_digest": fingerprint_digest,
+            "fingerprint_match": fingerprint_match,
+            "reused_artifacts": [],
+            "remaining_work_executed": [],
+            "updated_at": datetime.now(UTC).isoformat(),
+        },
+    )
 
     _write_json(
         run_dir / "calibration_target_rationale.json",
@@ -1448,6 +1619,34 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     )
     rust_report_path, rust = _run_eval_for_corpus(
         root, run_dir, "rust_reference", reuse_existing=reuse_existing
+    )
+
+    reused_artifacts: list[str] = []
+    remaining_work_executed: list[str] = []
+    if reuse_existing and core_report_preexisting:
+        reused_artifacts.append("core_docs_eval_report.json")
+    else:
+        remaining_work_executed.append("core_docs_eval_report.json")
+    if reuse_existing and rust_report_preexisting:
+        reused_artifacts.append("rust_reference_eval_report.json")
+    else:
+        remaining_work_executed.append("rust_reference_eval_report.json")
+    _write_json(
+        resume_state_path,
+        {
+            "run_id": run_id,
+            "attempt_index": attempt_index,
+            "resume_requested": resume_requested,
+            "resume_mode": resume_mode,
+            "reuse_existing": reuse_existing,
+            "fingerprint_digest": fingerprint_digest,
+            "fingerprint_match": fingerprint_match,
+            "reused_artifacts": reused_artifacts,
+            "remaining_work_executed": remaining_work_executed,
+            "updated_at": datetime.now(UTC).isoformat(),
+            "core_report_path": str(core_report_path),
+            "rust_report_path": str(rust_report_path),
+        },
     )
 
     core_summary = core.get("summary", {})
