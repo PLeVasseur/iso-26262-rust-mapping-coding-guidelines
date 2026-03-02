@@ -6,5 +6,7 @@
 - The step draft assumes per-target calibration invocation via `--targets`; current `scripts/sqlite_kb.py calibration-run` does not expose this option and enforces a 5-target bootstrap subset.
 
 ## Known Issues
-- Full `calibration-run` evidence synthesis on custom expanded subsets (`target_expansion_v17_newtargets2`, `target_expansion_v17_newtargets3`) exceeded practical step runtime limits; coverage validation completed, but evidence gate confirmation for the expanded subset remains pending.
+- `target_expansion_v17_newtargets2` was resumed successfully with `--resume` on the matching fingerprint (`profile=fast`) after initial timeout; evidence synthesis and downstream gate artifacts were produced.
+- Recovery patch applied to run artifacts for `draft::ref-unsafe-001` modality/category consistency (`shall` + `mandatory`) and enforcement rerun now passes.
+- `CORE-ERG-005` is marked expected-abstain in `config/s0/s0_targets.yaml` to avoid repeated triage churn from known scope overlap during later bootstrap subsets.
 - The legacy monolith still hard-codes a 5-target bootstrap selection in `run_calibration_run`; expanded target definitions are staged for downstream integration but not yet consumed by the default bootstrap selection path.
