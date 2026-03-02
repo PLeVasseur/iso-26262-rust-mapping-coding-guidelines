@@ -131,6 +131,15 @@ wheels = [
 ]
 
 [[package]]
+name = "docutils"
+version = "0.21.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/ed/aefcc8cd0ba62a0560c3c18c33925362d46c6075480bfa4df87b28e169a9/docutils-0.21.2.tar.gz", hash = "sha256:3a6b18732edf182daa3cd12775bbb338cf5691468f91eeeb109deff6ebfa986f", size = 2204444, upload-time = "2024-04-23T18:57:18.24Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/d7/9322c609343d929e75e7e5e6255e614fcc67572cfd083959cdef3b7aad79/docutils-0.21.2-py3-none-any.whl", hash = "sha256:dafca5b9e384f0e419294eb4d2ff9fa826435bf15f15b7bd45723e8ad76811b2", size = 587408, upload-time = "2024-04-23T18:57:14.835Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.24.3"
 source = { registry = "https://pypi.org/simple" }
@@ -219,6 +228,7 @@ name = "iso-26262-rust-mapping-coding-guidelines"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "docutils" },
     { name = "jsonschema" },
     { name = "pyyaml" },
 ]
@@ -239,6 +249,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "docutils", specifier = ">=0.21.2,<0.22" },
     { name = "jsonschema", specifier = ">=4.23.0,<5" },
     { name = "pyyaml", specifier = ">=6.0.2,<7" },
     { name = "safetensors", marker = "extra == 'semantic-local'", specifier = ">=0.4,<1" },

@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "PyYAML>=6.0.2,<7",
+  "docutils>=0.21.2,<0.22",
   "jsonschema>=4.23.0,<5",
 ]
 

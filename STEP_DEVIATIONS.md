@@ -1,10 +1,10 @@
-# Step 2 Deviations
+# Step 3 Deviations
 
 ## Deviations
-- Implemented a standalone renderer (`scripts/rendering_v2/rst_renderer.py`) rather than delegating to upstream `guideline_rst_template()` directly; this keeps deterministic control over Step 2-specific fields (`:edition:`, miri floor behavior, URL fallback, citation map artifact).
-- Added `guideline_manifest.json` as an extra traceability artifact in `rerendered_rst/` in addition to the requested `rerender_manifest.json` and `citation_key_map.json`.
-- Added unit tests in `tests/unit/test_rendering_v2.py` for deterministic ID generation and artifact rerender integration.
+- Added a standalone validation package (`scripts/validation_v2/`) and runner that reads `rerendered_rst/` artifacts and writes `output_conformance_report.json`; monolith and go/no-go wiring remain deferred to Step 9 as required.
+- Calibrated conformance severity to avoid exemplar false positives: missing `:edition:`, missing `:miri:` on `unsafe`, and missing bibliography marker are currently `warning` severity because these patterns appear in curated exemplars.
+- Updated `scripts/integration_checkpoint.py` CP-A to validate standalone artifacts (`rerendered_rst/`, `output_conformance_report.json`, `standalone_judge_aggregate.json`) while preserving monolith evidence/citation regression checks.
 
 ## Known Issues
-- `fls` remains a deterministic placeholder (`fls_<sha12>`) until Step 7 provides authoritative FLS paragraph resolution.
-- A full 14-exemplar roundtrip conformance test is not yet implemented in this step; current tests cover renderer mechanics and rerender integration only.
+- Conformance currently fails Step 2 rerendered outputs on `fls_id_looks_like_hash`; this is expected until Step 7 introduces authoritative FLS lookup and replacement.
+- docutils parsing emits upstream deprecation warnings during tests (`OptionParser`, `Node.traverse`); behavior is correct, but warnings remain until a later cleanup.

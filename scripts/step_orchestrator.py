@@ -76,8 +76,8 @@ class StepResult:
     status: str = ""
     duration_s: float = 0.0
     dod_checks: dict[str, bool] = field(default_factory=dict)
-    invariants_passed: bool = False
-    regression_passed: bool = False
+    invariants_passed: bool | None = None
+    regression_passed: bool | None = None
     checkpoint_tag: str = ""
     halt_reason: str = ""
     agent_signaled_complete: bool = False
@@ -85,11 +85,34 @@ class StepResult:
     run_log_path: str = ""
 
 
-def _resolve_expected_file_path(raw_path: str) -> Path:
-    """Resolve planned file references to concrete repository paths."""
+def _is_ignored_search_path(path: Path) -> bool:
+    ignored = {".git", ".cache", ".venv", "node_modules", "__pycache__"}
+    return any(part in ignored for part in path.parts)
+
+
+def _search_by_basename(name: str) -> list[Path]:
+    matches: list[Path] = []
+    for path in PIPELINE_ROOT.rglob(name):
+        if not path.is_file():
+            continue
+        if _is_ignored_search_path(path):
+            continue
+        matches.append(path)
+    return sorted(matches)
+
+
+def _resolve_expected_file_path(raw_path: str) -> tuple[Path | None, str, list[str]]:
+    """Resolve planned file references to concrete repository paths.
+
+    Returns (resolved_path, status, candidates).
+    status is one of: exact, alias, basename_unique, ambiguous, missing, skipped.
+    """
+    if raw_path.startswith("$") or "{" in raw_path:
+        return None, "skipped", []
+
     candidate = PIPELINE_ROOT / raw_path
     if candidate.exists():
-        return candidate
+        return candidate, "exact", [str(candidate.relative_to(PIPELINE_ROOT))]
 
     basename_aliases = {
         "writer_prompt_contracts.yaml": PIPELINE_ROOT
@@ -98,9 +121,43 @@ def _resolve_expected_file_path(raw_path: str) -> Path:
         / "writer_prompt_contracts.yaml",
     }
     alias = basename_aliases.get(raw_path)
-    if alias is not None:
-        return alias
-    return candidate
+    if alias is not None and alias.exists():
+        return alias, "alias", [str(alias.relative_to(PIPELINE_ROOT))]
+
+    basename = Path(raw_path).name
+    matches = _search_by_basename(basename)
+    rel_matches = [str(path.relative_to(PIPELINE_ROOT)) for path in matches]
+    if len(matches) == 1:
+        return matches[0], "basename_unique", rel_matches
+    if len(matches) > 1:
+        return None, "ambiguous", rel_matches
+    return None, "missing", []
+
+
+def _extract_prerequisite_paths(step_text: str) -> list[str]:
+    section = re.search(r"## Prerequisites\s*\n(.*?)(?=\n## |\n---|\Z)", step_text, re.DOTALL)
+    if not section:
+        return []
+    body = section.group(1)
+
+    paths: list[str] = []
+    for value in re.findall(r"`([^`]+)`", body):
+        if re.search(r"\.(?:py|json|yaml|yml|db|rst|md)$", value):
+            paths.append(value.strip())
+
+    for value in re.findall(r"\b([A-Za-z0-9_./-]+\.(?:py|json|yaml|yml|db|rst|md))\b", body):
+        if value.startswith("http"):
+            continue
+        paths.append(value.strip())
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        deduped.append(path)
+    return deduped
 
 
 def _write_run_log(step_n: int, session_id: str, exit_code: int, stdout: str, stderr: str) -> Path:
@@ -161,8 +218,9 @@ def load_prerequisite_contracts(step_n: int) -> str:
     return "\n\n".join(sections)
 
 
-def check_prerequisites(step_n: int) -> tuple[bool, list[str]]:
+def check_prerequisites(step_n: int) -> tuple[bool, list[str], list[dict[str, Any]]]:
     failures: list[str] = []
+    details: list[dict[str, Any]] = []
 
     for dep in STEP_DEPS.get(step_n, []):
         tag = f"step-{dep:02d}-complete"
@@ -171,19 +229,45 @@ def check_prerequisites(step_n: int) -> tuple[bool, list[str]]:
         )
         if tag not in result.stdout:
             failures.append(f"missing git tag: {tag}")
+            details.append({"kind": "tag", "tag": tag, "status": "missing"})
+        else:
+            details.append({"kind": "tag", "tag": tag, "status": "ok"})
 
     step_text = load_step_file(step_n)
-    prereq_match = re.search(r"## Prerequisites\s*\n(.*?)(?=\n## |\n---|\Z)", step_text, re.DOTALL)
-    if prereq_match:
-        for line in prereq_match.group(1).split("\n"):
-            paths = re.findall(r"`([^`]+\.(?:py|json|yaml|yml|db|rst))`", line)
-            for path in paths:
-                if path.startswith("$") or "{" in path:
-                    continue
-                if not (PIPELINE_ROOT / path).exists():
-                    failures.append(f"prerequisite file missing: {path}")
+    for path_ref in _extract_prerequisite_paths(step_text):
+        resolved, status, candidates = _resolve_expected_file_path(path_ref)
+        if status in {"exact", "alias", "basename_unique", "skipped"}:
+            details.append(
+                {
+                    "kind": "file",
+                    "ref": path_ref,
+                    "status": "ok" if status != "skipped" else "skipped",
+                    "resolution": status,
+                    "resolved": (
+                        str(resolved.relative_to(PIPELINE_ROOT))
+                        if resolved is not None and resolved.exists()
+                        else None
+                    ),
+                }
+            )
+            continue
+        if status == "ambiguous":
+            failures.append(
+                f"prerequisite file ambiguous: {path_ref} -> {', '.join(candidates[:5])}"
+            )
+        else:
+            failures.append(f"prerequisite file missing: {path_ref}")
+        details.append(
+            {
+                "kind": "file",
+                "ref": path_ref,
+                "status": "fail",
+                "resolution": status,
+                "candidates": candidates,
+            }
+        )
 
-    return len(failures) == 0, failures
+    return len(failures) == 0, failures, details
 
 
 def compose_prompt(step_n: int) -> str:
@@ -286,8 +370,12 @@ def validate_dod(step_n: int) -> dict[str, bool]:
             filepath = match.group(1).strip()
             if filepath.startswith("$") or "{" in filepath:
                 continue
-            resolved = _resolve_expected_file_path(filepath)
-            results[f"file_exists:{filepath}"] = resolved.exists()
+            resolved, status, _candidates = _resolve_expected_file_path(filepath)
+            results[f"file_exists:{filepath}"] = status in {
+                "exact",
+                "alias",
+                "basename_unique",
+            } and (resolved is not None and resolved.exists())
 
     test_result = subprocess.run(
         ["uv", "run", "pytest", "tests/", "-x", "--tb=line", "-q", "--timeout=60"],
@@ -350,6 +438,30 @@ def run_integration_checkpoint(checkpoint: str) -> tuple[bool, str]:
         check=False,
     )
     return result.returncode == 0, result.stdout[-600:]
+
+
+def run_prerequisite_preflight(step_n: int) -> tuple[bool, str]:
+    ok, failures, details = check_prerequisites(step_n)
+    lines = [f"Preflight Step {step_n}", ""]
+    for detail in details:
+        if detail.get("kind") == "tag":
+            lines.append(f"- [TAG:{detail['status'].upper()}] {detail['tag']}")
+            continue
+        ref = detail.get("ref", "")
+        status = str(detail.get("status", "unknown")).upper()
+        resolution = detail.get("resolution", "")
+        resolved = detail.get("resolved")
+        if resolved:
+            lines.append(f"- [FILE:{status}] {ref} -> {resolved} ({resolution})")
+        elif detail.get("candidates"):
+            candidates = ", ".join(detail["candidates"][:5])
+            lines.append(f"- [FILE:{status}] {ref} -> candidates: {candidates}")
+        else:
+            lines.append(f"- [FILE:{status}] {ref} ({resolution})")
+    if failures:
+        lines.extend(["", "Failures:"])
+        lines.extend([f"- {failure}" for failure in failures])
+    return ok, "\n".join(lines)
 
 
 def git_checkpoint(step_n: int) -> str:
@@ -446,8 +558,18 @@ def generate_step_review(step_n: int, result: StepResult) -> Path:
         icon = "[OK]" if passed else "[FAIL]"
         lines.append(f"- {icon} {check}")
     lines.append("")
-    lines.append(f"- {'[OK]' if result.invariants_passed else '[FAIL]'} Invariants")
-    lines.append(f"- {'[OK]' if result.regression_passed else '[FAIL]'} Regression")
+    inv_icon = (
+        "[SKIP]"
+        if result.invariants_passed is None
+        else ("[OK]" if result.invariants_passed else "[FAIL]")
+    )
+    reg_icon = (
+        "[SKIP]"
+        if result.regression_passed is None
+        else ("[OK]" if result.regression_passed else "[FAIL]")
+    )
+    lines.append(f"- {inv_icon} Invariants")
+    lines.append(f"- {reg_icon} Regression")
     lines.append("")
 
     contract_path = CONTRACTS_DIR / f"step_{step_n:02d}_contract.json"
@@ -512,7 +634,7 @@ def execute_step(step_n: int, is_retry: bool = False) -> StepResult:
     start = time.monotonic()
 
     print("  checking prerequisites...")
-    ok, failures = check_prerequisites(step_n)
+    ok, failures, _details = check_prerequisites(step_n)
     if not ok:
         result.status = "halt"
         result.halt_reason = f"prerequisites failed: {failures}"
@@ -562,19 +684,34 @@ def execute_step(step_n: int, is_retry: bool = False) -> StepResult:
     return result
 
 
-def orchestrate(start_from: int = 2, single_step: int | None = None, dry_run: bool = False) -> int:
+def orchestrate(
+    start_from: int = 2,
+    single_step: int | None = None,
+    dry_run: bool = False,
+    preflight: bool = False,
+) -> int:
     step_n = single_step if single_step is not None else start_from
     if step_n not in STEPS:
         print(f"ERROR: step {step_n} out of range {min(STEPS)}-{max(STEPS)}")
         return 2
+
+    if preflight:
+        ok, report = run_prerequisite_preflight(step_n)
+        print(report)
+        return 0 if ok else 1
 
     if dry_run:
         targets = [step_n] if single_step is not None else [s for s in STEPS if s >= step_n]
         print("DRY RUN: checking prerequisites\n")
         all_ok = True
         for s in targets:
-            ok, failures = check_prerequisites(s)
+            ok, failures, details = check_prerequisites(s)
             print(f"  {'[OK]' if ok else '[FAIL]'} Step {s}")
+            for detail in details:
+                if detail.get("kind") == "file" and detail.get("status") == "ok":
+                    resolved = detail.get("resolved")
+                    if resolved:
+                        print(f"    - resolved {detail['ref']} -> {resolved}")
             for failure in failures:
                 print(f"    - {failure}")
             all_ok = all_ok and ok
@@ -590,13 +727,13 @@ def orchestrate(start_from: int = 2, single_step: int | None = None, dry_run: bo
         generate_step_review(step_n, result)
         return 1
 
-    if not result.invariants_passed or not result.regression_passed:
+    if result.invariants_passed is False or result.regression_passed is False:
         reason = "INVARIANT_REGRESSION" if not result.invariants_passed else "REGRESSION_DETECTED"
         print(f"\n  {reason}; attempting rollback")
         if attempt_rollback(step_n):
             print("  rollback succeeded; retrying once")
             result = execute_step(step_n, is_retry=True)
-            if not result.invariants_passed or not result.regression_passed:
+            if result.invariants_passed is False or result.regression_passed is False:
                 result.status = "halt"
                 result.halt_reason = f"{reason} persists after rollback+retry"
                 generate_step_review(step_n, result)
@@ -653,8 +790,16 @@ def main() -> None:
     parser.add_argument("--start-from", type=int, default=2, help="Run this step number")
     parser.add_argument("--step", type=int, default=None, help="Run this specific step number")
     parser.add_argument("--dry-run", action="store_true", help="Validate prerequisites only")
+    parser.add_argument(
+        "--preflight", action="store_true", help="Detailed prerequisite diagnostics"
+    )
     args = parser.parse_args()
-    exit_code = orchestrate(start_from=args.start_from, single_step=args.step, dry_run=args.dry_run)
+    exit_code = orchestrate(
+        start_from=args.start_from,
+        single_step=args.step,
+        dry_run=args.dry_run,
+        preflight=args.preflight,
+    )
     sys.exit(exit_code)
 
 

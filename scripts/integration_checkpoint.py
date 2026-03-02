@@ -10,12 +10,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 REPORTS_DIR = Path(".cache/sqlite_kb/reports")
+
+
+def _read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def _latest_report_dir() -> Path | None:
@@ -43,17 +48,125 @@ def _check_gate_status(
     return status, status == expected
 
 
+def _standalone_candidate_count(judge_data: dict[str, Any]) -> int:
+    if isinstance(judge_data.get("candidate_grade_count"), int):
+        return int(judge_data["candidate_grade_count"])
+    if isinstance(judge_data.get("candidate_count"), int):
+        return int(judge_data["candidate_count"])
+
+    per_target = judge_data.get("per_target", [])
+    if isinstance(per_target, list):
+        count = 0
+        for row in per_target:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("verdict", "")).strip().lower() == "candidate":
+                count += 1
+        return count
+    return 0
+
+
+def _standalone_has_non_abstain_for_all_judges(judge_data: dict[str, Any]) -> bool:
+    per_target = judge_data.get("per_target", [])
+    if not isinstance(per_target, list):
+        return False
+
+    for row in per_target:
+        if not isinstance(row, dict):
+            continue
+        judge_rows = row.get("judge_verdicts")
+        if not isinstance(judge_rows, list) or len(judge_rows) < 3:
+            continue
+        verdicts = [str(item.get("verdict", "")).strip().lower() for item in judge_rows]
+        if verdicts and all(verdict and verdict != "abstain" for verdict in verdicts):
+            return True
+    return False
+
+
 def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
-    baseline = run_dir / "retrieval_improvement_baseline.json"
+    rerender_dir = run_dir / "rerendered_rst"
     results.append(
         {
-            "check": "retrieval_baseline_exists",
-            "passed": baseline.exists(),
-            "detail": str(baseline),
+            "check": "standalone_rerender_dir_exists",
+            "passed": rerender_dir.exists(),
+            "detail": str(rerender_dir),
         }
     )
+
+    rst_files = sorted(rerender_dir.glob("*.rst")) if rerender_dir.exists() else []
+    results.append(
+        {
+            "check": "standalone_rerender_has_rst",
+            "passed": len(rst_files) >= 1,
+            "detail": f"rst_count={len(rst_files)}",
+        }
+    )
+
+    fabricated_pattern = re.compile(r":id:\s+gui_[0-9a-f]{12}\b")
+    has_fabricated = False
+    for rst in rst_files:
+        if fabricated_pattern.search(_read_text(rst)):
+            has_fabricated = True
+            break
+    results.append(
+        {
+            "check": "standalone_renderer_ids_not_fabricated",
+            "passed": not has_fabricated,
+            "detail": "hex-hash guideline IDs absent in rerendered_rst",
+        }
+    )
+
+    conformance = _load_report(run_dir, "output_conformance_report.json")
+    conformance_per_file = []
+    if conformance and isinstance(conformance.get("per_file"), list):
+        conformance_per_file = conformance["per_file"]
+    has_one_valid = any(
+        bool(row.get("valid")) for row in conformance_per_file if isinstance(row, dict)
+    )
+    valid_file_count = sum(
+        1 for row in conformance_per_file if isinstance(row, dict) and row.get("valid")
+    )
+    results.append(
+        {
+            "check": "standalone_conformance_report_exists",
+            "passed": conformance is not None,
+            "detail": str(run_dir / "output_conformance_report.json"),
+        }
+    )
+    results.append(
+        {
+            "check": "standalone_conformance_has_passing_file",
+            "passed": has_one_valid,
+            "detail": f"valid_file_count={valid_file_count}",
+        }
+    )
+
+    standalone_judges = _load_report(run_dir, "standalone_judge_aggregate.json")
+    results.append(
+        {
+            "check": "standalone_judge_aggregate_exists",
+            "passed": standalone_judges is not None,
+            "detail": str(run_dir / "standalone_judge_aggregate.json"),
+        }
+    )
+    if standalone_judges:
+        candidates = _standalone_candidate_count(standalone_judges)
+        results.extend(
+            [
+                {
+                    "check": "standalone_judges_non_abstain_triplet",
+                    "passed": _standalone_has_non_abstain_for_all_judges(standalone_judges),
+                    "detail": "at least one target has 3 non-abstain judge verdicts",
+                },
+                {
+                    "check": "standalone_candidate_count_positive",
+                    "passed": candidates >= 1,
+                    "detail": f"candidates={candidates} (need >=1)",
+                },
+            ]
+        )
 
     evidence = _load_report(run_dir, "evidence_synthesizer_gate_report.json")
     status, passed = _check_gate_status(evidence, "status")
@@ -74,6 +187,21 @@ def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
             "passed": passed,
             "detail": f"status={status}",
             "regression_if_fail": True,
+        }
+    )
+
+    return results
+
+
+def checkpoint_b(run_dir: Path) -> list[dict[str, Any]]:
+    results = checkpoint_a(run_dir)
+
+    baseline = run_dir / "retrieval_improvement_baseline.json"
+    results.append(
+        {
+            "check": "retrieval_baseline_exists",
+            "passed": baseline.exists(),
+            "detail": str(baseline),
         }
     )
 
@@ -104,12 +232,6 @@ def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
             "detail": f"exists={threshold_review.exists()}",
         }
     )
-
-    return results
-
-
-def checkpoint_b(run_dir: Path) -> list[dict[str, Any]]:
-    results = checkpoint_a(run_dir)
 
     artifact_checks = [
         ("output_conformance_report.json", "output conformance"),
@@ -204,7 +326,7 @@ def checkpoint_b(run_dir: Path) -> list[dict[str, Any]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", choices=["A", "B"], required=True)
+    parser.add_argument("--checkpoint", choices=["A", "B", "C"], required=True)
     parser.add_argument("--run-dir", type=Path, default=None)
     args = parser.parse_args()
 
@@ -216,7 +338,10 @@ def main() -> None:
     print(f"=== Integration Checkpoint {args.checkpoint} ===")
     print(f"Run directory: {run_dir}\n")
 
-    results = checkpoint_a(run_dir) if args.checkpoint == "A" else checkpoint_b(run_dir)
+    if args.checkpoint == "A":
+        results = checkpoint_a(run_dir)
+    else:
+        results = checkpoint_b(run_dir)
     has_regression = False
     has_failure = False
 
