@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -190,6 +191,29 @@ def _inject_cites_if_missing(text: str, ordered_keys: list[str]) -> str:
     return f"{body} {citations}".strip()
 
 
+def _normalize_inline_cites(text: str, guideline_id: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        return f":cite:`{_normalize_citation_key(match.group(1), guideline_id)}`"
+
+    return re.sub(r":cite:`([^`]+)`", repl, text)
+
+
+def _ensure_edition_on_embedded_rust_examples(text: str, edition: str) -> str:
+    pattern = re.compile(
+        r"(?m)^(?P<indent>[ \t]*)\.\. rust-example::\n(?P<opts>(?:[ \t]+:[^\n]*\n)*)"
+    )
+
+    def repl(match: re.Match[str]) -> str:
+        indent = match.group("indent")
+        opts = match.group("opts")
+        if ":edition:" in opts:
+            return match.group(0)
+        option_indent = indent + "   "
+        return f"{indent}.. rust-example::\n{option_indent}:edition: {edition}\n{opts}"
+
+    return pattern.sub(repl, text)
+
+
 def render_guideline_rst(
     inp: RendererInput,
     guidelines_repo_root: Path,
@@ -230,8 +254,22 @@ def render_guideline_rst(
     )
     compliant_options = _build_rust_example_options(inp.compliant_mode, compliant_miri, edition)
 
-    guideline_text = _inject_cites_if_missing(inp.guideline_text, bibliography_keys)
-    rationale_text = _inject_cites_if_missing(inp.rationale_text, bibliography_keys)
+    guideline_text = _normalize_inline_cites(inp.guideline_text, guideline_id)
+    rationale_text = _normalize_inline_cites(inp.rationale_text, guideline_id)
+    non_compliant_narrative = _normalize_inline_cites(inp.non_compliant_narrative, guideline_id)
+    compliant_narrative = _normalize_inline_cites(inp.compliant_narrative, guideline_id)
+
+    guideline_text = _inject_cites_if_missing(guideline_text, bibliography_keys)
+    rationale_text = _inject_cites_if_missing(rationale_text, bibliography_keys)
+    non_compliant_narrative = _inject_cites_if_missing(non_compliant_narrative, bibliography_keys)
+    compliant_narrative = _inject_cites_if_missing(compliant_narrative, bibliography_keys)
+
+    guideline_text = _ensure_edition_on_embedded_rust_examples(guideline_text, edition)
+    rationale_text = _ensure_edition_on_embedded_rust_examples(rationale_text, edition)
+    non_compliant_narrative = _ensure_edition_on_embedded_rust_examples(
+        non_compliant_narrative, edition
+    )
+    compliant_narrative = _ensure_edition_on_embedded_rust_examples(compliant_narrative, edition)
 
     lines = [
         ".. SPDX-License-Identifier: MIT OR Apache-2.0",
@@ -269,7 +307,7 @@ def render_guideline_rst(
             f"      :id: {non_compliant_id}",
             "      :status: draft",
             "",
-            _indent_block(inp.non_compliant_narrative.strip(), 6),
+            _indent_block(non_compliant_narrative.strip(), 6),
             "",
             "      .. rust-example::",
             *non_compliant_options,
@@ -280,7 +318,7 @@ def render_guideline_rst(
             f"      :id: {compliant_id}",
             "      :status: draft",
             "",
-            _indent_block(inp.compliant_narrative.strip(), 6),
+            _indent_block(compliant_narrative.strip(), 6),
             "",
             "      .. rust-example::",
             *compliant_options,
