@@ -426,12 +426,38 @@ def run_regression_smoke() -> tuple[bool, str]:
     return True, "all gates pass"
 
 
-def run_integration_checkpoint(checkpoint: str) -> tuple[bool, str]:
+def _discover_checkpoint_run_dir() -> Path | None:
+    reports_root = PIPELINE_ROOT / ".cache" / "sqlite_kb" / "reports"
+    if not reports_root.exists():
+        return None
+
+    candidates: list[Path] = []
+    for run_dir in reports_root.iterdir():
+        if not run_dir.is_dir():
+            continue
+        rerender_dir = run_dir / "rerendered_rst"
+        if not rerender_dir.exists():
+            continue
+        if list(rerender_dir.glob("*.rst")):
+            candidates.append(run_dir)
+
+    if candidates:
+        candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        return candidates[0]
+    return None
+
+
+def run_integration_checkpoint(checkpoint: str, run_dir: Path | None = None) -> tuple[bool, str]:
     script = PIPELINE_ROOT / "scripts" / "integration_checkpoint.py"
     if not script.exists():
         return True, f"integration checkpoint script missing; skip {checkpoint}"
+
+    command = ["python3", str(script), "--checkpoint", checkpoint]
+    if run_dir is not None:
+        command.extend(["--run-dir", str(run_dir)])
+
     result = subprocess.run(
-        ["python3", str(script), "--checkpoint", checkpoint],
+        command,
         capture_output=True,
         text=True,
         timeout=600,
@@ -689,6 +715,7 @@ def orchestrate(
     single_step: int | None = None,
     dry_run: bool = False,
     preflight: bool = False,
+    checkpoint_run_dir: Path | None = None,
 ) -> int:
     step_n = single_step if single_step is not None else start_from
     if step_n not in STEPS:
@@ -747,31 +774,36 @@ def orchestrate(
             generate_step_review(step_n, result)
             return 1
 
-    print("  creating git checkpoint...")
-    result.checkpoint_tag = git_checkpoint(step_n)
-    print(f"  tagged: {result.checkpoint_tag}")
+    resolved_checkpoint_run_dir = checkpoint_run_dir or _discover_checkpoint_run_dir()
 
     if step_n == CP_A_AFTER_STEP:
-        cp_ok, cp_detail = run_integration_checkpoint("A")
+        cp_ok, cp_detail = run_integration_checkpoint("A", resolved_checkpoint_run_dir)
         if not cp_ok:
             result.status = "halt"
-            result.halt_reason = f"CP-A failed: {cp_detail}"
+            result.halt_reason = f"CP-A failed (run_dir={resolved_checkpoint_run_dir}): {cp_detail}"
             generate_step_review(step_n, result)
             return 1
     elif step_n == CP_B_AFTER_STEP:
-        cp_ok, cp_detail = run_integration_checkpoint("B")
+        cp_ok, cp_detail = run_integration_checkpoint("B", resolved_checkpoint_run_dir)
         if not cp_ok:
             result.status = "halt"
-            result.halt_reason = f"CP-B failed: {cp_detail}"
+            result.halt_reason = f"CP-B failed (run_dir={resolved_checkpoint_run_dir}): {cp_detail}"
             generate_step_review(step_n, result)
             return 1
     elif step_n == CP_C_AFTER_STEP:
-        cp_ok, cp_detail = run_integration_checkpoint("B")
+        cp_ok, cp_detail = run_integration_checkpoint("B", resolved_checkpoint_run_dir)
         if not cp_ok:
             result.status = "halt"
-            result.halt_reason = f"CP-C failed (using checkpoint B checks): {cp_detail}"
+            result.halt_reason = (
+                f"CP-C failed (run_dir={resolved_checkpoint_run_dir}, using checkpoint B checks): "
+                f"{cp_detail}"
+            )
             generate_step_review(step_n, result)
             return 1
+
+    print("  creating git checkpoint...")
+    result.checkpoint_tag = git_checkpoint(step_n)
+    print(f"  tagged: {result.checkpoint_tag}")
 
     result.status = "pass"
     generate_contract(step_n)
@@ -793,12 +825,19 @@ def main() -> None:
     parser.add_argument(
         "--preflight", action="store_true", help="Detailed prerequisite diagnostics"
     )
+    parser.add_argument(
+        "--checkpoint-run-dir",
+        type=Path,
+        default=None,
+        help="Explicit report run directory for CP-A/CP-B checks",
+    )
     args = parser.parse_args()
     exit_code = orchestrate(
         start_from=args.start_from,
         single_step=args.step,
         dry_run=args.dry_run,
         preflight=args.preflight,
+        checkpoint_run_dir=args.checkpoint_run_dir,
     )
     sys.exit(exit_code)
 

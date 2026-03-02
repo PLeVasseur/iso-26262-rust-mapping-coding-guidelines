@@ -113,8 +113,12 @@ def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
     results.append(
         {
             "check": "standalone_renderer_ids_not_fabricated",
-            "passed": not has_fabricated,
-            "detail": "hex-hash guideline IDs absent in rerendered_rst",
+            "passed": len(rst_files) >= 1 and not has_fabricated,
+            "detail": (
+                "hex-hash guideline IDs absent in rerendered_rst"
+                if rst_files
+                else "no rerendered RST files to validate"
+            ),
         }
     )
 
