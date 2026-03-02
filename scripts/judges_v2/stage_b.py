@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from scripts.opencode_retry_wrapper import create_session, run_opencode
+
 STAGE_B_JUDGES = [
     "technical_accuracy",
     "functional_safety_relevance",
     "pedagogical_quality",
 ]
+DEFAULT_JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "")
+MAX_JUDGE_RST_CHARS = int(os.environ.get("JUDGE_MAX_RST_CHARS", "4000"))
 
 
 def load_judge_contracts(path: Path) -> dict[str, Any]:
@@ -32,14 +38,43 @@ def _build_judge_prompt(
     template = str(judge_contract.get("prompt_template_text", "")).strip()
     required = judge_contract.get("required_output_schema", {})
     forbidden = judge_contract.get("forbidden_patterns", [])
+    trimmed_rst = rst_content
+    if len(trimmed_rst) > MAX_JUDGE_RST_CHARS:
+        trimmed_rst = (
+            trimmed_rst[:MAX_JUDGE_RST_CHARS]
+            + "\n\n[TRUNCATED_FOR_JUDGE_INPUT due to context budget]"
+        )
+
     return (
         f"{template}\n\n"
         f"Required schema fields: {json.dumps(required, sort_keys=True)}\n"
         f"Forbidden patterns: {json.dumps(forbidden)}\n\n"
-        f"=== RENDERED GUIDELINE (RST) ===\n{rst_content}\n\n"
+        f"=== RENDERED GUIDELINE (RST) ===\n{trimmed_rst}\n\n"
         f"=== CONSTRUCT SCOPE ===\n{json.dumps(construct_terms)}\n"
         f"=== JUDGE ===\n{judge_name}\n"
     )
+
+
+def _validate_required_schema(parsed: dict[str, Any], required_schema: dict[str, Any]) -> list[str]:
+    required_fields = (
+        required_schema.get("required", []) if isinstance(required_schema, dict) else []
+    )
+    missing: list[str] = []
+    for field in required_fields:
+        key = str(field).strip()
+        if key and key not in parsed:
+            missing.append(key)
+    return missing
+
+
+def _contains_forbidden(raw_output: str, forbidden_patterns: list[str]) -> list[str]:
+    lowered = raw_output.lower()
+    hits: list[str] = []
+    for pattern in forbidden_patterns:
+        token = str(pattern).strip().lower()
+        if token and token in lowered:
+            hits.append(token)
+    return hits
 
 
 def _normalize_judge_decision(raw_decision: str, reason_codes: list[str]) -> str:
@@ -174,22 +209,169 @@ def _heuristic_evaluate(  # noqa: PLR0912
     }
 
 
+def _llm_evaluate(
+    judge_name: str,
+    judge_contract: dict[str, Any],
+    prompt: str,
+    *,
+    model: str | None,
+) -> tuple[dict[str, Any], str, list[str]]:
+    raw_reason_codes: list[str] = []
+    session_id = create_session(title=f"judge-{judge_name}")
+    if model:
+        exit_code, output = run_opencode(session_id, prompt, model=model)
+    else:
+        exit_code, output = run_opencode(session_id, prompt)
+
+    def _invoke_retry() -> tuple[int, Any]:
+        if model:
+            return run_opencode(session_id, prompt, model=model)
+        return run_opencode(session_id, prompt)
+
+    if exit_code != 0:
+        return (
+            {
+                "decision": "fail",
+                "summary": f"Judge transport failure (exit={exit_code}).",
+                "reason_codes": [f"judge_transport_failure:{exit_code}"],
+                "details": {},
+            },
+            "",
+            [f"judge_transport_failure:{exit_code}"],
+        )
+    if output is None:
+        return (
+            {
+                "decision": "fail",
+                "summary": "Judge returned no output.",
+                "reason_codes": ["judge_output_empty"],
+                "details": {},
+            },
+            "",
+            ["judge_output_empty"],
+        )
+
+    if isinstance(output, dict) and {"decision", "summary"}.issubset(set(output.keys())):
+        parsed = output
+        raw_text = json.dumps(output)
+    else:
+        raw_text = output.get("raw_text", "") if isinstance(output, dict) else str(output)
+        try:
+            parsed = json.loads(raw_text)
+        except json.JSONDecodeError:
+            parsed = {}
+
+    if not isinstance(parsed, dict) or not parsed:
+        decision, summary, reason_codes = _parse_judge_output(raw_text, judge_name)
+        parse_failure = any(
+            token in code for code in reason_codes for token in ("parse_error", "empty", "no_json")
+        )
+        if parse_failure:
+            retry_exit_code, retry_output = _invoke_retry()
+            if retry_exit_code == 0 and retry_output is not None:
+                if isinstance(retry_output, dict) and {"decision", "summary"}.issubset(
+                    set(retry_output.keys())
+                ):
+                    return retry_output, json.dumps(retry_output), ["retry_attempted"]
+                retry_text = (
+                    retry_output.get("raw_text", "")
+                    if isinstance(retry_output, dict)
+                    else str(retry_output)
+                )
+                retry_decision, retry_summary, retry_codes = _parse_judge_output(
+                    retry_text,
+                    judge_name,
+                )
+                if not any(
+                    token in code
+                    for code in retry_codes
+                    for token in ("parse_error", "empty", "no_json")
+                ):
+                    return (
+                        {
+                            "decision": retry_decision,
+                            "summary": retry_summary,
+                            "reason_codes": retry_codes + ["retry_attempted"],
+                            "details": {},
+                        },
+                        retry_text,
+                        retry_codes + ["retry_attempted"],
+                    )
+            reason_codes.append("retry_attempted")
+        return (
+            {
+                "decision": decision,
+                "summary": summary,
+                "reason_codes": reason_codes,
+                "details": {},
+            },
+            raw_text,
+            reason_codes,
+        )
+
+    missing_fields = _validate_required_schema(
+        parsed,
+        judge_contract.get("required_output_schema", {}),
+    )
+    forbidden_hits = _contains_forbidden(
+        raw_text,
+        [str(item) for item in judge_contract.get("forbidden_patterns", [])],
+    )
+
+    if missing_fields:
+        raw_reason_codes.extend([f"missing_required_field:{field}" for field in missing_fields])
+    if forbidden_hits:
+        raw_reason_codes.extend([f"forbidden_pattern:{field}" for field in forbidden_hits])
+
+    if raw_reason_codes:
+        parsed["decision"] = "fail"
+        parsed["reason_codes"] = list(parsed.get("reason_codes", [])) + raw_reason_codes
+        parsed["summary"] = (
+            str(parsed.get("summary", "")).strip() or "Judge schema/policy violation."
+        )
+
+    return parsed, raw_text, raw_reason_codes
+
+
 def evaluate_judge(
     judge_name: str,
     rst_content: str,
     construct_terms: list[str],
     contracts: dict[str, Any],
+    *,
+    judge_mode: str = "llm",
+    model: str | None = DEFAULT_JUDGE_MODEL or None,
 ) -> dict[str, Any]:
-    _ = _build_judge_prompt(
+    judge_contract = (contracts.get("roles") or {}).get(judge_name) or {}
+    prompt = _build_judge_prompt(
         judge_name,
-        ((contracts.get("roles") or {}).get(judge_name) or {}),
+        judge_contract,
         rst_content,
         construct_terms,
     )
-    raw = _heuristic_evaluate(judge_name, rst_content, construct_terms)
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+    normalized_mode = judge_mode.strip().lower()
+    if normalized_mode == "heuristic":
+        raw = _heuristic_evaluate(judge_name, rst_content, construct_terms)
+        raw_text = json.dumps(raw)
+    else:
+        raw, raw_text, extra_reasons = _llm_evaluate(
+            judge_name,
+            judge_contract,
+            prompt,
+            model=model,
+        )
+        _ = extra_reasons
+
     decision = str(raw.get("decision", "fail"))
     reason_codes = [str(item) for item in raw.get("reason_codes", []) if str(item)]
     normalized = _normalize_judge_decision(decision, reason_codes)
     raw["decision"] = normalized
     raw["reason_codes"] = reason_codes
+    raw["judge_mode"] = normalized_mode
+    raw["model"] = model
+    raw["prompt_hash"] = prompt_hash
+    raw["prompt_template_id"] = str(judge_contract.get("prompt_template_id", "")).strip()
+    raw["raw_output_text"] = raw_text
     return raw

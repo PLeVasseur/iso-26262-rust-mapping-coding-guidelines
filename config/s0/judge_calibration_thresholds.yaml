@@ -1,0 +1,12 @@
+aggregate:
+  precision_min: 0.60
+  recall_min: 0.14
+
+per_judge:
+  precision_min: 0.60
+  recall_min: 0.14
+
+per_judge_overrides:
+  pedagogical_quality:
+    precision_min: 0.00
+    recall_min: 0.00

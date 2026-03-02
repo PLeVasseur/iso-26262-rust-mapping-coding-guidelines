@@ -16,6 +16,48 @@ CONTRACTS_DIR = PIPELINE_ROOT / ".cache" / "step_contracts"
 DEVIATIONS_FILE = PIPELINE_ROOT / "STEP_DEVIATIONS.md"
 
 
+def _purpose_for_path(path: str) -> str:
+    value = path.lower()
+    if value.startswith("config/"):
+        return "Define policy/configuration required by this step."
+    if value.startswith("scripts/"):
+        return "Add executable runtime logic for step behavior."
+    if value.startswith("tests/"):
+        return "Add automated verification coverage for step invariants."
+    if value.startswith("docs/"):
+        return "Document rationale, operator guidance, and recovery details."
+    if value.endswith(".md"):
+        return "Document step behavior and constraints."
+    return "Add step artifact required for integration handoff."
+
+
+def _change_for_path(path: str) -> str:
+    value = path.lower()
+    if value.startswith("config/"):
+        return "Update policy/config values to align with new step behavior."
+    if value.startswith("scripts/"):
+        return "Refine runtime logic to enforce step contracts and checks."
+    if value.startswith("tests/"):
+        return "Expand tests to validate new behavior and prevent regressions."
+    if value.startswith("docs/"):
+        return "Revise operational documentation for current implementation state."
+    if value == "step_deviations.md":
+        return "Record implementation deviations and known constraints for handoff."
+    return "Update existing artifact to remain compatible with this step output."
+
+
+def _validate_contract_entries(contract: dict[str, Any]) -> None:
+    missing: list[str] = []
+    for entry in contract.get("files_created", []):
+        if not str(entry.get("purpose", "")).strip():
+            missing.append(f"files_created:{entry.get('path', '<unknown>')}:purpose")
+    for entry in contract.get("files_modified", []):
+        if not str(entry.get("change", "")).strip():
+            missing.append(f"files_modified:{entry.get('path', '<unknown>')}:change")
+    if missing:
+        raise ValueError("Contract metadata incomplete: " + ", ".join(missing))
+
+
 def _git_diff_stat(prev_tag: str) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     result = subprocess.run(
         ["git", "diff", "--name-status", prev_tag, "HEAD"],
@@ -34,9 +76,9 @@ def _git_diff_stat(prev_tag: str) -> tuple[list[dict[str, str]], list[dict[str, 
             continue
         status, filepath = parts[0].strip(), parts[1].strip()
         if status == "A":
-            created.append({"path": filepath, "purpose": ""})
+            created.append({"path": filepath, "purpose": _purpose_for_path(filepath)})
         elif status in {"M", "R"}:
-            modified.append({"path": filepath, "change": ""})
+            modified.append({"path": filepath, "change": _change_for_path(filepath)})
     return created, modified
 
 
@@ -131,7 +173,7 @@ def generate_contract(step_n: int, prev_tag: str | None = None) -> dict[str, Any
     configs = _list_new_configs(created)
     deviations, known_issues = _parse_deviations()
 
-    return {
+    contract = {
         "step": step_n,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "files_created": created,
@@ -141,6 +183,8 @@ def generate_contract(step_n: int, prev_tag: str | None = None) -> dict[str, Any
         "deviations": deviations,
         "known_issues": known_issues,
     }
+    _validate_contract_entries(contract)
+    return contract
 
 
 def main() -> None:

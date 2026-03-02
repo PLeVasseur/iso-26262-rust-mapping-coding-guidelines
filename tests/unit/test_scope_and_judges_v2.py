@@ -4,7 +4,11 @@ import json
 from pathlib import Path
 
 from scripts.judges_v2.run_judges import run_judges
-from scripts.judges_v2.stage_b import _compute_verdict, _normalize_judge_decision
+from scripts.judges_v2.stage_b import (
+    _build_judge_prompt,
+    _compute_verdict,
+    _normalize_judge_decision,
+)
 from scripts.validation_v2.run_scope_check import run_scope_check
 from validation.scope import check_scope_cardinality
 
@@ -40,6 +44,12 @@ def test_scope_unknown_empty_case_and_path_normalization() -> None:
     assert result_empty["family_count"] == 0
     assert passed_path
     assert result_path["family_count"] == 1
+
+
+def test_scope_case_insensitivity() -> None:
+    passed, result = check_scope_cardinality(["atomicbool", "ORDERING"], "X")
+    assert passed
+    assert result["family_count"] == 1
 
 
 def test_scope_per_prompt_override() -> None:
@@ -82,6 +92,21 @@ def test_judge_decision_normalization_and_verdict_logic() -> None:
         )
         == "blocked"
     )
+
+
+def test_build_judge_prompt_uses_rst_not_draft_json() -> None:
+    prompt = _build_judge_prompt(
+        "technical_accuracy",
+        {
+            "prompt_template_text": "Judge this.",
+            "required_output_schema": {"required": ["decision"]},
+            "forbidden_patterns": ["abstain"],
+        },
+        ".. rust-example::\n   :mode: noncompliant\n\n   let _x = 1;",
+        ["AtomicBool"],
+    )
+    assert ".. rust-example::" in prompt
+    assert '"construct_terms"' not in prompt
 
 
 def test_scope_runner_and_judges_runner_integration(tmp_path: Path) -> None:
@@ -133,6 +158,7 @@ def test_scope_runner_and_judges_runner_integration(tmp_path: Path) -> None:
         run_dir=run_dir,
         contracts_path=Path("config/s0/judge_prompt_contracts.yaml"),
         scope_report_path=run_dir / "scope_cardinality_report.json",
+        judge_mode="heuristic",
     )
     assert report["review_count"] == 0
     assert report["candidate_grade_count"] == 1

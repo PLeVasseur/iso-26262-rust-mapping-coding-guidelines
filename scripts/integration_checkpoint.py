@@ -164,6 +164,11 @@ def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
         results.extend(
             [
                 {
+                    "check": "standalone_judge_mode_llm",
+                    "passed": str(standalone_judges.get("judge_mode", "")).strip().lower() == "llm",
+                    "detail": f"judge_mode={standalone_judges.get('judge_mode', 'unknown')}",
+                },
+                {
                     "check": "standalone_judges_non_abstain_triplet",
                     "passed": _standalone_has_non_abstain_for_all_judges(standalone_judges),
                     "detail": "at least one target has 3 non-abstain judge verdicts",
@@ -173,7 +178,32 @@ def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
                     "passed": candidates >= 1,
                     "detail": f"candidates={candidates} (need >=1)",
                 },
+                {
+                    "check": "judge_prompt_contract_usage_trace_present",
+                    "passed": bool(standalone_judges.get("prompt_contract_usage_trace_present")),
+                    "detail": str(
+                        standalone_judges.get("prompt_contract_usage_trace_path", "missing")
+                    ),
+                },
             ]
+        )
+
+    judge_calibration = _load_report(run_dir, "judge_calibration_report.json")
+    results.append(
+        {
+            "check": "judge_calibration_report_exists",
+            "passed": judge_calibration is not None,
+            "detail": str(run_dir / "judge_calibration_report.json"),
+        }
+    )
+    if judge_calibration:
+        thresholds_met = bool(judge_calibration.get("thresholds_met"))
+        results.append(
+            {
+                "check": "judge_calibration_thresholds_met",
+                "passed": thresholds_met,
+                "detail": f"thresholds_met={thresholds_met}",
+            }
         )
 
     evidence = _load_report(run_dir, "evidence_synthesizer_gate_report.json")
