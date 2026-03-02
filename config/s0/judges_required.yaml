@@ -1,9 +1,5 @@
 version: 1
 judges:
-- evidence_auditor
 - functional_safety_relevance
-- usability_actionability
-- golden_shape_comparator
-- exemplar_usage_auditor
-- writer_output_auditor
-- holistic_pairwise
+- technical_accuracy
+- pedagogical_quality

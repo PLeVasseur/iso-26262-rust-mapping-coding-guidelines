@@ -30,3 +30,28 @@
   custom directives/roles in docutils parsing.
 - Confirm monolith source `scripts/retrieval/services/s0_phase_a_service.py` is
   unchanged in this step.
+
+## Step 4 Scope + Judges Triage
+
+- Run `uv run python scripts/validation_v2/run_scope_check.py --run-dir <run_dir>`
+  and verify `<run_dir>/scope_cardinality_report.json` exists with `results`,
+  `blocked_count`, and `pass_rate`.
+- Spot-check scope normalization (`std::...::AtomicBool` style terms) and verify
+  family mapping does not over-count unknown terms.
+- Run `uv run python scripts/judges_v2/run_judges.py --run-dir <run_dir>` and
+  verify `<run_dir>/standalone_judge_aggregate.json` is written.
+- Confirm standalone judge aggregate has:
+  - 3 judges only (`technical_accuracy`, `functional_safety_relevance`,
+    `pedagogical_quality`)
+  - `review_count == 0`
+  - `verdict_model: "binary_pass_fail"`
+  - `verdict_triage_applied: true`
+- Run `uv run python scripts/validate_judge_calibration.py --run-dir <run_dir>`
+  and verify `judge_calibration_report.json` has `calibration_passed: true`.
+- Check `docs/evidence_auditor_diagnosis.md` for root-cause decision and ensure
+  it explicitly states keep-vs-replace disposition.
+- Check `docs/judge_calibration_bad_rst_results.md` and verify known-bad files
+  produce actionable failure reason codes and renderer-fixed files clear
+  mechanical failures.
+- Confirm monolith source `scripts/retrieval/services/s0_phase_a_service.py` is
+  unchanged in this step.

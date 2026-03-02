@@ -9,3 +9,14 @@ must_pass_prompt_ids:
 dedup:
 - span_hash
 - normalized_excerpt_hash
+lane_policy:
+  publishable_lane:
+    description: all blocking gates pass
+    requires:
+      - evidence_gate_status == pass
+      - citation_resolution_status == pass
+      - output_conformance_status == pass
+      - judge_gate_status == pass
+  diagnostic_lane:
+    description: collect full diagnostics regardless of gate outcome
+    report_all_gates: true

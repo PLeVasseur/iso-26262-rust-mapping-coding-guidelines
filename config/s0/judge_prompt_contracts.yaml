@@ -1,140 +1,126 @@
-contract_version: 1
+contract_version: 2
+notes: |
+  Step 4 judge refocus. All judges evaluate rendered RST and must return
+  pass/fail with no abstentions.
+
 roles:
-  evidence_auditor:
-    prompt_template_id: judge-evidence-v1
+  technical_accuracy:
+    prompt_template_id: judge-technical-v2
+    input: rendered_rst
+    verdict_type: hard
     prompt_template_text: |
-      Evaluate evidence grounding for draft {{draft_id}} using evidence bundle {{evidence_ids}}.
-      Apply schema, worked examples, and forbidden patterns from prompt context.
-      Return JSON only.
-    allowed_placeholders:
-    - draft_id
-    - draft_record
-    - evidence_ids
-    - evidence_bundle
-    required_inputs:
-    - drafts_jsonl
-    - evidence_bundle
+      You are evaluating the technical accuracy of a Rust coding guideline
+      rendered as reStructuredText.
+
+      You will receive:
+      1. The complete rendered RST file.
+      2. The construct scope.
+
+      Evaluate these criteria:
+      1. HAZARD DESCRIPTION accuracy and specificity.
+      2. CODE CORRECTNESS in non-compliant and compliant examples.
+      3. API ACCURACY for standard library and language references.
+      4. RATIONALE soundness and mechanism-level explanation.
+
+      Return JSON only:
+      {
+        "decision": "pass" | "fail",
+        "reason_codes": ["<code1>", "<code2>"],
+        "summary": "<1-2 sentences>",
+        "details": {
+          "hazard_accurate": true | false,
+          "code_correct": true | false,
+          "api_accurate": true | false,
+          "rationale_sound": true | false
+        }
+      }
+
+      Do not abstain. Fail if any criterion is not met.
     required_output_schema:
       required:
-      - pass
-      - results
+        - decision
+        - reason_codes
+        - summary
+        - details
     forbidden_patterns:
-    - style-only judgment
+      - abstain
+      - style-only
+
   functional_safety_relevance:
-    prompt_template_id: judge-safety-v1
+    prompt_template_id: judge-safety-v2
+    input: rendered_rst
+    verdict_type: hard
     prompt_template_text: |
-      Evaluate functional safety relevance and significance for {{draft_id}}.
-      Return JSON only.
-    allowed_placeholders:
-    - draft_id
-    - draft_record
-    - significance_anchors
-    required_inputs:
-    - drafts_jsonl
-    - significance_anchors
+      You are evaluating whether this guideline is relevant to functional
+      safety in ISO 26262 automotive software.
+
+      Evaluate these criteria:
+      1. HAZARD MANIFESTATION in safety-critical systems.
+      2. SEVERITY ASSESSMENT realism in ASIL-B style contexts.
+      3. CONSTRUCT RELEVANCE to automotive/embedded Rust.
+      4. ACTIONABILITY under safety coding standards.
+
+      Return JSON only:
+      {
+        "decision": "pass" | "fail",
+        "reason_codes": ["<code1>", "<code2>"],
+        "summary": "<1-2 sentences>",
+        "significance": 1-5,
+        "details": {
+          "hazard_relevant": true | false,
+          "severity_reasonable": true | false,
+          "construct_used_in_automotive": true | false,
+          "actionable_in_iso26262": true | false
+        }
+      }
+
+      Do not abstain. Fail if significance < 2.
     required_output_schema:
       required:
-      - pass
-      - results
+        - decision
+        - reason_codes
+        - summary
+        - significance
+        - details
     forbidden_patterns:
-    - evidence grounding assertions without evidence pass
-  usability_actionability:
-    prompt_template_id: judge-usability-v1
+      - abstain
+
+  pedagogical_quality:
+    prompt_template_id: judge-pedagogy-v2
+    input: rendered_rst
+    verdict_type: hard
     prompt_template_text: |
-      Evaluate usability/actionability for {{draft_id}}.
-      Return JSON only.
-    allowed_placeholders:
-    - draft_id
-    - draft_record
-    - style_rules
-    required_inputs:
-    - drafts_jsonl
-    - style_context_bundle
+      You are evaluating pedagogical quality for embedded/automotive developers
+      transitioning from C/C++ to Rust.
+
+      Evaluate:
+      1. TITLE QUALITY (clear and prescriptive).
+      2. BODY ACTIONABILITY (specific developer actions).
+      3. EXAMPLE EFFECTIVENESS (realistic contrast and idiomatic mitigation).
+      4. RATIONALE PERSUASION (why + mechanism).
+      5. BIBLIOGRAPHY UTILITY (authoritative, practical references).
+
+      Return JSON only:
+      {
+        "decision": "pass" | "fail",
+        "reason_codes": ["<code1>", "<code2>"],
+        "summary": "<1-2 sentences>",
+        "details": {
+          "title_prescriptive": true | false,
+          "body_actionable": true | false,
+          "examples_effective": true | false,
+          "rationale_persuasive": true | false,
+          "bibliography_useful": true | false
+        }
+      }
+
+      Do not abstain.
     required_output_schema:
       required:
-      - pass
-      - results
+        - decision
+        - reason_codes
+        - summary
+        - details
     forbidden_patterns:
-    - candidate verdict assignment
-  golden_shape_comparator:
-    prompt_template_id: judge-shape-v1
-    prompt_template_text: |
-      Compare generated draft {{draft_file}} against nearest exemplar {{exemplar_file}} and style rules.
-      Return JSON only.
-    allowed_placeholders:
-    - draft_file
-    - exemplar_file
-    - style_rules
-    required_inputs:
-    - generated_guidelines_rst
-    - curated_exemplars
-    - style_guideline
-    required_output_schema:
-      required:
-      - results
-      - all_non_abstain_pass
-    forbidden_patterns:
-    - content-only pass without style and shape checks
-  exemplar_usage_auditor:
-    prompt_template_id: judge-exemplar-usage-v1
-    prompt_template_text: |
-      Validate exemplar usage trace for target {{target_id}}.
-      Return JSON only.
-    allowed_placeholders:
-    - target_id
-    - selection_trace
-    - synthesis_trace
-    required_inputs:
-    - exemplar_selection_trace
-    - synthesis_input_trace
-    - golden_exemplar_lock_report
-    required_output_schema:
-      required:
-      - run_id
-      - status
-      - results
-    forbidden_patterns:
-    - candidate verdict assignment
-  writer_output_auditor:
-    prompt_template_id: judge-writer-output-v1
-    prompt_template_text: |
-      Validate writer role outputs for draft {{draft_id}}.
-      Return JSON only.
-    allowed_placeholders:
-    - draft_id
-    - writer_outputs
-    - style_rules
-    required_inputs:
-    - writer_subagent_outputs
-    - drafts_jsonl
-    - style_context_bundle
-    required_output_schema:
-      required:
-      - run_id
-      - status
-      - results
-    forbidden_patterns:
-    - candidate verdict assignment
-  holistic_pairwise:
-    prompt_template_id: judge-holistic-v1
-    prompt_template_text: |
-      Aggregate prior judge outputs for draft {{draft_id}} under candidate policy.
-      This role is diagnostic-only.
-      Return JSON only.
-    allowed_placeholders:
-    - draft_id
-    - evidence_pass
-    - safety_pass
-    - usability_pass
-    - shape_pass
-    - usage_audit
-    - writer_audit
-    required_inputs:
-    - judge_pass_artifacts
-    required_output_schema:
-      required:
-      - pass
-      - results
-      - aggregate
-    forbidden_patterns:
-    - candidate verdict without policy prerequisites
+      - abstain
+      - evidence grounding
