@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import urllib.request
@@ -129,6 +130,31 @@ def main() -> None:
             ok = False
     else:
         print("  [WARN] Exemplar manifest: not yet created")
+
+    fls_source_dir = Path("data/fls_source")
+    fls_db_path = Path("data/fls_spec.db")
+    source_available = fls_source_dir.exists() and any(fls_source_dir.glob("*.rst"))
+    db_available = False
+    if fls_db_path.exists():
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(f"file:{fls_db_path}?mode=ro", uri=True)
+            db_available = conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0] > 0
+        except sqlite3.Error:
+            db_available = False
+        finally:
+            if conn is not None:
+                conn.close()
+
+    if source_available or db_available:
+        modes = []
+        if source_available:
+            modes.append("source")
+        if db_available:
+            modes.append("db")
+        print(f"  [OK]   FLS assets: available ({'+'.join(modes)})")
+    else:
+        print("  [WARN] FLS assets: no local source/db yet (Step 6 will fetch/build)")
 
     if ok:
         print("\n[OK] Environment ready")
