@@ -43,11 +43,21 @@
 - Confirm standalone judge aggregate has:
   - 3 judges only (`technical_accuracy`, `functional_safety_relevance`,
     `pedagogical_quality`)
+  - `judge_mode == "llm"`
+  - `judge_invocation_success_rate == 1.0`
+  - `llm_invocation_errors` count is `0`
+  - `prompt_contract_usage_trace_present == true`
   - `review_count == 0`
   - `verdict_model: "binary_pass_fail"`
   - `verdict_triage_applied: true`
 - Run `uv run python scripts/validate_judge_calibration.py --run-dir <run_dir>`
   and verify `judge_calibration_report.json` has `calibration_passed: true`.
+- Check `judge_calibration_report.json` fields explicitly:
+  - `sample_counts.positive_n` and `sample_counts.negative_n`
+  - `confidence_mode`
+  - `warnings` for low-sample confidence and degraded-sample exclusion
+  - `threshold_policy.current_thresholds` vs `threshold_policy.target_thresholds`
+  - `threshold_policy.ratchet_review_step` (must point to Step 9)
 - Check `docs/evidence_auditor_diagnosis.md` for root-cause decision and ensure
   it explicitly states keep-vs-replace disposition.
 - Check `docs/judge_calibration_bad_rst_results.md` and verify known-bad files

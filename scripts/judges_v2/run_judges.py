@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,12 @@ def _handle_missing_verdicts(
     return filled, warnings, to_diagnostic_lane
 
 
+def _append_jsonl(path: Path, event: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, sort_keys=True) + "\n")
+
+
 def run_judges(
     run_dir: Path,
     contracts_path: Path,
@@ -116,7 +123,24 @@ def run_judges(
     triage_rows: list[dict[str, Any]] = []
     trace_rows: list[dict[str, Any]] = []
     warning_rows: list[dict[str, Any]] = []
+    invocation_errors: list[dict[str, Any]] = []
     scope_blocked_count = 0
+    invocation_success_count = 0
+    invocation_total_count = 0
+
+    progress_path = run_dir / "judge_runner_progress.jsonl"
+    if progress_path.exists():
+        progress_path.unlink()
+
+    eligible_target_count = 0
+    for rst_path in sorted((run_dir / "rerendered_rst").glob("*.rst")):
+        prompt_id = _prompt_from_file(rst_path)
+        draft = drafts_by_prompt.get(_prompt_key(prompt_id), {})
+        if str(draft.get("status", "")).strip().lower() == "abstain":
+            continue
+        if scope_by_prompt.get(_prompt_key(prompt_id), True):
+            eligible_target_count += 1
+    expected_total_calls = eligible_target_count * len(STAGE_B_JUDGES)
 
     rerender_dir = run_dir / "rerendered_rst"
     for rst_path in sorted(rerender_dir.glob("*.rst")):
@@ -151,7 +175,28 @@ def run_judges(
 
         per_judge_decisions: dict[str, str] = {}
         judge_verdict_rows: list[dict[str, Any]] = []
-        for judge_name in STAGE_B_JUDGES:
+        for judge_index, judge_name in enumerate(STAGE_B_JUDGES, start=1):
+            invocation_total_count += 1
+            print(
+                f"judges: call {invocation_total_count}/{expected_total_calls} ({judge_name} on {prompt_id})",
+                file=sys.stderr,
+                flush=True,
+            )
+            _append_jsonl(
+                progress_path,
+                {
+                    "type": "judge_call_start",
+                    "timestamp": time.time(),
+                    "global_call_index": invocation_total_count,
+                    "global_call_total": expected_total_calls,
+                    "judge_index": judge_index,
+                    "judge_total": len(STAGE_B_JUDGES),
+                    "prompt_id": prompt_id,
+                    "target_id": str(draft.get("target_id", "")).strip(),
+                    "judge": judge_name,
+                },
+            )
+            call_start = time.time()
             try:
                 verdict = evaluate_judge(
                     judge_name=judge_name,
@@ -162,23 +207,55 @@ def run_judges(
                     model=model,
                 )
             except Exception as exc:  # pragma: no cover - defensive path
-                warning_rows.append(
+                error = {
+                    "target_id": str(draft.get("target_id", "")).strip(),
+                    "prompt_id": str(draft.get("target_prompt_id", prompt_id)).strip() or prompt_id,
+                    "judge": judge_name,
+                    "error": f"judge_invocation_exception:{type(exc).__name__}",
+                }
+                invocation_errors.append(error)
+                warning_rows.append({**error, "warning": error["error"]})
+                _append_jsonl(
+                    progress_path,
+                    {
+                        "type": "judge_call_end",
+                        "timestamp": time.time(),
+                        "global_call_index": invocation_total_count,
+                        "prompt_id": prompt_id,
+                        "judge": judge_name,
+                        "ok": False,
+                        "duration_ms": int((time.time() - call_start) * 1000),
+                        "error": error["error"],
+                    },
+                )
+                continue
+            decision = str(verdict.get("decision", "fail")).strip().lower() or "fail"
+            reason_codes = [str(item) for item in verdict.get("reason_codes", []) if str(item)]
+            transport_failure = any(
+                token in code
+                for token in ("judge_transport_failure", "judge_output_empty")
+                for code in reason_codes
+            )
+            if judge_mode == "llm" and transport_failure:
+                invocation_errors.append(
                     {
                         "target_id": str(draft.get("target_id", "")).strip(),
                         "prompt_id": str(draft.get("target_prompt_id", prompt_id)).strip()
                         or prompt_id,
                         "judge": judge_name,
-                        "warning": f"judge_invocation_exception:{type(exc).__name__}",
+                        "error": ",".join(reason_codes)
+                        if reason_codes
+                        else "judge_transport_failure",
                     }
                 )
-                continue
-            decision = str(verdict.get("decision", "fail")).strip().lower() or "fail"
+            else:
+                invocation_success_count += 1
             per_judge_decisions[judge_name] = decision
             judge_verdict_rows.append(
                 {
                     "judge": judge_name,
                     "verdict": decision,
-                    "reason_codes": verdict.get("reason_codes", []),
+                    "reason_codes": reason_codes,
                     "summary": verdict.get("summary", ""),
                 }
             )
@@ -192,15 +269,47 @@ def run_judges(
                     "prompt_template_id": verdict.get("prompt_template_id", ""),
                     "prompt_hash": verdict.get("prompt_hash", ""),
                     "decision": decision,
-                    "reason_codes": verdict.get("reason_codes", []),
+                    "reason_codes": reason_codes,
+                    "telemetry": verdict.get("telemetry", {}),
                 }
             )
+            _append_jsonl(
+                progress_path,
+                {
+                    "type": "judge_call_end",
+                    "timestamp": time.time(),
+                    "global_call_index": invocation_total_count,
+                    "prompt_id": prompt_id,
+                    "judge": judge_name,
+                    "ok": not transport_failure,
+                    "duration_ms": int((time.time() - call_start) * 1000),
+                    "decision": decision,
+                    "reason_codes": reason_codes,
+                },
+            )
 
-        per_judge_decisions, missing_warnings, force_diagnostic_lane = _handle_missing_verdicts(
-            target_id=str(draft.get("target_id", "")).strip() or prompt_id,
-            per_judge_decisions=per_judge_decisions,
-            expected_judges=STAGE_B_JUDGES,
-        )
+        if judge_mode == "heuristic":
+            per_judge_decisions, missing_warnings, force_diagnostic_lane = _handle_missing_verdicts(
+                target_id=str(draft.get("target_id", "")).strip() or prompt_id,
+                per_judge_decisions=per_judge_decisions,
+                expected_judges=STAGE_B_JUDGES,
+            )
+        else:
+            missing_warnings = []
+            force_diagnostic_lane = False
+            missing_judges = [name for name in STAGE_B_JUDGES if name not in per_judge_decisions]
+            if missing_judges:
+                invocation_errors.append(
+                    {
+                        "target_id": str(draft.get("target_id", "")).strip(),
+                        "prompt_id": str(draft.get("target_prompt_id", prompt_id)).strip()
+                        or prompt_id,
+                        "judge": ",".join(missing_judges),
+                        "error": "missing_judge_verdicts",
+                    }
+                )
+                for judge_name in missing_judges:
+                    per_judge_decisions[judge_name] = "fail"
         for warning in missing_warnings:
             warning_rows.append(
                 {
@@ -256,9 +365,20 @@ def run_judges(
         encoding="utf-8",
     )
 
+    invocation_success_rate = (
+        float(invocation_success_count) / float(invocation_total_count)
+        if invocation_total_count
+        else 0.0
+    )
+    llm_hard_failure = judge_mode == "llm" and (
+        invocation_success_count != invocation_total_count or bool(invocation_errors)
+    )
+
     report = {
         "run_id": run_dir.name,
-        "status": "pass" if candidate_grade_count >= 1 else "fail",
+        "status": (
+            "error" if llm_hard_failure else ("pass" if candidate_grade_count >= 1 else "fail")
+        ),
         "judge_mode": judge_mode,
         "model": model or "default",
         "prompt_contract_version": contracts.get("contract_version"),
@@ -276,11 +396,28 @@ def run_judges(
         "drafts": triage_rows,
         "diagnostic_count": diagnostic_count,
         "warnings": warning_rows,
+        "llm_invocation_errors": invocation_errors,
+        "judge_invocation_success_count": invocation_success_count,
+        "judge_invocation_total_count": invocation_total_count,
+        "judge_invocation_success_rate": round(invocation_success_rate, 4),
         "verdict_triage_applied": True,
     }
 
     out_path = run_dir / "standalone_judge_aggregate.json"
     out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    progress_summary = {
+        "status": report["status"],
+        "judge_mode": judge_mode,
+        "judge_invocation_success_count": invocation_success_count,
+        "judge_invocation_total_count": invocation_total_count,
+        "judge_invocation_success_rate": round(invocation_success_rate, 4),
+        "llm_invocation_error_count": len(invocation_errors),
+    }
+    (run_dir / "judge_runner_progress_summary.json").write_text(
+        json.dumps(progress_summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return report
 
 
@@ -318,6 +455,8 @@ def main() -> int:
             indent=2,
         )
     )
+    if report["judge_mode"] == "llm" and report.get("status") == "error":
+        return 1
     return 0
 
 

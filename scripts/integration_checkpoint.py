@@ -185,6 +185,19 @@ def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
                         standalone_judges.get("prompt_contract_usage_trace_path", "missing")
                     ),
                 },
+                {
+                    "check": "judge_invocation_success_rate_full",
+                    "passed": float(standalone_judges.get("judge_invocation_success_rate", 0.0))
+                    >= 1.0,
+                    "detail": f"success_rate={standalone_judges.get('judge_invocation_success_rate', 0.0)}",
+                },
+                {
+                    "check": "judge_invocation_error_count_zero",
+                    "passed": len(standalone_judges.get("llm_invocation_errors", [])) == 0,
+                    "detail": (
+                        f"error_count={len(standalone_judges.get('llm_invocation_errors', []))}"
+                    ),
+                },
             ]
         )
 

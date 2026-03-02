@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,6 @@ STAGE_B_JUDGES = [
     "pedagogical_quality",
 ]
 DEFAULT_JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "")
-MAX_JUDGE_RST_CHARS = int(os.environ.get("JUDGE_MAX_RST_CHARS", "4000"))
 
 
 def load_judge_contracts(path: Path) -> dict[str, Any]:
@@ -38,18 +38,11 @@ def _build_judge_prompt(
     template = str(judge_contract.get("prompt_template_text", "")).strip()
     required = judge_contract.get("required_output_schema", {})
     forbidden = judge_contract.get("forbidden_patterns", [])
-    trimmed_rst = rst_content
-    if len(trimmed_rst) > MAX_JUDGE_RST_CHARS:
-        trimmed_rst = (
-            trimmed_rst[:MAX_JUDGE_RST_CHARS]
-            + "\n\n[TRUNCATED_FOR_JUDGE_INPUT due to context budget]"
-        )
-
     return (
         f"{template}\n\n"
         f"Required schema fields: {json.dumps(required, sort_keys=True)}\n"
         f"Forbidden patterns: {json.dumps(forbidden)}\n\n"
-        f"=== RENDERED GUIDELINE (RST) ===\n{trimmed_rst}\n\n"
+        f"=== RENDERED GUIDELINE (RST) ===\n{rst_content}\n\n"
         f"=== CONSTRUCT SCOPE ===\n{json.dumps(construct_terms)}\n"
         f"=== JUDGE ===\n{judge_name}\n"
     )
@@ -218,10 +211,21 @@ def _llm_evaluate(
 ) -> tuple[dict[str, Any], str, list[str]]:
     raw_reason_codes: list[str] = []
     session_id = create_session(title=f"judge-{judge_name}")
+    transport_start = time.time()
     if model:
         exit_code, output = run_opencode(session_id, prompt, model=model)
     else:
         exit_code, output = run_opencode(session_id, prompt)
+    transport_duration_ms = int((time.time() - transport_start) * 1000)
+    transport_meta = {
+        "session_id": session_id,
+        "transport_start_epoch_s": transport_start,
+        "transport_duration_ms": transport_duration_ms,
+        "transport_exit_code": exit_code,
+        "transport_timeout": exit_code == -1,
+        "parse_ok": False,
+        "schema_ok": False,
+    }
 
     def _invoke_retry() -> tuple[int, Any]:
         if model:
@@ -235,6 +239,7 @@ def _llm_evaluate(
                 "summary": f"Judge transport failure (exit={exit_code}).",
                 "reason_codes": [f"judge_transport_failure:{exit_code}"],
                 "details": {},
+                "telemetry": transport_meta,
             },
             "",
             [f"judge_transport_failure:{exit_code}"],
@@ -246,6 +251,7 @@ def _llm_evaluate(
                 "summary": "Judge returned no output.",
                 "reason_codes": ["judge_output_empty"],
                 "details": {},
+                "telemetry": transport_meta,
             },
             "",
             ["judge_output_empty"],
@@ -254,10 +260,12 @@ def _llm_evaluate(
     if isinstance(output, dict) and {"decision", "summary"}.issubset(set(output.keys())):
         parsed = output
         raw_text = json.dumps(output)
+        transport_meta["parse_ok"] = True
     else:
         raw_text = output.get("raw_text", "") if isinstance(output, dict) else str(output)
         try:
             parsed = json.loads(raw_text)
+            transport_meta["parse_ok"] = True
         except json.JSONDecodeError:
             parsed = {}
 
@@ -304,6 +312,7 @@ def _llm_evaluate(
                 "summary": summary,
                 "reason_codes": reason_codes,
                 "details": {},
+                "telemetry": transport_meta,
             },
             raw_text,
             reason_codes,
@@ -329,6 +338,10 @@ def _llm_evaluate(
         parsed["summary"] = (
             str(parsed.get("summary", "")).strip() or "Judge schema/policy violation."
         )
+    else:
+        transport_meta["schema_ok"] = True
+
+    parsed["telemetry"] = transport_meta
 
     return parsed, raw_text, raw_reason_codes
 
