@@ -1,0 +1,12 @@
+{
+  "commit_sha": "fa92ce41cca3b55e3e66201177aab5a031bcdc58",
+  "file_hashes": {
+    "scripts/common/guideline_templates.py": "c47553876e7cbabad3beea648bf91057af6a1535f672ed7df49c474098fa8d09",
+    "scripts/extract_rust_examples.py": "10e423bba0db4fe9f89991539258c90687919559695c9731c4030660cf16d5d4",
+    "scripts/rustdoc_utils.py": "3bc7e21dd79ea5451e0ca5dc8a751db84cfa1670912061206256d519b8575b74",
+    "make.py": "f1ec96f88d666c9d6eb4db45fe29100a0959cd565b43eb1abfbb336f1e5a30d5",
+    "src/spec.lock": "7e056bb9680a9e92a687f29a0b11c680c1c6882c31137564fd2a76e4f32abe09",
+    "src/examples_prelude.rs": "cc38dd1ae88388ba7b307db9a2ab561d475f4fa24f4dc341cc697057918ed6ac",
+    "exts/coding_guidelines/__init__.py": "c11deeb8f3b4cc4dab590b1d39b610a7bb6c01d4202d309c3c64850b34c49ba7"
+  }
+}
