@@ -1,11 +1,10 @@
-# Step Deviations
+# Step 2 Deviations
 
 ## Deviations
-
-- Plan files are loaded from `$OPENCODE_CONFIG_DIR/plans/v17_2_plan` instead of `plans/v16` inside this repository, because the authoritative plan lives in the OpenCode config directory and this repository has no local plan files.
-- `scripts/step_orchestrator.py` uses v17.2 step range `0..14` and v17.2 dependency graph from `OVERVIEW.md` instead of the legacy v16 `0..15` graph embedded in the step draft.
-- OpenCode health verification uses `/global/health` as the canonical machine endpoint; `/health` returns the web UI shell in this OpenCode version.
+- Implemented a standalone renderer (`scripts/rendering_v2/rst_renderer.py`) rather than delegating to upstream `guideline_rst_template()` directly; this keeps deterministic control over Step 2-specific fields (`:edition:`, miri floor behavior, URL fallback, citation map artifact).
+- Added `guideline_manifest.json` as an extra traceability artifact in `rerendered_rst/` in addition to the requested `rerender_manifest.json` and `citation_key_map.json`.
+- Added unit tests in `tests/unit/test_rendering_v2.py` for deterministic ID generation and artifact rerender integration.
 
 ## Known Issues
-
-- None.
+- `fls` remains a deterministic placeholder (`fls_<sha12>`) until Step 7 provides authoritative FLS paragraph resolution.
+- A full 14-exemplar roundtrip conformance test is not yet implemented in this step; current tests cover renderer mechanics and rerender integration only.

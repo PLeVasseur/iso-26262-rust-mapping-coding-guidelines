@@ -94,6 +94,10 @@ roles:
       - compliant_narrative
       - compliant_code
       - example_citation_keys
+      optional:
+      - compliant_mode
+      - non_compliant_miri_intent
+      - compliant_miri_intent
     forbidden_patterns:
     - template stub code
     - unrelated construct examples

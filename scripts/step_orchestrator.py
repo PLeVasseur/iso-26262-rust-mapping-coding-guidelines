@@ -67,6 +67,7 @@ CP_C_AFTER_STEP = 13
 OPENCODE_SERVER = "http://localhost:4096"
 CONTRACTS_DIR = PIPELINE_ROOT / ".cache" / "step_contracts"
 REVIEWS_DIR = PIPELINE_ROOT / ".cache" / "step_reviews"
+RUN_LOGS_DIR = PIPELINE_ROOT / ".cache" / "step_runs"
 
 
 @dataclass
@@ -81,6 +82,41 @@ class StepResult:
     halt_reason: str = ""
     agent_signaled_complete: bool = False
     retry_of_rollback: bool = False
+    run_log_path: str = ""
+
+
+def _resolve_expected_file_path(raw_path: str) -> Path:
+    """Resolve planned file references to concrete repository paths."""
+    candidate = PIPELINE_ROOT / raw_path
+    if candidate.exists():
+        return candidate
+
+    basename_aliases = {
+        "writer_prompt_contracts.yaml": PIPELINE_ROOT
+        / "config"
+        / "s0"
+        / "writer_prompt_contracts.yaml",
+    }
+    alias = basename_aliases.get(raw_path)
+    if alias is not None:
+        return alias
+    return candidate
+
+
+def _write_run_log(step_n: int, session_id: str, exit_code: int, stdout: str, stderr: str) -> Path:
+    RUN_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = int(time.time())
+    path = RUN_LOGS_DIR / f"step_{step_n:02d}_{stamp}.json"
+    payload = {
+        "step": step_n,
+        "session_id": session_id,
+        "exit_code": exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return path
 
 
 def load_step_file(step_n: int) -> str:
@@ -181,18 +217,19 @@ Do not proceed to the next step. Stop after this step.
 """
 
 
-def run_opencode_session(step_n: int, prompt: str) -> tuple[int, str, str]:
-    session_id = f"step-{step_n:02d}-{int(time.time())}"
+def run_opencode_session(step_n: int, prompt: str) -> tuple[int, str, str, str, Path | None]:
+    requested_session = f"step-{step_n:02d}-{int(time.time())}"
     timeout = STEP_TIMEOUTS.get(step_n, 3600)
     try:
+        # Passing --session with a non-existent ID on attached runs can yield a
+        # successful exit with empty stdout/stderr. For fresh step execution we
+        # omit --session and let OpenCode allocate a session server-side.
         result = subprocess.run(
             [
                 "opencode",
                 "run",
                 "--attach",
                 OPENCODE_SERVER,
-                "--session",
-                session_id,
                 "--format",
                 "json",
                 prompt,
@@ -202,9 +239,37 @@ def run_opencode_session(step_n: int, prompt: str) -> tuple[int, str, str]:
             timeout=timeout,
             check=False,
         )
-        return result.returncode, result.stdout, result.stderr
+        if result.returncode == 0 and not result.stdout.strip():
+            result = subprocess.CompletedProcess(
+                args=result.args,
+                returncode=86,
+                stdout=result.stdout,
+                stderr="opencode run returned success but emitted no output",
+            )
+
+        log_path = _write_run_log(
+            step_n,
+            requested_session,
+            result.returncode,
+            result.stdout,
+            result.stderr,
+        )
+        return (
+            result.returncode,
+            result.stdout,
+            result.stderr,
+            requested_session,
+            log_path,
+        )
     except subprocess.TimeoutExpired:
-        return -1, "", f"TIMEOUT after {timeout}s"
+        log_path = _write_run_log(
+            step_n,
+            requested_session,
+            -1,
+            "",
+            f"TIMEOUT after {timeout}s",
+        )
+        return -1, "", f"TIMEOUT after {timeout}s", requested_session, log_path
 
 
 def validate_dod(step_n: int) -> dict[str, bool]:
@@ -221,7 +286,8 @@ def validate_dod(step_n: int) -> dict[str, bool]:
             filepath = match.group(1).strip()
             if filepath.startswith("$") or "{" in filepath:
                 continue
-            results[f"file_exists:{filepath}"] = (PIPELINE_ROOT / filepath).exists()
+            resolved = _resolve_expected_file_path(filepath)
+            results[f"file_exists:{filepath}"] = resolved.exists()
 
     test_result = subprocess.run(
         ["uv", "run", "pytest", "tests/", "-x", "--tb=line", "-q", "--timeout=60"],
@@ -321,6 +387,12 @@ def attempt_rollback(step_n: int) -> bool:
         text=True,
         check=False,
     )
+    if os.environ.get("ORCHESTRATOR_ALLOW_HARD_ROLLBACK", "0") != "1":
+        print("  hard rollback disabled (set ORCHESTRATOR_ALLOW_HARD_ROLLBACK=1 to enable)")
+        return False
+
+    safety_tag = f"pre-rollback-step-{step_n:02d}-{int(time.time())}"
+    subprocess.run(["git", "tag", safety_tag, "HEAD"], cwd=PIPELINE_ROOT, check=False)
     result = subprocess.run(
         ["git", "reset", "--hard", prev_tag],
         cwd=PIPELINE_ROOT,
@@ -328,6 +400,8 @@ def attempt_rollback(step_n: int) -> bool:
         text=True,
         check=False,
     )
+    if result.returncode == 0:
+        print(f"  rollback complete (safety tag: {safety_tag})")
     return result.returncode == 0
 
 
@@ -364,6 +438,8 @@ def generate_step_review(step_n: int, result: StepResult) -> Path:
     ]
     if result.halt_reason:
         lines.append(f"**Halt Reason:** {result.halt_reason}")
+    if result.run_log_path:
+        lines.append(f"**Run Log:** `{result.run_log_path}`")
     lines.extend([f"**Duration:** {result.duration_s:.0f}s", "", "## Machine Check Results", ""])
 
     for check, passed in result.dod_checks.items():
@@ -445,17 +521,28 @@ def execute_step(step_n: int, is_retry: bool = False) -> StepResult:
 
     print("  composing prompt and launching OpenCode session...")
     prompt = compose_prompt(step_n)
-    exit_code, stdout, stderr = run_opencode_session(step_n, prompt)
+    exit_code, stdout, stderr, _session_id, run_log_path = run_opencode_session(step_n, prompt)
+    if run_log_path is not None:
+        result.run_log_path = str(run_log_path)
     if exit_code == -1:
         result.status = "halt"
-        result.halt_reason = f"STEP_TIMEOUT: {stderr}"
+        result.halt_reason = f"STEP_TIMEOUT: {stderr}; see {result.run_log_path}"
+        result.duration_s = time.monotonic() - start
+        return result
+    if exit_code != 0:
+        result.status = "halt"
+        result.halt_reason = (
+            f"opencode run failed with exit_code={exit_code}; see {result.run_log_path}"
+        )
         result.duration_s = time.monotonic() - start
         return result
 
     result.agent_signaled_complete = f"STEP_{step_n}_COMPLETE" in stdout
     if not result.agent_signaled_complete:
         result.status = "halt"
-        result.halt_reason = f"agent did not signal STEP_{step_n}_COMPLETE"
+        result.halt_reason = (
+            f"agent did not signal STEP_{step_n}_COMPLETE; see {result.run_log_path}"
+        )
 
     print("  validating Definition of Done...")
     result.dod_checks = validate_dod(step_n)
@@ -499,6 +586,10 @@ def orchestrate(start_from: int = 2, single_step: int | None = None, dry_run: bo
 
     result = execute_step(step_n)
 
+    if result.status == "halt":
+        generate_step_review(step_n, result)
+        return 1
+
     if not result.invariants_passed or not result.regression_passed:
         reason = "INVARIANT_REGRESSION" if not result.invariants_passed else "REGRESSION_DETECTED"
         print(f"\n  {reason}; attempting rollback")
@@ -512,7 +603,10 @@ def orchestrate(start_from: int = 2, single_step: int | None = None, dry_run: bo
                 return 1
         else:
             result.status = "halt"
-            result.halt_reason = f"{reason}; rollback failed"
+            result.halt_reason = (
+                f"{reason}; rollback unavailable or failed "
+                f"(set ORCHESTRATOR_ALLOW_HARD_ROLLBACK=1 to enable hard reset)"
+            )
             generate_step_review(step_n, result)
             return 1
 

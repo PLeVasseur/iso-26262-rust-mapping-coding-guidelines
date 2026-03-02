@@ -14,7 +14,13 @@
     }
   },
   "permission": {
-    "edit": "allow",
-    "bash": "allow"
+    "edit": {
+      "*": "allow",
+      "/Users/pete.levasseur/personal/safety-critical-rust-coding-guidelines/**": "deny"
+    },
+    "bash": "allow",
+    "external_directory": {
+      "/Users/pete.levasseur/personal/safety-critical-rust-coding-guidelines/**": "allow"
+    }
   }
 }
