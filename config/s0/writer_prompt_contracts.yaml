@@ -1,4 +1,9 @@
 contract_version: 1
+injected_context_budgets:
+  convention_spec_tokens: 2000
+  std_lookup_tokens: 1000
+  exemplar_tokens: 500
+  total_injected_tokens: 3500
 roles:
   evidence_synthesizer:
     prompt_template_id: writer-evidence-synth-v1

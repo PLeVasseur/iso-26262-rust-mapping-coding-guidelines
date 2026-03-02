@@ -65,3 +65,20 @@
   mechanical failures.
 - Confirm monolith source `scripts/retrieval/services/s0_phase_a_service.py` is
   unchanged in this step.
+
+## Step 7 Context + Lookup Triage
+
+- Verify `<run_dir>/convention_spec.json`, `<run_dir>/lookup_status.json`, and
+  `<run_dir>/convention_spec_validation.json` exist and are non-empty.
+- Confirm `cache/convention_spec.json` exists and `guidelines_repo_commit_sha`
+  matches the currently pinned upstream commit.
+- If `<run_dir>/convention_spec_diff.json` exists, inspect `keys_changed` and
+  ensure changes are expected for the upstream commit transition.
+- Spot-check lookup coverage in `<run_dir>/lookup_status.json`:
+  - `stdlib_entries` should be non-zero and `stdlib_source` should be
+    `core_docs_db` when `data/core_docs.db` is present.
+  - `fls_spec_db.available` should be `true` with non-zero paragraph count.
+- Inspect `writer_subagent_outputs/subagent_invocation_trace.json` and verify
+  each invocation has `injected_context` budgets recorded.
+- Run `uv run python scripts/validate_fls_matching.py` and confirm
+  `<run_dir>/fls_matching_validation.json` has `top1_accuracy >= 7`.

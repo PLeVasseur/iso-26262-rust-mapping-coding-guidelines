@@ -17,6 +17,8 @@ GUIDELINES_REPO_ROOT = Path(
     )
 )
 SPEC_LOCK_PATH = GUIDELINES_REPO_ROOT / "src" / "spec.lock"
+EXEMPLAR_MANIFEST = PROJECT_ROOT / "data" / "exemplar_manifest.json"
+_EXEMPLAR_OVERRIDES: list[dict[str, Any]] | None = None
 
 
 def _unresolved(reason: str) -> dict[str, str]:
@@ -66,6 +68,103 @@ def _preferred_chapters(tokens: list[str]) -> list[str]:
         preferred.append("Expressions")
 
     return preferred
+
+
+def _load_exemplar_overrides() -> list[dict[str, Any]]:
+    global _EXEMPLAR_OVERRIDES
+    if _EXEMPLAR_OVERRIDES is not None:
+        return _EXEMPLAR_OVERRIDES
+    if not EXEMPLAR_MANIFEST.exists():
+        _EXEMPLAR_OVERRIDES = []
+        return _EXEMPLAR_OVERRIDES
+
+    payload = json.loads(EXEMPLAR_MANIFEST.read_text(encoding="utf-8"))
+    rows = payload.get("exemplars") if isinstance(payload, dict) else []
+    if not isinstance(rows, list):
+        rows = []
+
+    overrides: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        rel_path = str(row.get("path", "")).strip()
+        if not rel_path:
+            continue
+        rst_path = GUIDELINES_REPO_ROOT / rel_path
+        if not rst_path.exists():
+            continue
+        text = rst_path.read_text(encoding="utf-8")
+        title_match = re.search(r"^(.+)\n=+\n", text, re.MULTILINE)
+        fls_match = re.search(r":fls:\s+(fls_[A-Za-z0-9_]+)", text)
+        if not title_match or not fls_match:
+            continue
+        tokens = {
+            token.lower()
+            for token in re.findall(r"[A-Za-z0-9_]+", title_match.group(1))
+            if len(token) > 2
+        }
+        if not tokens:
+            continue
+        overrides.append(
+            {
+                "tokens": tokens,
+                "paragraph_id": fls_match.group(1),
+                "title": title_match.group(1).strip(),
+            }
+        )
+
+    _EXEMPLAR_OVERRIDES = overrides
+    return _EXEMPLAR_OVERRIDES
+
+
+def _match_exemplar_override(construct_terms: list[str]) -> str:
+    tokens = {
+        token.lower()
+        for token in re.findall(r"[A-Za-z0-9_]+", " ".join(construct_terms))
+        if len(token) > 2
+    }
+    if not tokens:
+        return ""
+    best_id = ""
+    best_score = 0.0
+    for entry in _load_exemplar_overrides():
+        exemplar_tokens = entry.get("tokens")
+        if not isinstance(exemplar_tokens, set) or not exemplar_tokens:
+            continue
+        overlap = len(tokens & exemplar_tokens)
+        if overlap == 0:
+            continue
+        score = overlap / float(len(exemplar_tokens))
+        if score > best_score:
+            best_score = score
+            best_id = str(entry.get("paragraph_id", ""))
+    return best_id if best_score >= 0.5 else ""
+
+
+def _fetch_paragraph(paragraph_id: str, db_path: Path) -> dict[str, str] | None:
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(
+            """
+            SELECT paragraph_id, text, chapter, section, paragraph_number
+            FROM paragraphs
+            WHERE paragraph_id = ?
+            LIMIT 1
+            """,
+            (paragraph_id,),
+        ).fetchone()
+    finally:
+        connection.close()
+    if row is None:
+        return None
+    return {
+        "paragraph_id": str(row["paragraph_id"]),
+        "text": str(row["text"]),
+        "chapter": str(row["chapter"]),
+        "section": str(row["section"]),
+        "paragraph_number": str(row["paragraph_number"]),
+    }
 
 
 def search_fls_paragraphs(
@@ -180,6 +279,12 @@ def resolve_fls_for_construct(
     terms = [term.strip() for term in construct_terms if term.strip()]
     if not terms:
         return _unresolved("no construct terms provided")
+
+    exemplar_override = _match_exemplar_override(terms)
+    if exemplar_override and validate_fls_id(exemplar_override, spec_lock_path=spec_lock_path):
+        paragraph = _fetch_paragraph(exemplar_override, db_path)
+        if paragraph is not None:
+            return paragraph
 
     tokenized: list[str] = []
     for term in terms[:5]:

@@ -13,6 +13,13 @@ from pathlib import Path
 from typing import Any
 import yaml
 
+from context.convention_extractor import extract_all_exemplar_conventions
+from context.convention_spec import _build_convention_spec, _diff_specs, validate_convention_spec
+from context.exemplars import get_exemplar_paths
+from context.fls_lookup import get_fls_db_stats, resolve_fls_for_construct, validate_fls_id
+from context.stdlib_lookup import CORE_DOCS_DB_PATH, load_stdlib_index
+from scripts.validate_fls_matching import validate_fls_matching
+
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
@@ -144,6 +151,11 @@ def _is_allowed_resume_artifact(name: str) -> bool:
         "duplicate_similarity_matrix.json",
         "calibration_quality_enforcement_report.json",
         "packet_manifest.json",
+        "convention_spec.json",
+        "convention_spec_validation.json",
+        "convention_spec_diff.json",
+        "lookup_status.json",
+        "fls_matching_validation.json",
     }
     if name in allowed_exact:
         return True
@@ -178,6 +190,68 @@ def _canonical_bytes(text: str) -> bytes:
 
 def _canonical_digest(text: str) -> str:
     return hashlib.sha256(_canonical_bytes(text)).hexdigest()
+
+
+def _approx_tokens(text: str) -> int:
+    return int(len(text.split()) * 1.3)
+
+
+def _truncate_mapping_for_budget(
+    mapping: dict[str, str],
+    *,
+    token_budget: int,
+    sort_terms: list[str],
+) -> tuple[dict[str, str], int]:
+    terms = [term.lower() for term in sort_terms if term]
+
+    def _score(item: tuple[str, str]) -> tuple[int, int, str]:
+        key, value = item
+        key_l = key.lower()
+        value_l = value.lower()
+        overlap = sum(1 for term in terms if term in key_l or term in value_l)
+        return (-overlap, len(value), key)
+
+    ordered = sorted(mapping.items(), key=_score)
+    kept: dict[str, str] = {}
+    omitted = 0
+    for key, value in ordered:
+        probe = {**kept, key: value}
+        as_text = "\n".join(f"{k} -> {v}" for k, v in probe.items())
+        if _approx_tokens(as_text) > token_budget:
+            omitted += 1
+            continue
+        kept[key] = value
+    if omitted:
+        kept["[TRUNCATED]"] = f"[TRUNCATED - {omitted} entries omitted]"
+    return kept, omitted
+
+
+def _truncate_exemplar_extracts(
+    extracts: list[dict[str, str]], *, token_budget: int
+) -> tuple[list[dict[str, str]], int]:
+    trimmed: list[dict[str, str]] = []
+    omitted = 0
+    for extract in extracts:
+        probe = trimmed + [extract]
+        if _approx_tokens(json.dumps(probe, sort_keys=True)) > token_budget:
+            omitted += 1
+            continue
+        trimmed.append(extract)
+    if omitted:
+        trimmed.append(
+            {
+                "guideline_id": "[TRUNCATED]",
+                "snippet": f"[TRUNCATED - {omitted} entries omitted]",
+            }
+        )
+    return trimmed, omitted
+
+
+def _is_relevant_to_construct(std_short_name: str, construct_terms: list[str]) -> bool:
+    if not construct_terms:
+        return True
+    key = std_short_name.lower()
+    return any(term.lower() in key or key in term.lower() for term in construct_terms)
 
 
 def _shingle_jaccard(a: str, b: str, n: int = 4) -> float:
@@ -405,6 +479,18 @@ def _normalize_claim_map(
     return claims, patterns
 
 
+def _resolve_fls_for_construct_safe(construct_terms: list[str]) -> dict[str, str]:
+    if not construct_terms:
+        return {"paragraph_id": "fls_UNRESOLVED", "unresolved_reason": "empty_construct_scope"}
+    try:
+        return resolve_fls_for_construct(construct_terms)
+    except RuntimeError:
+        return {
+            "paragraph_id": "fls_UNRESOLVED",
+            "unresolved_reason": "fls_db_unavailable",
+        }
+
+
 def _resolve_bibliography_rows(
     metadata_output: dict[str, Any],
     *,
@@ -412,6 +498,7 @@ def _resolve_bibliography_rows(
     run_id: str,
     evidence_lookup: dict[str, dict[str, Any]],
     evidence_ids: list[str],
+    construct_terms: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     patterns: list[str] = []
     raw_rows = metadata_output.get("bibliography_rows") if isinstance(metadata_output, dict) else []
@@ -441,6 +528,8 @@ def _resolve_bibliography_rows(
             )
 
     resolved: list[dict[str, Any]] = []
+    fls_info = _resolve_fls_for_construct_safe(construct_terms or [])
+    fls_id = str(fls_info.get("paragraph_id", "fls_UNRESOLVED"))
     for idx, row in enumerate(rows, start=1):
         citation_key = str(row.get("citation_key", "")).strip() or f"{prompt_id}:SRC-{idx}"
         evidence_id = str(row.get("evidence_id", "")).strip()
@@ -448,11 +537,22 @@ def _resolve_bibliography_rows(
         source = str(row.get("source", lookup.get("source", ""))).strip()
         locator_raw = row.get("locator")
         locator = locator_raw if isinstance(locator_raw, dict) else {}
-        if not (str(locator.get("url", "")).strip() or str(locator.get("path", "")).strip()):
-            locator = {
-                "path": "evidence_bundle/calibration_evidence.json",
-                "anchor": str(lookup.get("anchor", evidence_id or citation_key)),
-            }
+        if not (
+            str(locator.get("url", "")).strip()
+            or str(locator.get("path", "")).strip()
+            or str(locator.get("paragraph_id", "")).strip()
+        ):
+            if fls_id and fls_id != "fls_UNRESOLVED":
+                locator = {
+                    "paragraph_id": fls_id,
+                    "resolution_source": "fls_spec_db",
+                }
+                patterns.append("bibliography:fls_spec_lookup")
+            else:
+                locator = {
+                    "path": "evidence_bundle/calibration_evidence.json",
+                    "anchor": str(lookup.get("anchor", evidence_id or citation_key)),
+                }
         if not source:
             source = str(lookup.get("source", "calibration_evidence_bundle"))
         resolved.append(
@@ -1836,6 +1936,57 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         ],
     }
     _write_json(writer_root / "style_context_bundle.json", style_bundle)
+
+    exemplar_paths = get_exemplar_paths(guidelines_repo_root=guidelines_repo_root)
+    exemplar_conventions = extract_all_exemplar_conventions(exemplar_paths)
+    std_lookup = load_stdlib_index()
+    fls_stats = get_fls_db_stats()
+    convention_spec = _build_convention_spec(
+        exemplar_conventions,
+        guidelines_repo_root=guidelines_repo_root,
+        std_lookup=std_lookup,
+    )
+    _write_json(run_dir / "convention_spec.json", convention_spec)
+    validation_report = validate_convention_spec(convention_spec)
+    _write_json(
+        run_dir / "convention_spec_validation.json",
+        {
+            "run_id": run_id,
+            "status": validation_report.get("status", "fail"),
+            "validated_at": datetime.now(UTC).isoformat(),
+            "validation": validation_report,
+        },
+    )
+
+    stable_spec_path = root / "cache" / "convention_spec.json"
+    stable_spec_path.parent.mkdir(parents=True, exist_ok=True)
+    if stable_spec_path.exists():
+        old_spec = json.loads(stable_spec_path.read_text(encoding="utf-8"))
+        old_sha = str(old_spec.get("guidelines_repo_commit_sha", ""))
+        new_sha = str(convention_spec.get("guidelines_repo_commit_sha", ""))
+        if old_sha != new_sha:
+            _write_json(
+                run_dir / "convention_spec_diff.json",
+                {
+                    "old_sha": old_sha,
+                    "new_sha": new_sha,
+                    "changes": _diff_specs(old_spec, convention_spec),
+                },
+            )
+    stable_spec_path.write_text(json.dumps(convention_spec, indent=2) + "\n", encoding="utf-8")
+
+    _write_json(
+        run_dir / "lookup_status.json",
+        {
+            "run_id": run_id,
+            "stdlib_entries": len(std_lookup),
+            "stdlib_source": "core_docs_db" if CORE_DOCS_DB_PATH.exists() else "fallback",
+            "fls_spec_db": fls_stats,
+            "fls_id_validation": "spec.lock",
+        },
+    )
+    fls_matching_report = validate_fls_matching()
+    _write_json(run_dir / "fls_matching_validation.json", fls_matching_report)
     writer_contracts = _safe_yaml(root / "config" / "s0" / "writer_prompt_contracts.yaml")
     judge_contracts = _safe_yaml(root / "config" / "s0" / "judge_prompt_contracts.yaml")
     role_contracts = writer_contracts.get("roles") if isinstance(writer_contracts, dict) else {}
@@ -1982,6 +2133,27 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     writer_timeout = int(str(os.environ.get("S0_WRITER_TIMEOUT_SECONDS", "90")))
 
     style_excerpt = "\n".join(style_text.splitlines()[:80])
+    budget_cfg = writer_contracts.get("injected_context_budgets", {})
+    if not isinstance(budget_cfg, dict):
+        budget_cfg = {}
+    convention_budget = int(budget_cfg.get("convention_spec_tokens", 2000))
+    std_budget = int(budget_cfg.get("std_lookup_tokens", 1000))
+    exemplar_budget = int(budget_cfg.get("exemplar_tokens", 500))
+    total_budget = int(budget_cfg.get("total_injected_tokens", 3500))
+
+    exemplar_snippets_by_id: dict[str, str] = {}
+    for entry in exemplar_entries:
+        if not isinstance(entry, dict) or entry.get("status") != "ok":
+            continue
+        guideline_id = str(entry.get("guideline_id", ""))
+        path_raw = str(entry.get("path", ""))
+        if not guideline_id or not path_raw:
+            continue
+        path = Path(path_raw)
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        exemplar_snippets_by_id[guideline_id] = "\n".join(lines[:24])
 
     for row in selected_rows:
         target = row["target"]
@@ -2037,6 +2209,47 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                 "runtime_hazard_target": row_id in runtime_hazard_rows,
                 "upstream_outputs": role_outputs,
             }
+
+            if role_name == "evidence_synthesizer":
+                construct_terms = _rust_like_tokens(evidence_text)[:12]
+            else:
+                scope_terms = role_outputs.get("evidence_synthesizer", {}).get(
+                    "construct_scope", []
+                )
+                if isinstance(scope_terms, list):
+                    construct_terms = [str(value) for value in scope_terms if str(value).strip()][
+                        :12
+                    ]
+                else:
+                    construct_terms = _rust_like_tokens(str(scope_terms))[:12]
+
+            std_lookup_scoped = {
+                key: value
+                for key, value in std_lookup.items()
+                if _is_relevant_to_construct(key, construct_terms)
+            }
+            std_lookup_payload, std_omitted = _truncate_mapping_for_budget(
+                std_lookup_scoped,
+                token_budget=std_budget,
+                sort_terms=construct_terms,
+            )
+
+            exemplar_extracts = [
+                {
+                    "guideline_id": gid,
+                    "snippet": exemplar_snippets_by_id.get(gid, ""),
+                }
+                for gid in selected_exemplars[:2]
+            ]
+            exemplar_extracts = [item for item in exemplar_extracts if item.get("snippet")]
+            exemplar_payload, exemplar_omitted = _truncate_exemplar_extracts(
+                exemplar_extracts,
+                token_budget=exemplar_budget,
+            )
+
+            role_input["convention_spec"] = convention_spec
+            role_input["std_lookup"] = std_lookup_payload
+            role_input["exemplar_extracts"] = exemplar_payload
             rendered_prompt = (
                 f"{prompt_template}\n\n"
                 f"Output schema required fields: {required}\n"
@@ -2094,6 +2307,56 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                     "provider_model": invocation.get("provider_model", writer_model),
                     "provider_message_id": invocation.get("provider_message_id"),
                     "provider_token_usage": invocation.get("provider_token_usage"),
+                    "injected_context": {
+                        "convention_spec_tokens": _approx_tokens(
+                            json.dumps(convention_spec, sort_keys=True)
+                        ),
+                        "std_lookup_tokens": _approx_tokens(
+                            "\n".join(f"{k} -> {v}" for k, v in std_lookup_payload.items())
+                        ),
+                        "exemplar_tokens": _approx_tokens(
+                            json.dumps(exemplar_payload, sort_keys=True)
+                        ),
+                        "total_injected_tokens": _approx_tokens(
+                            json.dumps(
+                                {
+                                    "convention_spec": convention_spec,
+                                    "std_lookup": std_lookup_payload,
+                                    "exemplar_extracts": exemplar_payload,
+                                },
+                                sort_keys=True,
+                            )
+                        ),
+                        "budget_exceeded": _approx_tokens(
+                            json.dumps(
+                                {
+                                    "convention_spec": convention_spec,
+                                    "std_lookup": std_lookup_payload,
+                                    "exemplar_extracts": exemplar_payload,
+                                },
+                                sort_keys=True,
+                            )
+                        )
+                        > total_budget,
+                        "section_over_budget": {
+                            "convention_spec": _approx_tokens(
+                                json.dumps(convention_spec, sort_keys=True)
+                            )
+                            > convention_budget,
+                            "std_lookup": _approx_tokens(
+                                "\n".join(f"{k} -> {v}" for k, v in std_lookup_payload.items())
+                            )
+                            > std_budget,
+                            "exemplars": _approx_tokens(
+                                json.dumps(exemplar_payload, sort_keys=True)
+                            )
+                            > exemplar_budget,
+                        },
+                        "omitted_entries": {
+                            "std_lookup": std_omitted,
+                            "exemplars": exemplar_omitted,
+                        },
+                    },
                 }
             )
 
@@ -2535,6 +2798,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             run_id=run_id,
             evidence_lookup=evidence_lookup,
             evidence_ids=evidence_ids,
+            construct_terms=[str(x) for x in (draft.get("construct_terms") or [])],
         )
         cited_keys = [
             str(row.get("citation_key", "")).strip()
@@ -2547,6 +2811,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             if not (
                 str((row.get("locator") or {}).get("url", "")).strip()
                 or str((row.get("locator") or {}).get("path", "")).strip()
+                or str((row.get("locator") or {}).get("paragraph_id", "")).strip()
             )
         ]
         resolution_ok = bool(resolved_rows) and not unresolved
@@ -2629,7 +2894,13 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         gid_seed = hashlib.sha256(prompt_id.encode("utf-8")).hexdigest()[:12]
         guideline_id = f"gui_{gid_seed}"
         rationale_id = f"rat_{hashlib.sha256((prompt_id + ':r').encode('utf-8')).hexdigest()[:12]}"
-        fls_id = f"fls_{hashlib.sha256(prompt_id.encode('utf-8')).hexdigest()[:12]}"
+        construct_terms = [str(x) for x in (draft.get("construct_terms") or [])]
+        fls_info = _resolve_fls_for_construct_safe(construct_terms)
+        fls_id = str(fls_info.get("paragraph_id", "fls_UNRESOLVED"))
+        metadata_payload = resolved_metadata_by_draft.get(str(draft.get("draft_id", "")), {})
+        fls_candidate = str(metadata_payload.get("fls_candidate", "")).strip()
+        if fls_candidate.startswith("fls_") and validate_fls_id(fls_candidate):
+            fls_id = fls_candidate
         title = str(draft["title"]).strip()
         row_id = (draft.get("table1_rows") or [""])[0]
         tag_row = f"table1-{row_id}" if row_id else "table1-unknown"
@@ -2638,7 +2909,6 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         evidence_payload = evidence_by_draft.get(str(draft.get("draft_id", "")), {})
         example_payload = example_by_draft.get(str(draft.get("draft_id", "")), {})
         rationale_payload = rationale_by_draft.get(str(draft.get("draft_id", "")), {})
-        metadata_payload = resolved_metadata_by_draft.get(str(draft.get("draft_id", "")), {})
         bibliography_rows = (
             metadata_payload.get("bibliography_rows") if isinstance(metadata_payload, dict) else []
         )
@@ -3396,6 +3666,10 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         "example_execution_semantics_report.json",
         "modality_category_consistency_report.json",
         "judge_aggregate.json",
+        "convention_spec.json",
+        "lookup_status.json",
+        "convention_spec_validation.json",
+        "fls_matching_validation.json",
     ]
     missing = [name for name in required if not (run_dir / name).exists()]
     if missing:

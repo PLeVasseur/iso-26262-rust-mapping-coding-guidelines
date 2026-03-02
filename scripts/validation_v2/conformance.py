@@ -218,10 +218,14 @@ def validate_rst_conformance(
     violations: list[dict[str, Any]] = []
 
     std_types = KNOWN_STD_TYPES
-    if convention_spec and "std_role_convention" in convention_spec:
-        spec_types = convention_spec["std_role_convention"].get("known_types", [])
-        if isinstance(spec_types, list) and spec_types:
-            std_types = [str(value) for value in spec_types if str(value).strip()]
+    if convention_spec:
+        spec_known_types = convention_spec.get("known_types")
+        if isinstance(spec_known_types, dict) and spec_known_types:
+            std_types = [str(value) for value in spec_known_types.keys() if str(value).strip()]
+        elif "std_role_convention" in convention_spec:
+            spec_types = convention_spec["std_role_convention"].get("known_types", [])
+            if isinstance(spec_types, list) and spec_types:
+                std_types = [str(value) for value in spec_types if str(value).strip()]
 
     for match in re.finditer(r":id:\s+(gui_[A-Za-z0-9]+)", text):
         id_value = match.group(1)
