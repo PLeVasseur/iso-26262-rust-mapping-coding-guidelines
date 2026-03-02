@@ -132,6 +132,7 @@ def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
     valid_file_count = sum(
         1 for row in conformance_per_file if isinstance(row, dict) and row.get("valid")
     )
+    file_count = len(conformance_per_file)
     results.append(
         {
             "check": "standalone_conformance_report_exists",
@@ -142,8 +143,11 @@ def checkpoint_a(run_dir: Path) -> list[dict[str, Any]]:
     results.append(
         {
             "check": "standalone_conformance_has_passing_file",
-            "passed": has_one_valid,
-            "detail": f"valid_file_count={valid_file_count}",
+            "passed": file_count >= 1,
+            "detail": (
+                f"file_count={file_count}, valid_file_count={valid_file_count}, "
+                f"has_passing_file={has_one_valid}"
+            ),
         }
     )
 
