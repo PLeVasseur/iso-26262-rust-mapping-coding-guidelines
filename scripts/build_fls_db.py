@@ -7,7 +7,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 try:
     from scripts.parse_fls_paragraphs import (
@@ -23,12 +23,26 @@ DB_PATH = Path(".cache/sqlite_kb/current/fls_spec.db")
 COMPAT_DB_PATH = Path("data/fls_spec.db")
 
 
-def _ensure_compat_symlink(canonical_db_path: Path, compat_db_path: Path = COMPAT_DB_PATH) -> None:
+def _ensure_compat_symlink(canonical_db_path: Path, compat_db_path: Path | None = None) -> None:
+    if compat_db_path is None:
+        compat_db_path = COMPAT_DB_PATH
     compat_db_path.parent.mkdir(parents=True, exist_ok=True)
     if compat_db_path.exists() or compat_db_path.is_symlink():
         compat_db_path.unlink()
     rel_target = Path(os.path.relpath(canonical_db_path, compat_db_path.parent))
     compat_db_path.symlink_to(rel_target)
+
+
+def _should_update_compat_symlink(
+    *,
+    db_path: Path,
+    compat_symlink_mode: Literal["auto", "always", "never"],
+) -> bool:
+    if compat_symlink_mode == "always":
+        return True
+    if compat_symlink_mode == "never":
+        return False
+    return db_path.resolve() == DB_PATH.resolve()
 
 
 def _load_commit_sha(source_dir: Path) -> str:
@@ -46,6 +60,7 @@ def build_fls_db(
     source_dir: Path = FLS_SOURCE_DIR,
     db_path: Path = DB_PATH,
     spec_lock_path: Path = DEFAULT_SPEC_LOCK_PATH,
+    compat_symlink_mode: Literal["auto", "always", "never"] = "auto",
 ) -> dict[str, Any]:
     paragraph_numbers = load_paragraph_numbers(spec_lock_path=spec_lock_path)
     paragraphs = parse_all_fls(source_dir, paragraph_numbers=paragraph_numbers)
@@ -160,7 +175,8 @@ def build_fls_db(
     finally:
         connection.close()
 
-    _ensure_compat_symlink(db_path)
+    if _should_update_compat_symlink(db_path=db_path, compat_symlink_mode=compat_symlink_mode):
+        _ensure_compat_symlink(db_path)
 
     return {
         "db_path": str(db_path),
@@ -176,12 +192,19 @@ def main() -> None:
     parser.add_argument("--source-dir", type=Path, default=FLS_SOURCE_DIR)
     parser.add_argument("--db-path", type=Path, default=DB_PATH)
     parser.add_argument("--spec-lock-path", type=Path, default=DEFAULT_SPEC_LOCK_PATH)
+    parser.add_argument(
+        "--compat-symlink-mode",
+        choices=["auto", "always", "never"],
+        default="auto",
+        help="When to update data/fls_spec.db compat symlink",
+    )
     args = parser.parse_args()
 
     stats = build_fls_db(
         source_dir=args.source_dir,
         db_path=args.db_path,
         spec_lock_path=args.spec_lock_path,
+        compat_symlink_mode=args.compat_symlink_mode,
     )
     print(
         f"FLS DB built: {stats['paragraph_count']} paragraphs from "

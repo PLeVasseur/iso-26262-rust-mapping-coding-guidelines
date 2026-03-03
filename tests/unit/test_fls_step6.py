@@ -103,7 +103,12 @@ def test_build_and_lookup_fls_db(tmp_path: Path) -> None:
     _write_sample_fls_source(source_dir)
     _write_spec_lock(spec_lock_path)
 
-    stats = build_fls_db(source_dir=source_dir, db_path=db_path, spec_lock_path=spec_lock_path)
+    stats = build_fls_db(
+        source_dir=source_dir,
+        db_path=db_path,
+        spec_lock_path=spec_lock_path,
+        compat_symlink_mode="never",
+    )
     assert stats["paragraph_count"] == 3
     assert stats["chapter_count"] == 2
     assert stats["commit_sha"] == "sample-sha"
@@ -122,6 +127,89 @@ def test_build_and_lookup_fls_db(tmp_path: Path) -> None:
 
     assert validate_fls_id("fls_atomic002", spec_lock_path=spec_lock_path)
     assert not validate_fls_id("fls_FABRICATED_ID", spec_lock_path=spec_lock_path)
+
+
+def test_build_fls_db_never_mode_does_not_mutate_repo_compat_symlink(tmp_path: Path) -> None:
+    source_dir = tmp_path / "fls_source"
+    db_path = tmp_path / "fls_spec.db"
+    spec_lock_path = tmp_path / "spec.lock"
+
+    _write_sample_fls_source(source_dir)
+    _write_spec_lock(spec_lock_path)
+
+    compat_path = Path("data/fls_spec.db")
+    before_target = compat_path.readlink() if compat_path.is_symlink() else None
+
+    build_fls_db(
+        source_dir=source_dir,
+        db_path=db_path,
+        spec_lock_path=spec_lock_path,
+        compat_symlink_mode="never",
+    )
+
+    after_target = compat_path.readlink() if compat_path.is_symlink() else None
+    assert after_target == before_target
+
+
+def test_build_fls_db_auto_mode_updates_compat_for_canonical_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_dir = tmp_path / "fls_source"
+    canonical_db = tmp_path / "canonical" / "fls_spec.db"
+    compat_link = tmp_path / "compat" / "fls_spec.db"
+    spec_lock_path = tmp_path / "spec.lock"
+
+    _write_sample_fls_source(source_dir)
+    _write_spec_lock(spec_lock_path)
+
+    monkeypatch.setattr("scripts.build_fls_db.DB_PATH", canonical_db)
+    monkeypatch.setattr("scripts.build_fls_db.COMPAT_DB_PATH", compat_link)
+
+    build_fls_db(
+        source_dir=source_dir,
+        db_path=canonical_db,
+        spec_lock_path=spec_lock_path,
+        compat_symlink_mode="auto",
+    )
+
+    assert compat_link.is_symlink()
+    assert compat_link.resolve() == canonical_db.resolve()
+
+
+def test_build_fls_db_always_mode_updates_compat_for_noncanonical_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_dir = tmp_path / "fls_source"
+    noncanonical_db = tmp_path / "noncanonical" / "fls_spec.db"
+    canonical_db = tmp_path / "canonical" / "fls_spec.db"
+    compat_link = tmp_path / "compat" / "fls_spec.db"
+    spec_lock_path = tmp_path / "spec.lock"
+
+    _write_sample_fls_source(source_dir)
+    _write_spec_lock(spec_lock_path)
+
+    monkeypatch.setattr("scripts.build_fls_db.DB_PATH", canonical_db)
+    monkeypatch.setattr("scripts.build_fls_db.COMPAT_DB_PATH", compat_link)
+
+    build_fls_db(
+        source_dir=source_dir,
+        db_path=noncanonical_db,
+        spec_lock_path=spec_lock_path,
+        compat_symlink_mode="always",
+    )
+
+    assert compat_link.is_symlink()
+    assert compat_link.resolve() == noncanonical_db.resolve()
+
+
+def test_repo_compat_symlink_not_pointing_to_pytest_temp() -> None:
+    compat_path = Path("data/fls_spec.db")
+    if not compat_path.is_symlink():
+        pytest.skip("compat symlink not present in this environment")
+
+    target = str(compat_path.readlink())
+    assert "pytest-" not in target
+    assert "/private/var/folders/" not in target
 
 
 def test_resolve_raises_when_db_missing(tmp_path: Path) -> None:

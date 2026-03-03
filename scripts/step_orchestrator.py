@@ -88,6 +88,8 @@ class StepResult:
     status: str = ""
     duration_s: float = 0.0
     dod_checks: dict[str, bool] = field(default_factory=dict)
+    dod_failures: list[str] = field(default_factory=list)
+    dod_override_used: bool = False
     invariants_passed: bool | None = None
     regression_passed: bool | None = None
     checkpoint_tag: str = ""
@@ -684,6 +686,14 @@ def generate_step_review(step_n: int, result: StepResult) -> Path:
     for check, passed in result.dod_checks.items():
         icon = "[OK]" if passed else "[FAIL]"
         lines.append(f"- {icon} {check}")
+    if result.dod_failures:
+        gate_icon = "[WARN]" if result.dod_override_used else "[FAIL]"
+        gate_state = "override active" if result.dod_override_used else "blocking"
+        lines.append(
+            f"- {gate_icon} DoD Gate: {gate_state}; failed checks: {', '.join(result.dod_failures)}"
+        )
+    elif result.dod_checks:
+        lines.append("- [OK] DoD Gate: all checks passed")
     lines.append("")
     inv_icon = (
         "[SKIP]"
@@ -807,6 +817,20 @@ def execute_step(step_n: int, is_retry: bool = False) -> StepResult:
 
     print("  validating Definition of Done...")
     result.dod_checks = validate_dod(step_n)
+    failed_dod = [check for check, passed in result.dod_checks.items() if not passed]
+    allow_dod_failure = os.environ.get("ORCHESTRATOR_ALLOW_DOD_FAILURE", "0") == "1"
+    result.dod_failures = failed_dod
+    result.dod_override_used = bool(failed_dod) and allow_dod_failure
+    if failed_dod and not allow_dod_failure:
+        result.status = "halt"
+        result.halt_reason = f"DOD_FAILED: {', '.join(failed_dod)}"
+        result.duration_s = time.monotonic() - start
+        return result
+    if failed_dod and allow_dod_failure:
+        print(
+            "  [WARN] DoD override enabled via ORCHESTRATOR_ALLOW_DOD_FAILURE=1; "
+            f"continuing with failed checks: {', '.join(failed_dod)}"
+        )
     if not result.agent_signaled_complete:
         result.duration_s = time.monotonic() - start
         return result

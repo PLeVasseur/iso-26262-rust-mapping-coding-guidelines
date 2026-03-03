@@ -9,3 +9,6 @@
 ## Known Issues
 - Fair-scheduling is enforced via per-target budget partitioning and per-role retry caps, but the role loop still executes target-by-target; it does not perform an interleaved first-pass-over-all-targets scheduler.
 - Writer role invocation traces now report transport backend as `opencode_http` for retry-wrapper paths and do not include provider message IDs from CLI event streams.
+
+## Active Waivers
+- Waiver `STEP7-BIB-PATH` is active for `file_exists:rendering/bibliography.py`.
