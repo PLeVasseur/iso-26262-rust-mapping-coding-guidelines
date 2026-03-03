@@ -64,6 +64,18 @@ CP_A_AFTER_STEP = 4
 CP_B_AFTER_STEP = 11
 CP_C_AFTER_STEP = 13
 
+STEP_PREREQ_REF_OVERRIDES: dict[int, dict[str, str]] = {
+    8: {
+        "__init__.py": "validation/__init__.py",
+    }
+}
+STEP_OPTIONAL_PREREQS: dict[int, set[str]] = {
+    8: {"retry_pilot_results.json"},
+}
+STEP_WAIVER_RULES: dict[int, dict[str, str]] = {
+    8: {"rendering/bibliography.py": "STEP7-BIB-PATH"},
+}
+
 OPENCODE_SERVER = "http://localhost:4096"
 CONTRACTS_DIR = PIPELINE_ROOT / ".cache" / "step_contracts"
 REVIEWS_DIR = PIPELINE_ROOT / ".cache" / "step_reviews"
@@ -121,6 +133,7 @@ def _resolve_expected_file_path(raw_path: str) -> tuple[Path | None, str, list[s
         / "config"
         / "s0"
         / "writer_prompt_contracts.yaml",
+        "convention_spec.json": PIPELINE_ROOT / ".cache" / "convention_spec.json",
         "data/core_docs.db": PIPELINE_ROOT
         / ".cache"
         / "sqlite_kb"
@@ -145,6 +158,28 @@ def _resolve_expected_file_path(raw_path: str) -> tuple[Path | None, str, list[s
     if len(matches) > 1:
         return None, "ambiguous", rel_matches
     return None, "missing", []
+
+
+def _normalize_prerequisite_ref(step_n: int, path_ref: str) -> str:
+    overrides = STEP_PREREQ_REF_OVERRIDES.get(step_n, {})
+    return overrides.get(path_ref, path_ref)
+
+
+def _is_optional_prerequisite(step_n: int, path_ref: str) -> bool:
+    optional = STEP_OPTIONAL_PREREQS.get(step_n, set())
+    return path_ref in optional
+
+
+def _get_waiver_token(step_n: int, path_ref: str) -> str | None:
+    return STEP_WAIVER_RULES.get(step_n, {}).get(path_ref)
+
+
+def _has_active_waiver(token: str, path_ref: str) -> bool:
+    deviations = PIPELINE_ROOT / "STEP_DEVIATIONS.md"
+    if not deviations.exists():
+        return False
+    text = deviations.read_text(encoding="utf-8")
+    return f"Waiver `{token}` is active" in text and f"file_exists:{path_ref}" in text
 
 
 def _extract_prerequisite_paths(step_text: str) -> list[str]:
@@ -248,7 +283,8 @@ def check_prerequisites(step_n: int) -> tuple[bool, list[str], list[dict[str, An
 
     step_text = load_step_file(step_n)
     for path_ref in _extract_prerequisite_paths(step_text):
-        resolved, status, candidates = _resolve_expected_file_path(path_ref)
+        effective_ref = _normalize_prerequisite_ref(step_n, path_ref)
+        resolved, status, candidates = _resolve_expected_file_path(effective_ref)
         if status in {"exact", "alias", "basename_unique", "skipped"}:
             details.append(
                 {
@@ -264,6 +300,32 @@ def check_prerequisites(step_n: int) -> tuple[bool, list[str], list[dict[str, An
                 }
             )
             continue
+
+        waiver_token = _get_waiver_token(step_n, effective_ref)
+        if waiver_token and _has_active_waiver(waiver_token, effective_ref):
+            details.append(
+                {
+                    "kind": "file",
+                    "ref": path_ref,
+                    "status": "waived",
+                    "resolution": status,
+                    "waiver": waiver_token,
+                }
+            )
+            continue
+
+        if _is_optional_prerequisite(step_n, effective_ref):
+            details.append(
+                {
+                    "kind": "file",
+                    "ref": path_ref,
+                    "status": "optional",
+                    "resolution": status,
+                    "note": "missing optional prerequisite; default behavior applies",
+                }
+            )
+            continue
+
         if status == "ambiguous":
             failures.append(
                 f"prerequisite file ambiguous: {path_ref} -> {', '.join(candidates[:5])}"
