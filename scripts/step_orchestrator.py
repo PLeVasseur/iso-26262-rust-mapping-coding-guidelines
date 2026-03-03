@@ -67,10 +67,17 @@ CP_C_AFTER_STEP = 13
 STEP_PREREQ_REF_OVERRIDES: dict[int, dict[str, str]] = {
     8: {
         "__init__.py": "validation/__init__.py",
-    }
+    },
+    9: {
+        "cache/sqlite_kb/reports/phase_a_opencode_v3_exec2/targets.json": ".cache/sqlite_kb/reports/phase_a_opencode_v3_exec2/targets.json",
+    },
 }
 STEP_OPTIONAL_PREREQS: dict[int, set[str]] = {
     8: {"retry_pilot_results.json"},
+    9: {
+        "scripts/rendering_v2/rst_renderer.py",
+        "scripts/validation_v2/conformance.py",
+    },
 }
 STEP_WAIVER_RULES: dict[int, dict[str, str]] = {
     8: {"rendering/bibliography.py": "STEP7-BIB-PATH"},
@@ -195,7 +202,10 @@ def _extract_prerequisite_paths(step_text: str) -> list[str]:
         if re.search(r"\.(?:py|json|yaml|yml|db|rst|md)$", value):
             paths.append(value.strip())
 
-    for value in re.findall(r"\b([A-Za-z0-9_./-]+\.(?:py|json|yaml|yml|db|rst|md))\b", body):
+    for value in re.findall(
+        r"(?<![A-Za-z0-9_./-])(\.?[A-Za-z0-9_./-]+\.(?:py|json|yaml|yml|db|rst|md))",
+        body,
+    ):
         if value.startswith("http"):
             continue
         paths.append(value.strip())
@@ -203,11 +213,31 @@ def _extract_prerequisite_paths(step_text: str) -> list[str]:
     deduped: list[str] = []
     seen: set[str] = set()
     for path in paths:
+        if path.startswith("./"):
+            path = path[2:]
         if path in seen:
             continue
         seen.add(path)
         deduped.append(path)
     return deduped
+
+
+def _run_semantic_backend_preflight_check() -> tuple[bool, str]:
+    script = PIPELINE_ROOT / "scripts" / "sqlite_check_semantic_backend.py"
+    if not script.exists():
+        return False, "semantic backend check script missing"
+    result = subprocess.run(
+        ["uv", "run", "python", str(script)],
+        cwd=PIPELINE_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    output = (result.stdout or result.stderr).strip()
+    if not output:
+        output = f"exit={result.returncode}"
+    return result.returncode == 0, output[-400:]
 
 
 def _write_run_log(step_n: int, session_id: str, exit_code: int, stdout: str, stderr: str) -> Path:
@@ -343,6 +373,19 @@ def check_prerequisites(step_n: int) -> tuple[bool, list[str], list[dict[str, An
                 "candidates": candidates,
             }
         )
+
+    if step_n == 9:
+        backend_ok, backend_message = _run_semantic_backend_preflight_check()
+        details.append(
+            {
+                "kind": "check",
+                "name": "semantic_backend",
+                "status": "ok" if backend_ok else "fail",
+                "message": backend_message,
+            }
+        )
+        if not backend_ok:
+            failures.append(f"semantic backend unhealthy: {backend_message}")
 
     return len(failures) == 0, failures, details
 
@@ -573,6 +616,12 @@ def run_prerequisite_preflight(step_n: int) -> tuple[bool, str]:
     for detail in details:
         if detail.get("kind") == "tag":
             lines.append(f"- [TAG:{detail['status'].upper()}] {detail['tag']}")
+            continue
+        if detail.get("kind") == "check":
+            name = detail.get("name", "check")
+            status = str(detail.get("status", "unknown")).upper()
+            message = detail.get("message", "")
+            lines.append(f"- [CHECK:{status}] {name}: {message}")
             continue
         ref = detail.get("ref", "")
         status = str(detail.get("status", "unknown")).upper()
