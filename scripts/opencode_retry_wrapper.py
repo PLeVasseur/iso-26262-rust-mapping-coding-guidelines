@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 CONVENTION_RETRY_BUDGET = 50
 COMPILATION_RETRY_BUDGET = 15
-RESERVE_BUDGET = 5
+RESERVE_BUDGET = 8
 BACKOFF_BASE = 2.0
 MAX_BACKOFF = 120.0
 TIMEOUT_SECONDS = 300
@@ -182,6 +182,7 @@ def retry_with_violations(
     budget: int = CONVENTION_RETRY_BUDGET,
     expected_field_count: int | None = None,
     expected_min_length: int | None = None,
+    stop_on_same_violations: bool = True,
 ) -> RetryResult:
     """Run retry loop with content validation and violation feedback."""
     violation_history: list[set[str]] = []
@@ -229,6 +230,17 @@ def retry_with_violations(
             )
 
         current_set = set(active_violations)
+        if stop_on_same_violations and violation_history and current_set == violation_history[-1]:
+            return RetryResult(
+                success=False,
+                output=output,
+                attempts=attempts,
+                violations_remaining=active_violations,
+                budget_exhausted=False,
+                oscillation_detected=bool(excluded_violations),
+                diminishing_returns=False,
+                truncation_retries=truncation_retries,
+            )
         violation_history.append(current_set)
 
         if len(violation_history) >= 2:

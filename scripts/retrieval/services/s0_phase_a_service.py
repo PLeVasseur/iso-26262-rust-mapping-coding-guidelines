@@ -18,7 +18,9 @@ from context.convention_spec import _build_convention_spec, _diff_specs, validat
 from context.exemplars import get_exemplar_paths
 from context.fls_lookup import get_fls_db_stats, resolve_fls_for_construct, validate_fls_id
 from context.stdlib_lookup import CORE_DOCS_DB_PATH, load_stdlib_index
+from scripts.opencode_retry_wrapper import CONVENTION_RETRY_BUDGET, retry_with_violations
 from scripts.validate_fls_matching import validate_fls_matching
+from validation.role_validators import RoleViolation, validate_role_output
 
 
 EXIT_SUCCESS = 0
@@ -156,6 +158,8 @@ def _is_allowed_resume_artifact(name: str) -> bool:
         "convention_spec_diff.json",
         "lookup_status.json",
         "fls_matching_validation.json",
+        "role_validation_report.json",
+        "guideline_manifest.json",
     }
     if name in allowed_exact:
         return True
@@ -675,6 +679,32 @@ def _call_opencode_cli(
         raise RuntimeError(json.dumps(invocation, sort_keys=True)) from exc
 
 
+def _load_retry_depth_policy(root: Path, run_dir: Path) -> tuple[str, int, float | None]:
+    candidates = [
+        run_dir / "retry_pilot_results.json",
+        root / ".cache" / "retry_pilot_results.json",
+        root / "retry_pilot_results.json",
+    ]
+    payload: dict[str, Any] = {}
+    for path in candidates:
+        if path.exists():
+            payload = _read_json(path)
+            break
+
+    rate_raw = payload.get("first_retry_resolution_rate") if isinstance(payload, dict) else None
+    rate: float | None = None
+    if isinstance(rate_raw, (int, float)):
+        rate = float(rate_raw)
+
+    if rate is None:
+        return "viable", 2, None
+    if rate >= 0.50:
+        return "viable", 2, rate
+    if rate >= 0.25:
+        return "marginal", 1, rate
+    return "not-viable", 0, rate
+
+
 def run_scaffold_s0_config(args: Namespace, *, root: Path) -> int:
     config_root = (root / "config" / "s0").resolve()
     config_root.mkdir(parents=True, exist_ok=True)
@@ -869,6 +899,8 @@ def run_scaffold_s0_config(args: Namespace, *, root: Path) -> int:
             "rewrite_mode": "auto",
             "top_k": 10,
             "candidate_limit": 5000,
+            "convention_retry_budget": 50,
+            "compilation_retry_budget": 15,
             "max_convention_retries": 50,
             "max_compilation_retries": 15,
             "max_judge_calls": 70,
@@ -2158,6 +2190,35 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         lines = path.read_text(encoding="utf-8").splitlines()
         exemplar_snippets_by_id[guideline_id] = "\n".join(lines[:24])
 
+    retry_depth_variant, max_role_retries, retry_resolution_rate = _load_retry_depth_policy(
+        root, run_dir
+    )
+    gate_policy_cfg = _safe_yaml(root / "config" / "s0" / "s0_gate_policy.yaml")
+    convention_retry_budget = int(
+        gate_policy_cfg.get(
+            "convention_retry_budget",
+            gate_policy_cfg.get("max_convention_retries", CONVENTION_RETRY_BUDGET),
+        )
+    )
+    non_abstain_targets = [
+        row
+        for row in selected_rows
+        if not bool((row.get("target") or {}).get("expect_abstain", False))
+        and not bool((row.get("target") or {}).get("abstain_expected", False))
+    ]
+    per_target_retry_budget = convention_retry_budget // max(len(non_abstain_targets), 1)
+    target_retry_usage: dict[str, int] = {}
+    target_lanes: dict[str, dict[str, str]] = {}
+    role_validation_log: list[dict[str, Any]] = []
+    retry_log: list[dict[str, Any]] = []
+    writer_role_order = [
+        "evidence_synthesizer",
+        "amplification_author",
+        "example_author",
+        "rationale_author",
+        "metadata_citation_curator",
+    ]
+
     for row in selected_rows:
         target = row["target"]
         prompt_id = str(target.get("prompt_id", ""))
@@ -2175,13 +2236,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         evidence_text = "\n\n".join(str(s.get("text", ""))[:700] for s in snippet_rows[:3])
         example_mode = str(prompt_overrides.get(prompt_id, row_defaults.get(row_id, default_mode)))
 
-        role_order = [
-            "evidence_synthesizer",
-            "amplification_author",
-            "example_author",
-            "rationale_author",
-            "metadata_citation_curator",
-        ]
+        role_order = writer_role_order
         role_outputs: dict[str, dict[str, Any]] = {}
         role_failures: list[str] = []
         draft_id = f"draft::{prompt_id.lower()}"
@@ -2262,30 +2317,130 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                 f"Input context JSON:\n{json.dumps(role_input, indent=2, sort_keys=True)}"
             )
             prompt_template_id, _prompt_template_digest = _role_prompt(role_name)
-            try:
-                output, invocation = _call_opencode_cli(
-                    role=role_name,
-                    prompt=rendered_prompt,
-                    model=writer_model,
-                    temperature=0.2,
-                    timeout_s=writer_timeout,
+            target_retry_remaining = max(
+                per_target_retry_budget - target_retry_usage.get(target_id, 0),
+                0,
+            )
+            allowed_retries = min(max_role_retries, target_retry_remaining)
+            role_budget = 1 + allowed_retries
+            role_latest_violations: list[RoleViolation] = []
+            role_attempt_entries: list[dict[str, Any]] = []
+            role_attempt_counter = 0
+
+            def _parse_role_violations(output_payload: dict[str, Any]) -> list[str] | None:
+                nonlocal role_latest_violations, role_attempt_counter
+                role_attempt_counter += 1
+                role_latest_violations = validate_role_output(
+                    role_name,
+                    output_payload,
+                    convention_spec,
+                    std_lookup,
+                    construct_terms,
+                    prompt_id,
                 )
-            except RuntimeError as exc:
-                role_failures.append(f"{role_name}:transport_failure")
-                output = {"target_id": target_id, "status": "abstain", "error": str(exc)}
-                invocation = (
-                    _extract_json_object(str(exc).split("\n")[-1])
-                    if str(exc).strip().startswith("{")
-                    else {
-                        "system_request_id": f"sysreq::{uuid.uuid4().hex[:20]}",
-                        "request_started_at": datetime.now(UTC).isoformat(),
-                        "response_received_at": datetime.now(UTC).isoformat(),
-                        "prompt_digest": _canonical_digest(rendered_prompt),
-                        "response_digest": "",
-                        "transport_status": "error",
-                        "transport_backend": "opencode_cli",
+                role_attempt_entries.append(
+                    {
+                        "attempt": role_attempt_counter,
+                        "violations": [
+                            {
+                                "check": violation.check,
+                                "message": violation.message,
+                                "severity": violation.severity,
+                            }
+                            for violation in role_latest_violations
+                        ],
                     }
                 )
+                return [
+                    violation.check
+                    for violation in role_latest_violations
+                    if violation.severity == "error"
+                ]
+
+            def _build_retry_prompt(initial: str, active_checks: list[str]) -> str:
+                active_set = set(active_checks)
+                active_violations = [
+                    violation
+                    for violation in role_latest_violations
+                    if violation.severity == "error" and violation.check in active_set
+                ]
+                violations_text = "\n".join(
+                    f"- [{violation.check}] {violation.message}" for violation in active_violations
+                )
+                if len(violations_text) > 8000:
+                    violations_text = violations_text[:8000] + "\n[...truncated...]"
+                next_attempt = min(role_attempt_counter + 1, role_budget)
+                return (
+                    f"{initial}\n\n"
+                    f"=== RETRY (attempt {next_attempt}/{role_budget}) ===\n"
+                    "Your previous output had these violations:\n"
+                    f"{violations_text}\n"
+                    "Please fix these issues in your output."
+                )
+
+            request_started_at = datetime.now(UTC).isoformat()
+            retry_result = retry_with_violations(
+                session_id=f"{run_id}:{prompt_id}:{role_name}",
+                initial_prompt=rendered_prompt,
+                parse_violations_fn=_parse_role_violations,
+                build_retry_prompt_fn=_build_retry_prompt,
+                budget=role_budget,
+                stop_on_same_violations=True,
+            )
+            response_received_at = datetime.now(UTC).isoformat()
+            retries_used = max(retry_result.attempts - 1, 0)
+            target_retry_usage[target_id] = target_retry_usage.get(target_id, 0) + retries_used
+            output = retry_result.output if isinstance(retry_result.output, dict) else {}
+            invocation = {
+                "system_request_id": f"sysreq::{uuid.uuid4().hex[:20]}",
+                "request_started_at": request_started_at,
+                "response_received_at": response_received_at,
+                "prompt_digest": _canonical_digest(rendered_prompt),
+                "response_digest": _canonical_digest(json.dumps(output, sort_keys=True))
+                if output
+                else "",
+                "transport_status": "ok" if output else "error:empty_output",
+                "provider_model": writer_model,
+                "transport_backend": "opencode_http",
+            }
+            if not output:
+                role_failures.append(f"{role_name}:transport_failure")
+                output = {
+                    "target_id": target_id,
+                    "status": "abstain",
+                    "error": "writer_output_missing",
+                }
+            if not retry_result.success and retry_result.violations_remaining:
+                role_failures.append(f"{role_name}:validation_failed")
+                lane_status = target_lanes.setdefault(target_id, {"lane": "publishable"})
+                lane_status["lane"] = "diagnostic"
+                lane_status["diagnostic_reason"] = "retry_exhausted"
+                retry_log.append(
+                    {
+                        "target_id": target_id,
+                        "prompt_id": prompt_id,
+                        "role": role_name,
+                        "outcome": "retry_exhausted",
+                        "remaining_error_violations": retry_result.violations_remaining,
+                    }
+                )
+            role_validation_log.append(
+                {
+                    "target_id": target_id,
+                    "prompt_id": prompt_id,
+                    "role": role_name,
+                    "attempts": retry_result.attempts,
+                    "retries_used": retries_used,
+                    "budget": role_budget,
+                    "retry_variant": retry_depth_variant,
+                    "success": retry_result.success,
+                    "budget_exhausted": retry_result.budget_exhausted,
+                    "oscillation_detected": retry_result.oscillation_detected,
+                    "diminishing_returns": retry_result.diminishing_returns,
+                    "violations_remaining": retry_result.violations_remaining,
+                    "attempt_entries": role_attempt_entries,
+                }
+            )
             missing_required = _ensure_required_fields(role_name, output, required)
             role_failures.extend(missing_required)
             output["target_id"] = target_id
@@ -2375,10 +2530,16 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         writer_rationale_rows.append(rationale_output)
         writer_metadata_rows.append(metadata_output)
 
+        lane_status = target_lanes.get(target_id, {"lane": "publishable"})
         is_abstain = (
             bool(target.get("expect_abstain", False))
             or bool(target.get("abstain_expected", False))
             or bool(role_failures)
+        )
+        draft_status = (
+            "diagnostic"
+            if lane_status.get("lane") == "diagnostic"
+            else ("abstain" if is_abstain else "drafted")
         )
         strength = str(amplification_output.get("normative_strength", "shall")).strip().lower()
         category = "mandatory" if strength == "shall" else "advisory"
@@ -2394,7 +2555,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "rationale": str(rationale_output.get("rationale_text", "")),
             "enforcement": str(evidence_output.get("mitigation", "")),
             "verification": "Generated from writer-role outputs and judge-gated enforcement.",
-            "status": "abstain" if is_abstain else "drafted",
+            "status": draft_status,
             "evidence_chunk_ids": evidence_ids,
             "evidence_snippets": [str(s.get("text", ""))[:500] for s in snippet_rows[:2]],
             "exemplar_ids_used": selected_exemplars,
@@ -2410,6 +2571,8 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "example_execution_mode": example_mode,
             "runtime_hazard_target": row_id in runtime_hazard_rows,
             "role_failures": role_failures,
+            "lane": lane_status.get("lane", "publishable"),
+            "diagnostic_reason": lane_status.get("diagnostic_reason", ""),
         }
         draft_rows.append(draft_row)
         analysis_rows.append(
@@ -2439,7 +2602,9 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         {
             "run_id": run_id,
             "status": "pass",
-            "non_abstain_count": len([d for d in draft_rows if d.get("status") != "abstain"]),
+            "non_abstain_count": len(
+                [d for d in draft_rows if str(d.get("status", "")) not in {"abstain", "diagnostic"}]
+            ),
             "writer_outputs_complete": True,
         },
     )
@@ -2455,15 +2620,70 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
                     "evidence_map_valid": bool(d.get("evidence_chunk_ids")),
                     "amplification_specificity_valid": bool(str(d.get("guideline", "")).strip()),
                     "amplification_evidence_linked": bool(d.get("evidence_chunk_ids")),
-                    "examples_non_placeholder": str(d.get("status", "")) == "abstain"
+                    "examples_non_placeholder": str(d.get("status", ""))
+                    in {"abstain", "diagnostic"}
                     or "template" not in str(d.get("non_compliant_code", "")).lower(),
                     "rationale_chain_valid": bool(str(d.get("rationale", "")).strip()),
-                    "metadata_citation_valid": str(d.get("status", "")) == "abstain"
+                    "metadata_citation_valid": str(d.get("status", "")) in {"abstain", "diagnostic"}
                     or bool(d.get("table1_rows")),
-                    "usage_valid": str(d.get("status", "")) == "abstain"
+                    "usage_valid": str(d.get("status", "")) in {"abstain", "diagnostic"}
                     or bool(d.get("exemplar_ids_used")),
                 }
                 for d in draft_rows
+            ],
+        },
+    )
+    total_role_calls = len(role_validation_log)
+    total_retries = sum(int(entry.get("retries_used", 0)) for entry in role_validation_log)
+    retry_rate = (total_retries / total_role_calls) if total_role_calls else 0.0
+    role_validation_report = {
+        "run_id": run_id,
+        "retry_variant": retry_depth_variant,
+        "first_retry_resolution_rate": retry_resolution_rate,
+        "convention_retry_budget": convention_retry_budget,
+        "per_target_retry_budget": per_target_retry_budget,
+        "total_retries": total_retries,
+        "total_violations": sum(
+            len(attempt.get("violations", []))
+            for entry in role_validation_log
+            for attempt in (entry.get("attempt_entries") or [])
+            if isinstance(attempt, dict)
+        ),
+        "per_role_retry_counts": {
+            role: sum(
+                int(entry.get("retries_used", 0))
+                for entry in role_validation_log
+                if str(entry.get("role", "")) == role
+            )
+            for role in writer_role_order
+        },
+        "retry_stats": {
+            "total_retries": total_retries,
+            "retry_rate": retry_rate,
+            "estimated_additional_cost_pct": retry_rate * 100.0,
+        },
+        "warning_threshold_retry_rate": 0.30,
+        "warnings": [
+            "retry_rate_above_30pct" if retry_rate > 0.30 else "retry_rate_within_expected_range"
+        ],
+        "retry_exhausted": retry_log,
+        "entries": role_validation_log,
+    }
+    _write_json(run_dir / "role_validation_report.json", role_validation_report)
+    _write_json(
+        run_dir / "guideline_manifest.json",
+        {
+            "run_id": run_id,
+            "targets": [
+                {
+                    "draft_id": str(draft.get("draft_id", "")),
+                    "target_id": str(draft.get("target_id", "")),
+                    "prompt_id": str(draft.get("target_prompt_id", "")),
+                    "status": str(draft.get("status", "drafted")),
+                    "lane": str(draft.get("lane", "publishable")),
+                    "diagnostic_reason": str(draft.get("diagnostic_reason", "")),
+                }
+                for draft in draft_rows
             ],
         },
     )
@@ -2842,7 +3062,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     citation_resolution_status = "pass"
     for row in citation_resolution_rows:
         draft_id = str(row.get("draft_id", ""))
-        if draft_status_by_id.get(draft_id) == "abstain":
+        if draft_status_by_id.get(draft_id) in {"abstain", "diagnostic"}:
             continue
         if not bool(row.get("resolution_ok", False)):
             citation_resolution_status = "fail"
@@ -2879,7 +3099,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             },
         )
     for draft in draft_rows:
-        if draft["status"] == "abstain":
+        if str(draft.get("status", "")) in {"abstain", "diagnostic"}:
             continue
         if publishable_blocked:
             file_name = f"{str(draft.get('target_prompt_id', '')).lower().replace('_', '-')}.rst"
@@ -3066,7 +3286,9 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         {"run_id": run_id, "results": shape_results, "all_non_abstain_pass": shape_all},
     )
     _write_json(run_dir / "format_diff_report.json", {"run_id": run_id, "results": diff_results})
-    non_abstain_drafts = [row for row in draft_rows if row.get("status") != "abstain"]
+    non_abstain_drafts = [
+        row for row in draft_rows if str(row.get("status", "")) not in {"abstain", "diagnostic"}
+    ]
     sim_matrix: list[dict[str, Any]] = []
     for left in non_abstain_drafts:
         for right in non_abstain_drafts:
@@ -3298,17 +3520,19 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         draft_id = str(draft.get("draft_id", ""))
         target_id = str(draft.get("target_id", ""))
         prompt_id = str(draft.get("target_prompt_id", ""))
-        is_abstain = str(draft.get("status", "")) == "abstain"
-        if is_abstain:
+        draft_status = str(draft.get("status", ""))
+        is_non_publishable = draft_status in {"abstain", "diagnostic"}
+        if is_non_publishable:
             judge_results.append(
                 {
                     "draft_id": draft_id,
                     "target_id": target_id,
                     "prompt_id": prompt_id,
-                    "verdict": "abstain",
+                    "verdict": "abstain" if draft_status == "abstain" else "diagnostic",
                     "evidence_grounding": False,
                     "utility_complete": False,
                     "significance": 0,
+                    "diagnostic_reason": str(draft.get("diagnostic_reason", "")),
                 }
             )
             continue
@@ -3468,7 +3692,9 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
 
     candidate_grade_count = len([row for row in judge_results if row.get("verdict") == "candidate"])
     embarrassing_failure_count = int(len(core_gate) + len(rust_gate))
-    non_abstain_count = len([d for d in draft_rows if d.get("status") != "abstain"])
+    non_abstain_count = len(
+        [d for d in draft_rows if str(d.get("status", "")) not in {"abstain", "diagnostic"}]
+    )
     review_count = len([row for row in judge_results if row.get("verdict") == "review"])
     abstain_rate = 0.0
     if draft_rows:
@@ -3513,7 +3739,9 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         "results": {
             "core_docs": {"summary": core_summary, "gate_failures": core_gate},
             "rust_reference": {"summary": rust_summary, "gate_failures": rust_gate},
-            "generated_draft_count": len([d for d in draft_rows if d.get("status") != "abstain"]),
+            "generated_draft_count": len(
+                [d for d in draft_rows if str(d.get("status", "")) not in {"abstain", "diagnostic"}]
+            ),
             "shape_validation_all_non_abstain_pass": shape_all,
         },
         "phase_a_gate_assessment": {
@@ -3573,13 +3801,24 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         run_dir / "run_budget_report.json",
         {
             "run_id": run_id,
-            "max_total_substantive_retries_per_run": 30,
-            "max_total_format_retries_per_run": 15,
+            "max_total_substantive_retries_per_run": convention_retry_budget,
+            "max_total_format_retries_per_run": int(
+                gate_policy_cfg.get(
+                    "compilation_retry_budget",
+                    gate_policy_cfg.get("max_compilation_retries", 15),
+                )
+            ),
             "max_total_stage_b_judge_calls_per_run": 70,
-            "observed_substantive_retries": 0,
+            "observed_substantive_retries": total_retries,
             "observed_format_retries": 0,
             "observed_stage_b_judge_calls": len(stage_b_judges) * len(non_abstain_drafts),
             "status": "within_budget",
+            "retry_stats": {
+                "total_retries": total_retries,
+                "retry_rate": retry_rate,
+                "estimated_additional_cost_pct": retry_rate * 100.0,
+            },
+            "retry_variant": retry_depth_variant,
         },
     )
 
@@ -3591,7 +3830,9 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         "calibration_proxy": {
             "core_docs_failed_cases": int(core_summary.get("failed_cases", 0) or 0),
             "rust_reference_failed_cases": int(rust_summary.get("failed_cases", 0) or 0),
-            "generated_draft_count": len([d for d in draft_rows if d.get("status") != "abstain"]),
+            "generated_draft_count": len(
+                [d for d in draft_rows if str(d.get("status", "")) not in {"abstain", "diagnostic"}]
+            ),
             "shape_all_non_abstain_pass": shape_all,
         },
         "phase_a_gate": {
@@ -3673,6 +3914,8 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         "lookup_status.json",
         "convention_spec_validation.json",
         "fls_matching_validation.json",
+        "role_validation_report.json",
+        "guideline_manifest.json",
     ]
     missing = [name for name in required if not (run_dir / name).exists()]
     if missing:
@@ -3778,7 +4021,7 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         target_id = str(draft.get("target_id", ""))
         prompt_id = str(draft.get("target_prompt_id", ""))
         status = str(draft.get("status", ""))
-        is_abstain = status == "abstain"
+        is_abstain = status in {"abstain", "diagnostic"}
         checks: dict[str, Any] = {
             "draft_id": draft_id,
             "target_id": target_id,
@@ -3976,7 +4219,9 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         "generated_at": datetime.now(UTC).isoformat(),
         "summary": {
             "draft_count": len(drafts),
-            "non_abstain_draft_count": len([d for d in drafts if d.get("status") != "abstain"]),
+            "non_abstain_draft_count": len(
+                [d for d in drafts if str(d.get("status", "")) not in {"abstain", "diagnostic"}]
+            ),
             "blocking_failure_count": len(blocking),
             "golden_lock_ok": lock_ok,
             "comparator_all_non_abstain_pass": comparator_all_non_abstain,

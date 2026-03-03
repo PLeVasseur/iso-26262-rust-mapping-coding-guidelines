@@ -15,6 +15,8 @@ def test_scaffold_s0_gate_policy_includes_step8_retry_budget_keys(tmp_path: Path
     policy_path = tmp_path / "config" / "s0" / "s0_gate_policy.yaml"
     policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
 
+    assert policy["convention_retry_budget"] == 50
+    assert policy["compilation_retry_budget"] == 15
     assert policy["max_convention_retries"] == 50
     assert policy["max_compilation_retries"] == 15
     assert policy["max_judge_calls"] == 70

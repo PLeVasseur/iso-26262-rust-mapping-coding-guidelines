@@ -85,3 +85,23 @@
   each invocation has `injected_context` budgets recorded.
 - Run `uv run python scripts/validate_fls_matching.py` and confirm
   `<run_dir>/fls_matching_validation.json` has `top1_accuracy >= 7`.
+
+## Step 8 Per-Role Validation + Retry Triage
+
+- Verify `<run_dir>/role_validation_report.json` exists and includes
+  `retry_variant`, `convention_retry_budget`, `per_target_retry_budget`, and
+  non-empty `entries`.
+- Confirm `retry_variant` follows machine rule: viable (`>= 0.50`) -> `2`
+  retries, marginal (`>= 0.25`) -> `1`, not-viable (`< 0.25`) -> `0`.
+- Spot-check `entries[*].attempt_entries[*].violations` and verify retry prompts
+  used specific violation checks/messages (not generic "try again").
+- Confirm `validation/role_validators.py` enforces exact `:cite:` syntax with
+  ``:cite:`KEY``` regex and uses citation placement policy.
+- Confirm `validation/role_validators.py` checks `:std:` usage against
+  fully-qualified stdlib lookup entries, not presence-only markers.
+- If any role ends with remaining error violations, verify corresponding target
+  is `lane: diagnostic` with `diagnostic_reason: retry_exhausted` in
+  `<run_dir>/guideline_manifest.json` and excluded from candidate counting.
+- Check `role_validation_report.json.retry_stats.retry_rate`; if `> 0.30`,
+  verify warning `retry_rate_above_30pct` is present and triage note is added to
+  the run review.

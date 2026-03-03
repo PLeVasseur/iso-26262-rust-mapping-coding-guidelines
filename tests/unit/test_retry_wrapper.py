@@ -29,6 +29,7 @@ def test_budget_enforcement() -> None:
             parse_violations,
             build_retry_prompt,
             budget=3,
+            stop_on_same_violations=False,
         )
         assert result.budget_exhausted
         assert result.attempts == 3
