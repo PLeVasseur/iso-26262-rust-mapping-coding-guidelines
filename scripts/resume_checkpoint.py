@@ -51,7 +51,7 @@ def main() -> None:
     result = run_cmd(["python3", "scripts/validate_environment.py"], env=env)
     print(result.stdout)
 
-    spec_path = Path("cache/convention_spec.json")
+    spec_path = Path(".cache/convention_spec.json")
     if spec_path.exists():
         print("4. Convention spec:")
         spec = json.loads(spec_path.read_text(encoding="utf-8"))

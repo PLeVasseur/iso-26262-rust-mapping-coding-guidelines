@@ -70,7 +70,7 @@
 
 - Verify `<run_dir>/convention_spec.json`, `<run_dir>/lookup_status.json`, and
   `<run_dir>/convention_spec_validation.json` exist and are non-empty.
-- Confirm `cache/convention_spec.json` exists and `guidelines_repo_commit_sha`
+- Confirm `.cache/convention_spec.json` exists and `guidelines_repo_commit_sha`
   matches the currently pinned upstream commit.
 - If `<run_dir>/convention_spec_diff.json` exists, inspect `keys_changed` and
   ensure changes are expected for the upstream commit transition.

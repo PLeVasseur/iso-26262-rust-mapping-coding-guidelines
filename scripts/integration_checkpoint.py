@@ -300,7 +300,7 @@ def checkpoint_b(run_dir: Path) -> list[dict[str, Any]]:
             }
         )
 
-    spec_path = Path("cache/convention_spec.json")
+    spec_path = Path(".cache/convention_spec.json")
     results.append(
         {
             "check": "convention_spec_exists",
