@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-FLS_DB_PATH = PROJECT_ROOT / "data" / "fls_spec.db"
+FLS_CANONICAL_DB_PATH = PROJECT_ROOT / ".cache" / "sqlite_kb" / "current" / "fls_spec.db"
+FLS_COMPAT_DB_PATH = PROJECT_ROOT / "data" / "fls_spec.db"
+FLS_DB_PATH = FLS_CANONICAL_DB_PATH
 GUIDELINES_REPO_ROOT = Path(
     os.environ.get(
         "GUIDELINES_REPO", "/Users/pete.levasseur/personal/safety-critical-rust-coding-guidelines"
@@ -19,6 +21,14 @@ GUIDELINES_REPO_ROOT = Path(
 SPEC_LOCK_PATH = GUIDELINES_REPO_ROOT / "src" / "spec.lock"
 EXEMPLAR_MANIFEST = PROJECT_ROOT / "data" / "exemplar_manifest.json"
 _EXEMPLAR_OVERRIDES: list[dict[str, Any]] | None = None
+
+
+def _resolve_fls_db_path(db_path: Path | None = None) -> Path:
+    if db_path is not None:
+        return db_path
+    if FLS_CANONICAL_DB_PATH.exists():
+        return FLS_CANONICAL_DB_PATH
+    return FLS_COMPAT_DB_PATH
 
 
 def _unresolved(reason: str) -> dict[str, str]:
@@ -170,9 +180,10 @@ def _fetch_paragraph(paragraph_id: str, db_path: Path) -> dict[str, str] | None:
 def search_fls_paragraphs(
     query: str,
     *,
-    db_path: Path = FLS_DB_PATH,
+    db_path: Path | None = None,
     limit: int = 5,
 ) -> list[dict[str, Any]]:
+    db_path = _resolve_fls_db_path(db_path)
     if not db_path.exists():
         return []
 
@@ -268,12 +279,13 @@ def validate_fls_id(paragraph_id: str, *, spec_lock_path: Path = SPEC_LOCK_PATH)
 def resolve_fls_for_construct(
     construct_terms: list[str],
     *,
-    db_path: Path = FLS_DB_PATH,
+    db_path: Path | None = None,
     spec_lock_path: Path = SPEC_LOCK_PATH,
 ) -> dict[str, str]:
+    db_path = _resolve_fls_db_path(db_path)
     if not _db_has_paragraphs(db_path):
         raise RuntimeError(
-            "FLS DB unavailable or empty; build data/fls_spec.db before FLS resolution."
+            "FLS DB unavailable or empty; build .cache/sqlite_kb/current/fls_spec.db before FLS resolution."
         )
 
     terms = [term.strip() for term in construct_terms if term.strip()]
@@ -354,7 +366,8 @@ def resolve_fls_for_construct(
     }
 
 
-def get_fls_db_stats(db_path: Path = FLS_DB_PATH) -> dict[str, Any]:
+def get_fls_db_stats(db_path: Path | None = None) -> dict[str, Any]:
+    db_path = _resolve_fls_db_path(db_path)
     if not db_path.exists():
         return {"available": False, "source": "none"}
 

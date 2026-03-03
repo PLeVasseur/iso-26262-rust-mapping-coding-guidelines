@@ -7,7 +7,18 @@ import sqlite3
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CORE_DOCS_DB_PATH = PROJECT_ROOT / "data" / "core_docs.db"
+CORE_DOCS_CANONICAL_DB_PATH = PROJECT_ROOT / ".cache" / "sqlite_kb" / "current" / "core_docs.sqlite"
+CORE_DOCS_COMPAT_DB_PATH = PROJECT_ROOT / "data" / "core_docs.db"
+CORE_DOCS_DB_PATH = CORE_DOCS_CANONICAL_DB_PATH
+
+
+def _resolve_core_docs_db_path(db_path: Path | None = None) -> Path:
+    if db_path is not None:
+        return db_path
+    if CORE_DOCS_CANONICAL_DB_PATH.exists():
+        return CORE_DOCS_CANONICAL_DB_PATH
+    return CORE_DOCS_COMPAT_DB_PATH
+
 
 KNOWN_STD_TYPES: dict[str, str] = {
     "Option": "core::option::Option",
@@ -30,8 +41,9 @@ KNOWN_STD_TYPES: dict[str, str] = {
 }
 
 
-def load_stdlib_index(db_path: Path = CORE_DOCS_DB_PATH) -> dict[str, str]:
+def load_stdlib_index(db_path: Path | None = None) -> dict[str, str]:
     """Load short-name -> fq_path mapping from core_docs DB."""
+    db_path = _resolve_core_docs_db_path(db_path)
     if not db_path.exists():
         return dict(KNOWN_STD_TYPES)
 
@@ -56,8 +68,9 @@ def load_stdlib_index(db_path: Path = CORE_DOCS_DB_PATH) -> dict[str, str]:
         return dict(KNOWN_STD_TYPES)
 
 
-def validate_std_path(candidate_path: str, db_path: Path = CORE_DOCS_DB_PATH) -> bool:
+def validate_std_path(candidate_path: str, db_path: Path | None = None) -> bool:
     """Check whether a fully-qualified stdlib path exists."""
+    db_path = _resolve_core_docs_db_path(db_path)
     if not db_path.exists():
         return candidate_path in KNOWN_STD_TYPES.values()
 

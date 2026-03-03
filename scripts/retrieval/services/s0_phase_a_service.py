@@ -1958,7 +1958,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         },
     )
 
-    stable_spec_path = root / "cache" / "convention_spec.json"
+    stable_spec_path = root / ".cache" / "convention_spec.json"
     stable_spec_path.parent.mkdir(parents=True, exist_ok=True)
     if stable_spec_path.exists():
         old_spec = json.loads(stable_spec_path.read_text(encoding="utf-8"))

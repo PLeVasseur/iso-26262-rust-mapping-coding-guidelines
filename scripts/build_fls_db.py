@@ -1,9 +1,10 @@
-"""Build `data/fls_spec.db` from parsed FLS RST paragraph sources."""
+"""Build `fls_spec` SQLite DB from parsed FLS RST paragraph sources."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,16 @@ except ModuleNotFoundError:  # pragma: no cover - script-entry fallback
     from parse_fls_paragraphs import DEFAULT_SPEC_LOCK_PATH, load_paragraph_numbers, parse_all_fls
 
 FLS_SOURCE_DIR = Path("data/fls_source")
-DB_PATH = Path("data/fls_spec.db")
+DB_PATH = Path(".cache/sqlite_kb/current/fls_spec.db")
+COMPAT_DB_PATH = Path("data/fls_spec.db")
+
+
+def _ensure_compat_symlink(canonical_db_path: Path, compat_db_path: Path = COMPAT_DB_PATH) -> None:
+    compat_db_path.parent.mkdir(parents=True, exist_ok=True)
+    if compat_db_path.exists() or compat_db_path.is_symlink():
+        compat_db_path.unlink()
+    rel_target = Path(os.path.relpath(canonical_db_path, compat_db_path.parent))
+    compat_db_path.symlink_to(rel_target)
 
 
 def _load_commit_sha(source_dir: Path) -> str:
@@ -149,6 +159,8 @@ def build_fls_db(
         connection.commit()
     finally:
         connection.close()
+
+    _ensure_compat_symlink(db_path)
 
     return {
         "db_path": str(db_path),

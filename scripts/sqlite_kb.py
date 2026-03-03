@@ -5,6 +5,18 @@ import argparse
 import sys
 from pathlib import Path
 
+
+def _bootstrap_import_paths() -> None:
+    script_dir = Path(__file__).resolve().parent
+    repo_root = script_dir.parent
+    for candidate in (repo_root, script_dir):
+        value = str(candidate)
+        if value not in sys.path:
+            sys.path.insert(0, value)
+
+
+_bootstrap_import_paths()
+
 from retrieval.corpora.config_loader import load_corpus_runtime_defaults
 from retrieval.corpora.registry import list_supported_corpora
 from retrieval.services import (

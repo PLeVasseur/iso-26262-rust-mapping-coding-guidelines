@@ -76,8 +76,11 @@
   ensure changes are expected for the upstream commit transition.
 - Spot-check lookup coverage in `<run_dir>/lookup_status.json`:
   - `stdlib_entries` should be non-zero and `stdlib_source` should be
-    `core_docs_db` when `data/core_docs.db` is present.
+    `core_docs_db` when `.cache/sqlite_kb/current/core_docs.sqlite` is present
+    (or `data/core_docs.db` compatibility symlink resolves to that target).
   - `fls_spec_db.available` should be `true` with non-zero paragraph count.
+- If Step 7 reports `file_exists:rendering/bibliography.py` as fail, treat it as
+  a plan-path mismatch unless bibliography resolution behavior is also missing.
 - Inspect `writer_subagent_outputs/subagent_invocation_trace.json` and verify
   each invocation has `injected_context` budgets recorded.
 - Run `uv run python scripts/validate_fls_matching.py` and confirm

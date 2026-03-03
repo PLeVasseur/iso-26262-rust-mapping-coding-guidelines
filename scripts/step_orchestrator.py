@@ -121,6 +121,17 @@ def _resolve_expected_file_path(raw_path: str) -> tuple[Path | None, str, list[s
         / "config"
         / "s0"
         / "writer_prompt_contracts.yaml",
+        "data/core_docs.db": PIPELINE_ROOT
+        / ".cache"
+        / "sqlite_kb"
+        / "current"
+        / "core_docs.sqlite",
+        "data/rust_reference.db": PIPELINE_ROOT
+        / ".cache"
+        / "sqlite_kb"
+        / "current"
+        / "rust_reference.sqlite",
+        "data/fls_spec.db": PIPELINE_ROOT / ".cache" / "sqlite_kb" / "current" / "fls_spec.db",
     }
     alias = basename_aliases.get(raw_path)
     if alias is not None and alias.exists():

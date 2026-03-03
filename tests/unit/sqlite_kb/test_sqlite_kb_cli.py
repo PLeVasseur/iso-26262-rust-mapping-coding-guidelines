@@ -14,6 +14,9 @@ import sqlite_kb  # noqa: E402
 
 
 class SqliteKbCliTests(unittest.TestCase):
+    def test_import_bootstrap_adds_repo_root(self) -> None:
+        self.assertIn(str(ROOT), sys.path)
+
     def test_parse_args_for_query(self) -> None:
         with patch.object(sys, "argv", ["sqlite_kb.py", "query", "--corpus", "rust_reference"]):
             args = sqlite_kb.parse_args()
