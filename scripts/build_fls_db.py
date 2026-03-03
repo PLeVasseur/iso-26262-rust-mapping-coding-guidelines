@@ -18,7 +18,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - script-entry fallback
     from parse_fls_paragraphs import DEFAULT_SPEC_LOCK_PATH, load_paragraph_numbers, parse_all_fls
 
-FLS_SOURCE_DIR = Path("data/fls_source")
+FLS_SOURCE_DIR = Path(".cache/fls_source/current")
 DB_PATH = Path(".cache/sqlite_kb/current/fls_spec.db")
 COMPAT_DB_PATH = Path("data/fls_spec.db")
 

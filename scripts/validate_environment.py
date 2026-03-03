@@ -131,7 +131,7 @@ def main() -> None:
     else:
         print("  [WARN] Exemplar manifest: not yet created")
 
-    fls_source_dir = Path("data/fls_source")
+    fls_source_dir = Path(".cache/fls_source/current")
     fls_db_path = Path(".cache/sqlite_kb/current/fls_spec.db")
     if not fls_db_path.exists():
         fls_db_path = Path("data/fls_spec.db")

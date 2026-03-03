@@ -11,7 +11,7 @@ from typing import Any
 
 FLS_REPO = "rust-lang/fls"
 FLS_SRC_DIR = "src"
-DEFAULT_OUTPUT_DIR = Path("data/fls_source")
+DEFAULT_OUTPUT_DIR = Path(".cache/fls_source/current")
 DEFAULT_PIN_FILE = Path(".fls-pin")
 MAX_FLS_RETRIES = 3
 FLS_BACKOFF_BASE = 30
