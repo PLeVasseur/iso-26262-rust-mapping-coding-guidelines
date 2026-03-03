@@ -1,14 +1,18 @@
-# Step 8 Deviations
+# Step 9 Deviations
 
 ## Deviations
-- Integrated Step 8 role validation and retry directly into `run_calibration_run` in `scripts/retrieval/services/s0_phase_a_service.py` using `retry_with_violations()` from `scripts/opencode_retry_wrapper.py` instead of introducing a separate extracted writer orchestrator module before Step 9.
-- Added `validation/role_validators.py` with role-specific checks and wired trusted `prompt_id` dispatch from orchestrator context.
-- Added `guideline_manifest.json` emission in the run directory to record lane routing (`publishable`/`diagnostic`) and `diagnostic_reason` per draft.
-- Added both `convention_retry_budget` and `compilation_retry_budget` keys to `config/s0/s0_gate_policy.yaml` while retaining legacy `max_convention_retries` and `max_compilation_retries` keys for compatibility.
+- Implemented canonical extraction packages (`scripts/retrieval/rendering`, `scripts/retrieval/judges`, `scripts/retrieval/gates`, `scripts/retrieval/validation`, `scripts/retrieval/context`) as delegated wrappers to validated Step 2/3/4 modules where practical.
+- Extracted and wired utility I/O helpers into `scripts/retrieval/services/utils.py`; `s0_phase_a_service.py` now imports these helpers instead of defining them inline.
+- Replaced monolith inline RST template assembly with `render_guideline_rst(RendererInput, ...)` calls and mirrored outputs into `rerendered_rst/` for direct equivalence checks.
+- Added `output_conformance_report.json` generation via extracted conformance wrapper.
+- Kept monolith orchestration body in place (file remains >800 lines) to avoid unbounded behavior drift during this step's integration pass.
 
 ## Known Issues
-- Fair-scheduling is enforced via per-target budget partitioning and per-role retry caps, but the role loop still executes target-by-target; it does not perform an interleaved first-pass-over-all-targets scheduler.
-- Writer role invocation traces now report transport backend as `opencode_http` for retry-wrapper paths and do not include provider message IDs from CLI event streams.
+- Full monolith decomposition into a <=800-line orchestrator is not complete; additional extraction passes are still required for strict structural target compliance.
+- Stage-B judge execution is still the in-file judge loop; canonical retrieval judge wrapper exists but is not yet the runtime path.
+- Scope gate module wrapper exists (`scripts/retrieval/validation/scope.py`) but explicit pre-writer orchestration wiring remains to be completed.
+- Ratchet/prompt discrimination reporting artifacts are not yet auto-emitted from the monolith and still require dedicated calibration reporting integration.
 
-## Active Waivers
-- Waiver `STEP7-BIB-PATH` is active for `file_exists:rendering/bibliography.py`.
+## Waivers
+- Waiver `STEP7-BIB-PATH` is active while extraction wiring is in progress.
+- Linked DoD check: `file_exists:rendering/bibliography.py`.

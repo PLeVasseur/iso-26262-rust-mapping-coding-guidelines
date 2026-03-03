@@ -18,54 +18,23 @@ from context.convention_spec import _build_convention_spec, _diff_specs, validat
 from context.exemplars import get_exemplar_paths
 from context.fls_lookup import get_fls_db_stats, resolve_fls_for_construct, validate_fls_id
 from context.stdlib_lookup import CORE_DOCS_DB_PATH, load_stdlib_index
+from retrieval.rendering.rst_renderer import RendererInput, render_guideline_rst
+from retrieval.validation.conformance import validate_generated_rst_conformance
 from scripts.opencode_retry_wrapper import CONVENTION_RETRY_BUDGET, retry_with_violations
+from retrieval.services.utils import (
+    _now_id,
+    _read_json,
+    _read_jsonl,
+    _report_dir,
+    _run_id,
+    _write_json,
+)
 from scripts.validate_fls_matching import validate_fls_matching
 from validation.role_validators import RoleViolation, validate_role_output
 
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
-
-
-def _now_id(prefix: str) -> str:
-    return f"{prefix}_{datetime.now(UTC).strftime('%Y%m%d')}"
-
-
-def _run_id(args: Namespace) -> str:
-    value = str(getattr(args, "run_id", "") or "").strip()
-    return value or _now_id("s0_phase_a")
-
-
-def _report_dir(root: Path, run_id: str, report_root: str = "") -> Path:
-    if report_root:
-        target = Path(report_root)
-        if not target.is_absolute():
-            target = (root / target).resolve()
-        return target
-    return (root / ".cache" / "sqlite_kb" / "reports" / run_id).resolve()
-
-
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        raw = line.strip()
-        if not raw:
-            continue
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            rows.append(parsed)
-    return rows
 
 
 def _safe_yaml(path: Path) -> dict[str, Any]:
@@ -3080,6 +3049,10 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     rst_dir.mkdir(parents=True, exist_ok=True)
     for stale in rst_dir.glob("*.rst"):
         stale.unlink()
+    rerendered_dir = run_dir / "rerendered_rst"
+    rerendered_dir.mkdir(parents=True, exist_ok=True)
+    for stale in rerendered_dir.glob("*.rst"):
+        stale.unlink()
     (rst_dir / "README.md").write_text(
         "Generated calibration guideline files for Phase A.\n", encoding="utf-8"
     )
@@ -3114,9 +3087,6 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             )
             continue
         prompt_id = str(draft["target_prompt_id"])
-        gid_seed = hashlib.sha256(prompt_id.encode("utf-8")).hexdigest()[:12]
-        guideline_id = f"gui_{gid_seed}"
-        rationale_id = f"rat_{hashlib.sha256((prompt_id + ':r').encode('utf-8')).hexdigest()[:12]}"
         construct_terms = [str(x) for x in (draft.get("construct_terms") or [])]
         fls_info = _resolve_fls_for_construct_safe(construct_terms)
         fls_id = str(fls_info.get("paragraph_id", "fls_UNRESOLVED"))
@@ -3142,93 +3112,42 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             for row in bibliography_rows
             if isinstance(row, dict) and str(row.get("citation_key", "")).strip()
         ]
-        citation_key = citation_keys[0] if citation_keys else f"{prompt_id}:SRC-1"
-        bib_source = "unknown"
-        bib_locator = "unresolved"
-        if bibliography_rows:
-            first_bib: dict[str, Any] = (
-                bibliography_rows[0] if isinstance(bibliography_rows[0], dict) else {}
-            )
-            bib_source = str(first_bib.get("source", "unknown"))
-            locator_raw = first_bib.get("locator")
-            locator_obj: dict[str, Any] = locator_raw if isinstance(locator_raw, dict) else {}
-            bib_locator = str(locator_obj.get("url") or locator_obj.get("path") or "unresolved")
-        non_compliant_mode = str(draft.get("example_execution_mode", "runnable"))
-        mode_flag = {
-            "compile_fail": "         :compile_fail:\n\n",
-            "no_run": "         :no_run:\n\n",
-            "should_panic": "         :should_panic:\n\n",
-            "runnable": "\n",
-        }.get(non_compliant_mode, "\n")
-        section_text = (
-            ".. SPDX-License-Identifier: MIT OR Apache-2.0\n"
-            "   SPDX-FileCopyrightText: The Coding Guidelines Subcommittee Contributors\n\n"
-            ".. default-domain:: coding-guidelines\n\n"
-            f"{title}\n"
-            f"{'=' * len(title)}\n\n"
-            f".. guideline:: {title}\n"
-            f"   :id: {guideline_id}\n"
-            f"   :category: {str(draft.get('category', 'advisory'))}\n"
-            "   :status: draft\n"
-            "   :release: latest\n"
-            f"   :fls: {fls_id}\n"
-            "   :decidability: decidable\n"
-            "   :scope: module\n"
-            f"   :tags: {tag_category}, {tag_row}, {tag_corpus}\n\n"
-            f"   {draft['guideline']} :cite:`{citation_key}`\n\n"
-            "   .. rationale::\n"
-            f"      :id: {rationale_id}\n"
-            "      :status: draft\n\n"
-            f"      {str(rationale_payload.get('rationale_text', draft['rationale']))}\n\n"
-            "   .. non_compliant_example::\n"
-            f"      :id: non_{guideline_id}\n"
-            "      :status: draft\n\n"
-            f"      {str(example_payload.get('non_compliant_narrative', 'Non-compliant example demonstrates hazard trigger.'))}\n\n"
-            "      .. rust-example::\n"
-            + mode_flag
-            + "\n".join(
-                f"         {line}"
-                for line in str(example_payload.get("non_compliant_code", "")).splitlines()
-            )
-            + "\n\n"
-            "   .. compliant_example::\n"
-            f"      :id: com_{guideline_id}\n"
-            "      :status: draft\n\n"
-            f"      {str(example_payload.get('compliant_narrative', 'Compliant example demonstrates mitigation.'))}\n\n"
-            "      .. rust-example::\n\n"
-            + "\n".join(
-                f"         {line}"
-                for line in str(example_payload.get("compliant_code", "")).splitlines()
-            )
-            + "\n\n"
-            "   .. bibliography::\n"
-            f"      :id: bib_{guideline_id}\n"
-            "      :status: draft\n\n"
-            "      .. list-table::\n"
-            "         :header-rows: 0\n"
-            "         :widths: auto\n"
-            "         :class: bibliography-table\n\n"
-            + "\n".join(
-                f"         * - :bibentry:`{str(row.get('citation_key', citation_key))}`\n"
-                f"           - {str(row.get('source', bib_source))} locator `{str((row.get('locator') or {}).get('url') or (row.get('locator') or {}).get('path') or bib_locator)}` with supporting excerpt captured in evidence bundle."
-                for row in (
-                    bibliography_rows
-                    if bibliography_rows
-                    else [
-                        {
-                            "citation_key": citation_key,
-                            "source": bib_source,
-                            "locator": {"path": bib_locator},
-                        }
-                    ]
+        renderer_input = RendererInput(
+            title=title,
+            guideline_text=str(draft.get("guideline", "")),
+            rationale_text=str(rationale_payload.get("rationale_text", draft.get("rationale", ""))),
+            non_compliant_narrative=str(
+                example_payload.get(
+                    "non_compliant_narrative",
+                    "Non-compliant example demonstrates hazard trigger.",
                 )
-                if isinstance(row, dict)
-            )
-            + "\n"
+            ),
+            non_compliant_code=str(example_payload.get("non_compliant_code", "fn main() {}")),
+            compliant_narrative=str(
+                example_payload.get(
+                    "compliant_narrative", "Compliant example demonstrates mitigation."
+                )
+            ),
+            compliant_code=str(example_payload.get("compliant_code", "fn main() {}")),
+            bibliography_rows=[row for row in bibliography_rows if isinstance(row, dict)],
+            non_compliant_mode=str(draft.get("example_execution_mode", "runnable")),
+            compliant_mode=str(example_payload.get("compliant_mode", "runnable")),
+            non_compliant_miri_intent=str(example_payload.get("non_compliant_miri_intent", "none")),
+            compliant_miri_intent=str(example_payload.get("compliant_miri_intent", "none")),
+            category=str(draft.get("category", "advisory")),
+            normative_strength=str(draft.get("strength", "should")),
+            decidability=str(metadata_payload.get("decidability", "decidable")),
+            scope=str(metadata_payload.get("scope", "module")),
+            tags=[tag_category, tag_row, tag_corpus],
+            citation_keys_used=citation_keys,
+            prompt_id=prompt_id,
+            exemplar_ids_used=[str(x) for x in (draft.get("exemplar_ids_used") or []) if str(x)],
         )
+        section_text = render_guideline_rst(renderer_input, guidelines_repo_root).rst
         file_name = f"{prompt_id.lower().replace('_', '-')}.rst"
         output_path = rst_dir / file_name
         output_path.write_text(section_text, encoding="utf-8")
+        (rerendered_dir / file_name).write_text(section_text, encoding="utf-8")
         blob = output_path.read_bytes()
         export_files.append(
             {
@@ -3285,6 +3204,11 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         run_dir / "shape_validation_report.json",
         {"run_id": run_id, "results": shape_results, "all_non_abstain_pass": shape_all},
     )
+    conformance_report = validate_generated_rst_conformance(
+        run_dir,
+        source_dir_name="generated_guidelines_rst",
+    )
+    _write_json(run_dir / "output_conformance_report.json", conformance_report)
     _write_json(run_dir / "format_diff_report.json", {"run_id": run_id, "results": diff_results})
     non_abstain_drafts = [
         row for row in draft_rows if str(row.get("status", "")) not in {"abstain", "diagnostic"}
@@ -3645,11 +3569,11 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         elif mode == "bootstrap" and any_hard_fail:
             verdict = "blocked"
         elif mode == "bootstrap" and any_hard_abstain:
-            verdict = "review"
+            verdict = "blocked"
         elif soft_pass >= 2 and soft_fail == 0 and soft_abstain <= 1:
             verdict = "candidate"
         else:
-            verdict = "review"
+            verdict = "blocked"
         judge_results.append(
             {
                 "draft_id": draft_id,
@@ -3695,7 +3619,26 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
     non_abstain_count = len(
         [d for d in draft_rows if str(d.get("status", "")) not in {"abstain", "diagnostic"}]
     )
-    review_count = len([row for row in judge_results if row.get("verdict") == "review"])
+    review_count = 0
+    output_conformance_status = str(conformance_report.get("status", "fail"))
+    discrimination_summary: dict[str, dict[str, Any]] = {}
+    for judge_name in stage_b_judges:
+        observed = [
+            str(row.get("judge_decisions", {}).get(judge_name, ""))
+            for row in judge_results
+            if isinstance(row.get("judge_decisions"), dict)
+        ]
+        pass_count = len([value for value in observed if value == "pass"])
+        fail_count = len([value for value in observed if value == "fail"])
+        abstain_count = len([value for value in observed if value == "abstain"])
+        total = len(observed)
+        discrimination_summary[judge_name] = {
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "abstain_count": abstain_count,
+            "pass_rate": round(pass_count / float(total), 4) if total else 0.0,
+            "positive_vs_known_bad_delta": None,
+        }
     abstain_rate = 0.0
     if draft_rows:
         abstain_rate = len([d for d in draft_rows if d.get("status") == "abstain"]) / float(
@@ -3705,6 +3648,7 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
         not publishable_blocked
         and evidence_gate_status == "pass"
         and citation_resolution_status == "pass"
+        and output_conformance_status == "pass"
         and shape_all
         and candidate_grade_count >= 3
         and review_count == 0
@@ -3721,9 +3665,23 @@ def run_calibration_run(args: Namespace, *, root: Path) -> int:
             "abstain_rate": abstain_rate,
             "evidence_gate_status": evidence_gate_status,
             "citation_resolution_status": citation_resolution_status,
+            "output_conformance_status": output_conformance_status,
             "publishable_blocked": publishable_blocked,
             "embarrassing_failure_count": embarrassing_failure_count,
+            "discrimination_summary": discrimination_summary,
             "stage_c_diagnostic_only": True,
+        },
+    )
+    _write_json(
+        run_dir / "standalone_judge_aggregate.json",
+        {
+            "run_id": run_id,
+            "status": "pass" if gate_passed else "fail",
+            "results": judge_results,
+            "candidate_grade_count": candidate_grade_count,
+            "review_count": review_count,
+            "abstain_rate": abstain_rate,
+            "discrimination_summary": discrimination_summary,
         },
     )
 

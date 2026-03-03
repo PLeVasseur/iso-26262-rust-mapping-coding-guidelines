@@ -1,17 +1,15 @@
-"""Backward-compatible exports for Step 2 renderer."""
-
 from retrieval.rendering.rst_renderer import (
     CITATION_PLACEMENT_POLICY,
-    RendererInput,
     RenderArtifacts,
+    RendererInput,
     _render_guideline_rst,
     render_guideline_rst,
 )
 
 __all__ = [
     "CITATION_PLACEMENT_POLICY",
-    "RendererInput",
     "RenderArtifacts",
+    "RendererInput",
     "_render_guideline_rst",
     "render_guideline_rst",
 ]
