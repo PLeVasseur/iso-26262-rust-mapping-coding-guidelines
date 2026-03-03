@@ -11,6 +11,10 @@ from typing import Any
 from context.convention_extractor import ExemplarConventions
 
 
+_DEFAULT_CITATION_PLACEMENT_POLICY = "renderer_injected"
+_VALID_CITATION_PLACEMENT_POLICIES = {"renderer_injected", "llm_authored"}
+
+
 def _get_repo_commit_sha(guidelines_repo_root: Path | None) -> str:
     """Get the current commit SHA of the guidelines repo."""
     if guidelines_repo_root is None or not guidelines_repo_root.exists():
@@ -118,6 +122,7 @@ def _build_convention_spec(
         "source": "exemplar_extraction",
         "exemplar_count": len(exemplar_conventions),
         "guidelines_repo_commit_sha": repo_commit_sha,
+        "citation_placement_policy": _DEFAULT_CITATION_PLACEMENT_POLICY,
         "conventions": conventions,
         "known_types": known_types,
         "title_examples": title_examples,
@@ -147,7 +152,11 @@ def validate_convention_spec(spec: dict[str, Any]) -> dict[str, Any]:
     }
     missing = sorted(key for key in required_keys if key not in spec)
 
-    conventions = spec.get("conventions") if isinstance(spec.get("conventions"), dict) else {}
+    conventions: dict[str, Any]
+    if isinstance(spec.get("conventions"), dict):
+        conventions = spec.get("conventions", {})
+    else:
+        conventions = {}
     std_conv = conventions.get("std_role_convention")
     if not isinstance(std_conv, dict):
         std_conv = {}
@@ -166,6 +175,17 @@ def validate_convention_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "cite_placements": len(cite_conv.get("placement_examples", [])) >= 1,
         "bibliography_domains": len(bib_conv.get("accepted_domains", [])) >= 1,
     }
+
+    warnings: list[str] = []
+    raw_policy = spec.get("citation_placement_policy")
+    policy = str(raw_policy).strip() if isinstance(raw_policy, str) else ""
+    if policy not in _VALID_CITATION_PLACEMENT_POLICIES:
+        if policy:
+            warnings.append("invalid_citation_placement_policy: defaulting to renderer_injected")
+        else:
+            warnings.append("missing_citation_placement_policy: defaulting to renderer_injected")
+        policy = _DEFAULT_CITATION_PLACEMENT_POLICY
+
     verified_fields = sorted(name for name, ok in field_checks.items() if ok)
     unverified_fields = sorted(name for name, ok in field_checks.items() if not ok)
 
@@ -175,6 +195,9 @@ def validate_convention_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "missing_required_keys": missing,
         "verified_fields": verified_fields,
         "unverified_fields": unverified_fields,
+        "citation_placement_policy": policy,
+        "citation_placement_policy_defaulted": bool(warnings),
+        "warnings": warnings,
     }
 
 

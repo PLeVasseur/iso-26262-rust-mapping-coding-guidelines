@@ -869,6 +869,9 @@ def run_scaffold_s0_config(args: Namespace, *, root: Path) -> int:
             "rewrite_mode": "auto",
             "top_k": 10,
             "candidate_limit": 5000,
+            "max_convention_retries": 50,
+            "max_compilation_retries": 15,
+            "max_judge_calls": 70,
             "dedup": ["span_hash", "normalized_excerpt_hash"],
         },
         "examples_gate_policy.yaml": {

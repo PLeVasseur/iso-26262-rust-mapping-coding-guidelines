@@ -2,6 +2,9 @@ version: 1
 rewrite_mode: auto
 top_k: 10
 candidate_limit: 5000
+max_convention_retries: 50
+max_compilation_retries: 15
+max_judge_calls: 70
 must_pass_prompt_ids:
   - CORE-CONC-003
   - CORE-SAFE-003
