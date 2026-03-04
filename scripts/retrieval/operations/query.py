@@ -55,6 +55,7 @@ from retrieval.core.telemetry import (
 )
 from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
 from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
+from retrieval.query.semantic_math import cosine_similarity, l2_norm, min_max_normalize
 from retrieval.query.review_artifacts import (
     build_review_artifact_payload,
     persist_review_artifact,
@@ -768,32 +769,6 @@ def _split_csv_field(raw: str) -> list[str]:
     return sorted(set(values))
 
 
-def _min_max_normalize(values: list[float]) -> list[float]:
-    if not values:
-        return []
-    lower = min(values)
-    upper = max(values)
-    if abs(upper - lower) < 1e-12:
-        return [1.0 for _ in values]
-    return [(value - lower) / (upper - lower) for value in values]
-
-
-def _dot(left: list[float], right: list[float]) -> float:
-    return float(sum(a * b for a, b in zip(left, right, strict=False)))
-
-
-def _l2_norm(values: list[float]) -> float:
-    return math.sqrt(sum(value * value for value in values))
-
-
-def _cosine_similarity(left: list[float], right: list[float]) -> float:
-    left_norm = _l2_norm(left)
-    right_norm = _l2_norm(right)
-    if left_norm == 0.0 or right_norm == 0.0:
-        return 0.0
-    return _dot(left, right) / (left_norm * right_norm)
-
-
 def _classify_semantic_error(detail: str) -> str:
     text = str(detail).strip().lower()
     if "timed out" in text:
@@ -996,8 +971,8 @@ def _run_lexical_query(
 
     bm25_values = [-float(row["bm25_raw"]) for row in rows]
     overlap_values = [float(row["token_overlap_count"]) for row in rows]
-    bm25_norm = _min_max_normalize(bm25_values)
-    overlap_norm = _min_max_normalize(overlap_values)
+    bm25_norm = min_max_normalize(bm25_values)
+    overlap_norm = min_max_normalize(overlap_values)
 
     for row, bm25_score, overlap_score in zip(rows, bm25_norm, overlap_norm, strict=False):
         row["lexical_score"] = (
@@ -1268,7 +1243,7 @@ def _persist_embedding_cache(
                         retrieval_contract.embed_version,
                         str(row["text_sha256"]),
                         json.dumps(row["embedding"], sort_keys=False),
-                        float(_l2_norm([float(value) for value in row["embedding"]])),
+                        float(l2_norm([float(value) for value in row["embedding"]])),
                         _utc_now(),
                         str(row.get("source_fetched_at", "")),
                     )
@@ -1301,7 +1276,7 @@ def _persist_embedding_cache(
                         model_id,
                         str(row["text_sha256"]),
                         json.dumps(row["embedding"], sort_keys=False),
-                        float(_l2_norm([float(value) for value in row["embedding"]])),
+                        float(l2_norm([float(value) for value in row["embedding"]])),
                         _utc_now(),
                         str(row.get("source_fetched_at", "")),
                     )
@@ -1420,7 +1395,7 @@ def _semantic_candidates(
         if statement_id not in embeddings_by_statement_id:
             continue
         vector = embeddings_by_statement_id[statement_id]
-        semantic_score = _cosine_similarity(query_embedding, vector)
+        semantic_score = cosine_similarity(query_embedding, vector)
         enriched = dict(row)
         enriched["semantic_score_raw"] = semantic_score
         scored_rows.append(enriched)
@@ -1429,7 +1404,7 @@ def _semantic_candidates(
     if not scored_rows:
         return []
 
-    normalized_semantic = _min_max_normalize(semantic_scores)
+    normalized_semantic = min_max_normalize(semantic_scores)
     for row, norm_score in zip(scored_rows, normalized_semantic, strict=False):
         row["semantic_score"] = float(norm_score)
 
@@ -1470,7 +1445,7 @@ def _semantic_candidates(
         timing["rerank_ms"] = timing.get("rerank_ms", 0.0) + (
             (time.perf_counter() - rerank_started) * 1000.0
         )
-    reranker_scores = _min_max_normalize([float(value) for value in reranker_scores_raw])
+    reranker_scores = min_max_normalize([float(value) for value in reranker_scores_raw])
 
     reranker_by_id: dict[str, float] = {}
     for row, rerank_score in zip(rerank_pool, reranker_scores, strict=False):
@@ -2076,7 +2051,7 @@ def execute_retrieval_query(
 
     lexical_ids = [_row_identity(row) for row in lexical_rows]
     lexical_values = [float(row.get("lexical_score", 0.0)) for row in lexical_rows]
-    lexical_norm = _min_max_normalize(lexical_values)
+    lexical_norm = min_max_normalize(lexical_values)
     lexical_score_by_id = dict(zip(lexical_ids, lexical_norm, strict=False))
 
     merged: dict[str, dict[str, Any]] = {}
@@ -2122,7 +2097,7 @@ def execute_retrieval_query(
             semantic_min=resolved_hybrid_semantic_min,
             row_identity=_row_identity,
             rerank_documents=_rerank_with_retries,
-            normalize_scores=_min_max_normalize,
+            normalize_scores=min_max_normalize,
             timing=timing,
             workload=workload,
         )
@@ -2137,7 +2112,7 @@ def execute_retrieval_query(
             floor_share=resolved_lexical_floor_share,
             row_identity=_row_identity,
             rerank_documents=_rerank_with_retries,
-            normalize_scores=_min_max_normalize,
+            normalize_scores=min_max_normalize,
             timing=timing,
             workload=workload,
         )
