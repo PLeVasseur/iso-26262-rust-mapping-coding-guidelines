@@ -7,7 +7,6 @@ import json
 import re
 import shutil
 import sqlite3
-import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -23,6 +22,9 @@ from retrieval.build.reports import (
     validate_rust_reference_db,
     write_row_metadata_report as _write_row_metadata_report,
     write_validation_report as _write_validation_report,
+)
+from retrieval.build.source_checkout import (
+    resolve_reference_checkout as _resolve_reference_checkout,
 )
 from retrieval.core.provenance import (
     apply_pending_migrations,
@@ -515,57 +517,6 @@ def _jaccard_similarity(left: set[str], right: set[str]) -> float:
     if intersection == 0:
         return 0.0
     return intersection / float(len(left | right))
-
-
-def _run_git_command(command: list[str], cwd: Path | None = None) -> str:
-    completed = subprocess.run(
-        ["git", *command],
-        cwd=str(cwd) if cwd else None,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        message = completed.stderr.strip() or completed.stdout.strip() or "unknown git error"
-        raise RuntimeError(f"git {' '.join(command)} failed: {message}")
-    return completed.stdout.strip()
-
-
-def _resolve_reference_checkout(
-    reference_source_dir: Path | None,
-    reference_cache_dir: Path,
-    reference_repo_url: str,
-    reference_revision: str | None,
-    skip_fetch: bool,
-) -> tuple[Path, str, str]:
-    pinned_revision = str(reference_revision or "").strip()
-    if not pinned_revision:
-        raise RuntimeError(
-            "Pinned source revision is required; pass --reference-revision explicitly"
-        )
-
-    if reference_source_dir is not None:
-        source_dir = reference_source_dir.resolve()
-        if not source_dir.exists():
-            raise RuntimeError(f"Reference source directory not found: {source_dir}")
-        commit_sha = pinned_revision
-        if (source_dir / ".git").exists():
-            commit_sha = _run_git_command(["rev-parse", pinned_revision], cwd=source_dir)
-            _run_git_command(["checkout", "--quiet", "--detach", commit_sha], cwd=source_dir)
-        return source_dir, commit_sha, utc_now()
-
-    source_dir = reference_cache_dir.resolve()
-    if not (source_dir / ".git").exists():
-        source_dir.parent.mkdir(parents=True, exist_ok=True)
-        _run_git_command(["clone", "--quiet", "--depth", "1", reference_repo_url, str(source_dir)])
-
-    if not skip_fetch:
-        _run_git_command(["fetch", "--quiet", "origin"], cwd=source_dir)
-
-    commit_sha = _run_git_command(["rev-parse", pinned_revision], cwd=source_dir)
-
-    _run_git_command(["checkout", "--quiet", "--detach", commit_sha], cwd=source_dir)
-    return source_dir, commit_sha, utc_now()
 
 
 def _parse_summary(src_root: Path) -> list[SummaryEntry]:
