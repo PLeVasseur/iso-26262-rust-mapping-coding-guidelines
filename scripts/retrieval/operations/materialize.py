@@ -14,8 +14,6 @@ from urllib.request import urlopen
 from retrieval.operations.query import (
     ModeExecutionError,
     RetrievalContractProfile,
-    _annotate_rows_with_row_markers,
-    _filter_rows_by_row_marker,
     _load_statement_corpus,
     _load_table1_row_requirements,
     _resolve_retrieval_contract_profile,
@@ -25,6 +23,12 @@ from retrieval.query.embedding_cache import (
     ensure_embedding_cache_table as _ensure_embedding_cache_table,
     load_embedding_cache as _load_embedding_cache,
     sha256_text as _sha256_text,
+)
+from retrieval.query.row_markers import (
+    annotate_rows_with_row_markers as _annotate_rows_with_row_markers,
+)
+from retrieval.query.row_markers import (
+    filter_rows_by_row_marker as _filter_rows_by_row_marker,
 )
 from semantic_backend_client import SemanticBackendConfig, embed_texts
 from sqlite_query_guardrails import GuardrailError
