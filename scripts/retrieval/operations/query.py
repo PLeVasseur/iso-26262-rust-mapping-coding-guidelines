@@ -2,17 +2,14 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
-import re
 import sqlite3
 import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +52,20 @@ from retrieval.core.telemetry import (
 )
 from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
 from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
-from retrieval.query.semantic_math import cosine_similarity, l2_norm, min_max_normalize
+from retrieval.query.embedding_cache import (
+    ensure_embedding_cache_table,
+    load_embedding_cache,
+    persist_embedding_cache,
+    sha256_text,
+)
+from retrieval.query.semantic_math import cosine_similarity, min_max_normalize
+from retrieval.query.text_processing import (
+    STOPWORDS,
+    TOKEN_RE,
+    split_csv_field,
+    tokenize,
+    tokenize_raw,
+)
 from retrieval.query.review_artifacts import (
     build_review_artifact_payload,
     persist_review_artifact,
@@ -78,79 +88,6 @@ FULL_CORPUS_PAGE_LIMIT = 5000
 DEFAULT_QUERY_REVIEW_DIR = ".cache/sqlite_kb/reports/rust_reference/query_reviews"
 DEFAULT_REWRITE_RULES_PATH = "config/sqlite_query_rewrite/rust_reference_rewrite.yaml"
 REVIEW_ARTIFACT_SCHEMA_VERSION = 1
-TOKEN_RE = re.compile(r"[a-z0-9_]+")
-STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "can",
-    "do",
-    "does",
-    "for",
-    "how",
-    "in",
-    "is",
-    "it",
-    "kinds",
-    "of",
-    "on",
-    "or",
-    "rust",
-    "that",
-    "the",
-    "to",
-    "what",
-    "when",
-    "where",
-    "which",
-    "available",
-    "features",
-    "feature",
-    "language",
-    "programming",
-    "support",
-    "supports",
-    "techniques",
-    "with",
-    "why",
-}
-EMBEDDING_CACHE_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS statement_embeddings (
-    statement_id TEXT NOT NULL,
-    model_id TEXT NOT NULL,
-    text_sha256 TEXT NOT NULL,
-    vector_json TEXT NOT NULL,
-    vector_norm REAL NOT NULL,
-    embedded_at TEXT NOT NULL,
-    source_fetched_at TEXT NOT NULL,
-    PRIMARY KEY(statement_id, model_id),
-    FOREIGN KEY(statement_id) REFERENCES statements(statement_id)
-);
-CREATE INDEX IF NOT EXISTS idx_statement_embeddings_model
-    ON statement_embeddings(model_id, statement_id);
-"""
-
-CHUNK_EMBEDDING_CACHE_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS chunk_embeddings (
-    chunk_uid TEXT NOT NULL,
-    model_id TEXT NOT NULL,
-    embed_version TEXT NOT NULL,
-    text_sha256 TEXT NOT NULL,
-    vector_json TEXT NOT NULL,
-    vector_norm REAL NOT NULL,
-    embedded_at TEXT NOT NULL,
-    source_fetched_at TEXT NOT NULL,
-    PRIMARY KEY(chunk_uid, model_id, embed_version),
-    FOREIGN KEY(chunk_uid) REFERENCES chunks(chunk_uid)
-);
-CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_model
-    ON chunk_embeddings(model_id, chunk_uid, embed_version);
-"""
 
 
 class ModeExecutionError(RuntimeError):
@@ -709,22 +646,6 @@ def _parse_params(raw: str) -> dict[str, Any]:
     return payload
 
 
-def _tokenize(text: str) -> set[str]:
-    return {
-        token
-        for token in (match.group(0) for match in TOKEN_RE.finditer(text.lower()))
-        if len(token) >= 3 and token not in STOPWORDS
-    }
-
-
-def _tokenize_raw(text: str) -> set[str]:
-    return {
-        token
-        for token in (match.group(0) for match in TOKEN_RE.finditer(text.lower()))
-        if len(token) >= 3
-    }
-
-
 def _row_identity(row: dict[str, Any]) -> str:
     candidate = str(row.get("chunk_uid", "")).strip()
     if candidate:
@@ -733,40 +654,13 @@ def _row_identity(row: dict[str, Any]) -> str:
 
 
 def _to_fts_query(query_text: str) -> str:
-    tokens = _tokenize(query_text)
+    tokens = tokenize(query_text)
     if not tokens:
-        tokens = _tokenize_raw(query_text)
+        tokens = tokenize_raw(query_text)
     ordered = sorted(tokens)
     if not ordered:
         raise GuardrailError("Query text did not yield searchable lexical tokens")
     return " OR ".join(ordered)
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
-
-
-def _sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _ensure_embedding_cache_table(
-    db_path: Path, retrieval_contract: RetrievalContractProfile
-) -> None:
-    connection = sqlite3.connect(db_path)
-    try:
-        if retrieval_contract.embedding_table == "chunk_embeddings":
-            connection.executescript(CHUNK_EMBEDDING_CACHE_TABLE_DDL)
-        else:
-            connection.executescript(EMBEDDING_CACHE_TABLE_DDL)
-        connection.commit()
-    finally:
-        connection.close()
-
-
-def _split_csv_field(raw: str) -> list[str]:
-    values = [value.strip() for value in str(raw).split(",") if value.strip()]
-    return sorted(set(values))
 
 
 def _classify_semantic_error(detail: str) -> str:
@@ -875,7 +769,7 @@ def _build_semantic_config(args: argparse.Namespace) -> SemanticBackendConfig:
 def _materialize_common_row(raw_row: dict[str, Any], query_tokens: set[str]) -> dict[str, Any]:
     statement_id = str(raw_row.get("statement_id", raw_row.get("chunk_uid", "")))
     text = str(raw_row.get("statement_text", raw_row.get("chunk_text", "")))
-    overlap = len(query_tokens.intersection(_tokenize(text))) if query_tokens else 0
+    overlap = len(query_tokens.intersection(tokenize(text))) if query_tokens else 0
     bm25_raw = float(raw_row.get("bm25_raw", 0.0))
     payload = {
         "statement_id": statement_id,
@@ -883,10 +777,10 @@ def _materialize_common_row(raw_row: dict[str, Any], query_tokens: set[str]) -> 
         "section_heading": str(raw_row.get("section_heading", "")),
         "source_anchor": str(raw_row.get("source_anchor", "")),
         "source_fetched_at": str(raw_row.get("source_fetched_at", "")),
-        "row_markers": _split_csv_field(str(raw_row.get("row_markers", ""))),
-        "mechanism_ids": _split_csv_field(str(raw_row.get("mechanism_ids", ""))),
-        "mechanism_families": _split_csv_field(str(raw_row.get("mechanism_families", ""))),
-        "text_sha256": _sha256_text(text.lower()),
+        "row_markers": split_csv_field(str(raw_row.get("row_markers", ""))),
+        "mechanism_ids": split_csv_field(str(raw_row.get("mechanism_ids", ""))),
+        "mechanism_families": split_csv_field(str(raw_row.get("mechanism_families", ""))),
+        "text_sha256": sha256_text(text.lower()),
         "bm25_raw": bm25_raw,
         "phrase_match": int(raw_row.get("phrase_match", 0) or 0),
         "token_overlap_count": overlap,
@@ -910,7 +804,7 @@ def _run_lexical_query(
     row_marker: str,
     row_limit: int,
 ) -> list[dict[str, Any]]:
-    query_tokens = _tokenize(query_text)
+    query_tokens = tokenize(query_text)
     fts_query = _to_fts_query(query_text)
 
     corpus_by_statement_id = {str(row["statement_id"]): row for row in corpus_rows}
@@ -925,7 +819,7 @@ def _run_lexical_query(
     )
 
     if not result["rows"]:
-        fallback_tokens = sorted(_tokenize_raw(query_text))
+        fallback_tokens = sorted(tokenize_raw(query_text))
         fallback_query = " OR ".join(fallback_tokens)
         if fallback_query and fallback_query != fts_query:
             result = execute_contract_query(
@@ -952,7 +846,7 @@ def _run_lexical_query(
         row["bm25_raw"] = float(match_row.get("bm25_raw", 0.0))
         row["phrase_match"] = int(query_text.lower() in str(row["statement_text"]).lower())
         row["token_overlap_count"] = len(
-            query_tokens.intersection(_tokenize(str(row["statement_text"])))
+            query_tokens.intersection(tokenize(str(row["statement_text"])))
         )
         rows.append(row)
 
@@ -1049,18 +943,18 @@ def _load_table1_row_requirements(
     for row in result["rows"]:
         row_marker = str(row.get("row_marker", "")).strip().lower()
         requirement_text = str(row.get("requirement_text", "")).strip()
-        profile_terms = _split_csv_field(str(row.get("profile_terms", "")))
+        profile_terms = split_csv_field(str(row.get("profile_terms", "")))
         if not row_marker:
             continue
 
-        tokens = _tokenize(requirement_text)
+        tokens = tokenize(requirement_text)
         for term in profile_terms:
-            tokens.update(_tokenize(term))
+            tokens.update(tokenize(term))
         if not tokens:
-            tokens = _tokenize_raw(requirement_text)
+            tokens = tokenize_raw(requirement_text)
         if not tokens:
             for term in profile_terms:
-                tokens.update(_tokenize_raw(term))
+                tokens.update(tokenize_raw(term))
         profiles.append(
             {
                 "row_marker": row_marker,
@@ -1078,9 +972,9 @@ def _derive_row_marker_scores(
     statement_text: str,
     row_profiles: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    statement_tokens = _tokenize(statement_text)
+    statement_tokens = tokenize(statement_text)
     if not statement_tokens:
-        statement_tokens = _tokenize_raw(statement_text)
+        statement_tokens = tokenize_raw(statement_text)
     if not statement_tokens or not row_profiles:
         return []
 
@@ -1146,148 +1040,6 @@ def _filter_rows_by_row_marker(rows: list[dict[str, Any]], row_marker: str) -> l
     ]
 
 
-def _load_embedding_cache(
-    *,
-    db_path: Path,
-    retrieval_contract: RetrievalContractProfile,
-    model_id: str,
-    corpus_rows: list[dict[str, Any]],
-) -> dict[str, list[float]]:
-    if not corpus_rows:
-        return {}
-
-    statement_ids = [str(row["statement_id"]) for row in corpus_rows]
-    expected_hash_by_id = {
-        str(row["statement_id"]): str(row.get("text_sha256", "")) for row in corpus_rows
-    }
-
-    embedding_by_id: dict[str, list[float]] = {}
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
-    try:
-        connection.row_factory = sqlite3.Row
-        chunk_size = 800
-        for offset in range(0, len(statement_ids), chunk_size):
-            chunk = statement_ids[offset : offset + chunk_size]
-            placeholders = ",".join("?" for _ in chunk)
-            if retrieval_contract.embedding_table == "chunk_embeddings":
-                sql = (
-                    "SELECT chunk_uid AS cache_id, text_sha256, vector_json "
-                    "FROM chunk_embeddings "
-                    "WHERE model_id = ? AND embed_version = ? AND chunk_uid IN ("
-                    + placeholders
-                    + ")"
-                )
-                rows = connection.execute(
-                    sql,
-                    [model_id, retrieval_contract.embed_version, *chunk],
-                ).fetchall()
-            else:
-                sql = (
-                    "SELECT statement_id AS cache_id, text_sha256, vector_json "
-                    "FROM statement_embeddings "
-                    "WHERE model_id = ? AND statement_id IN (" + placeholders + ")"
-                )
-                rows = connection.execute(sql, [model_id, *chunk]).fetchall()
-            for row in rows:
-                statement_id = str(row["cache_id"])
-                if str(row["text_sha256"]) != expected_hash_by_id.get(statement_id, ""):
-                    continue
-                vector_payload = json.loads(str(row["vector_json"]))
-                if isinstance(vector_payload, list):
-                    embedding_by_id[statement_id] = [float(value) for value in vector_payload]
-    finally:
-        connection.close()
-
-    return embedding_by_id
-
-
-def _persist_embedding_cache(
-    *,
-    db_path: Path,
-    retrieval_contract: RetrievalContractProfile,
-    model_id: str,
-    rows: list[dict[str, Any]],
-) -> None:
-    if not rows:
-        return
-
-    _ensure_embedding_cache_table(db_path, retrieval_contract)
-    connection = sqlite3.connect(db_path)
-    try:
-        connection.execute("PRAGMA busy_timeout = 1500")
-        if retrieval_contract.embedding_table == "chunk_embeddings":
-            connection.executemany(
-                """
-                INSERT INTO chunk_embeddings(
-                    chunk_uid,
-                    model_id,
-                    embed_version,
-                    text_sha256,
-                    vector_json,
-                    vector_norm,
-                    embedded_at,
-                    source_fetched_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(chunk_uid, model_id, embed_version)
-                DO UPDATE SET
-                    text_sha256 = excluded.text_sha256,
-                    vector_json = excluded.vector_json,
-                    vector_norm = excluded.vector_norm,
-                    embedded_at = excluded.embedded_at,
-                    source_fetched_at = excluded.source_fetched_at
-                """,
-                [
-                    (
-                        str(row["statement_id"]),
-                        model_id,
-                        retrieval_contract.embed_version,
-                        str(row["text_sha256"]),
-                        json.dumps(row["embedding"], sort_keys=False),
-                        float(l2_norm([float(value) for value in row["embedding"]])),
-                        _utc_now(),
-                        str(row.get("source_fetched_at", "")),
-                    )
-                    for row in rows
-                ],
-            )
-        else:
-            connection.executemany(
-                """
-                INSERT INTO statement_embeddings(
-                    statement_id,
-                    model_id,
-                    text_sha256,
-                    vector_json,
-                    vector_norm,
-                    embedded_at,
-                    source_fetched_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(statement_id, model_id)
-                DO UPDATE SET
-                    text_sha256 = excluded.text_sha256,
-                    vector_json = excluded.vector_json,
-                    vector_norm = excluded.vector_norm,
-                    embedded_at = excluded.embedded_at,
-                    source_fetched_at = excluded.source_fetched_at
-                """,
-                [
-                    (
-                        str(row["statement_id"]),
-                        model_id,
-                        str(row["text_sha256"]),
-                        json.dumps(row["embedding"], sort_keys=False),
-                        float(l2_norm([float(value) for value in row["embedding"]])),
-                        _utc_now(),
-                        str(row.get("source_fetched_at", "")),
-                    )
-                    for row in rows
-                ],
-            )
-        connection.commit()
-    finally:
-        connection.close()
-
-
 def _semantic_candidates(
     *,
     db_path: Path,
@@ -1319,7 +1071,7 @@ def _semantic_candidates(
             (time.perf_counter() - query_embed_started) * 1000.0
         )
 
-    embeddings_by_statement_id = _load_embedding_cache(
+    embeddings_by_statement_id = load_embedding_cache(
         db_path=db_path,
         retrieval_contract=retrieval_contract,
         model_id=config.embed_model_id,
@@ -1380,7 +1132,7 @@ def _semantic_candidates(
                 )
 
         if persist_cache:
-            _persist_embedding_cache(
+            persist_embedding_cache(
                 db_path=db_path,
                 retrieval_contract=retrieval_contract,
                 model_id=config.embed_model_id,
@@ -1901,7 +1653,7 @@ def execute_retrieval_query(
             "rows": rows,
         }
 
-    _ensure_embedding_cache_table(db_path, retrieval_contract)
+    ensure_embedding_cache_table(db_path, retrieval_contract)
 
     try:
         semantic_rows = _semantic_candidates(
