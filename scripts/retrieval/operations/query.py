@@ -47,6 +47,7 @@ from retrieval.query.embedding_cache import (
     ensure_embedding_cache_table,
 )
 from retrieval.query.errors import ModeExecutionError
+from retrieval.query.fusion_metadata import build_fusion_metadata
 from retrieval.query.hybrid_pipeline import run_hybrid_pipeline as core_run_hybrid_pipeline
 from retrieval.query.lexical_pipeline import load_statement_corpus as core_load_statement_corpus
 from retrieval.query.lexical_pipeline import (
@@ -580,40 +581,24 @@ def execute_retrieval_query(
             row_limit=candidate_limit,
         )
 
-    score_definitions = {
-        "lexical_score": "Normalized lexical relevance from FTS and token overlap",
-        "semantic_score": "Normalized embedding cosine similarity to query",
-        "reranker_score": "Normalized cross-encoder reranker relevance",
-        "final_score": "",
-    }
-    fusion_params = {
-        "method": normalized_fusion_method,
-        "rrf_k": int(resolved_rrf_k),
-        "rrf_window": int(resolved_rrf_window),
-        "lexical_floor_count": int(resolved_lexical_floor_count),
-        "lexical_floor_share": float(resolved_lexical_floor_share),
-        "candidate_policy": str(normalized_candidate_policy),
-        "rerank_pool_size": int(resolved_hybrid_rerank_pool_size),
-        "lexical_min": int(resolved_hybrid_lexical_min),
-        "semantic_min": int(resolved_hybrid_semantic_min),
-    }
+    score_definitions, fusion_params = build_fusion_metadata(
+        normalized_fusion_method=normalized_fusion_method,
+        resolved_rrf_k=resolved_rrf_k,
+        resolved_rrf_window=resolved_rrf_window,
+        resolved_lexical_floor_count=resolved_lexical_floor_count,
+        resolved_lexical_floor_share=resolved_lexical_floor_share,
+        normalized_candidate_policy=normalized_candidate_policy,
+        resolved_hybrid_rerank_pool_size=resolved_hybrid_rerank_pool_size,
+        resolved_hybrid_lexical_min=resolved_hybrid_lexical_min,
+        resolved_hybrid_semantic_min=resolved_hybrid_semantic_min,
+        lexical_weight=LEXICAL_WEIGHT,
+        semantic_weight=SEMANTIC_WEIGHT,
+        rerank_weight=RERANK_WEIGHT,
+        weighted_v2_lexical_weight=WEIGHTED_V2_LEXICAL_WEIGHT,
+        weighted_v2_semantic_weight=WEIGHTED_V2_SEMANTIC_WEIGHT,
+        weighted_v2_rerank_weight=WEIGHTED_V2_RERANK_WEIGHT,
+    )
     fusion_debug: dict[str, Any] = {}
-    if normalized_fusion_method == HYBRID_FUSION_RRF_V1:
-        score_definitions["final_score"] = (
-            "Reciprocal rank fusion score across lexical/semantic/reranker lists"
-        )
-    elif normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2:
-        score_definitions["final_score"] = (
-            "Weighted-v2 score "
-            f"({WEIGHTED_V2_LEXICAL_WEIGHT:.2f}*lexical + "
-            f"{WEIGHTED_V2_SEMANTIC_WEIGHT:.2f}*semantic + "
-            f"{WEIGHTED_V2_RERANK_WEIGHT:.2f}*reranker)"
-        )
-    else:
-        score_definitions["final_score"] = (
-            f"Weighted score ({LEXICAL_WEIGHT:.2f}*lexical + "
-            f"{SEMANTIC_WEIGHT:.2f}*semantic + {RERANK_WEIGHT:.2f}*reranker)"
-        )
 
     if mode == "lexical":
         lexical_started = time.perf_counter()
