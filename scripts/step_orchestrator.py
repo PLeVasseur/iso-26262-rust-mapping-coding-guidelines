@@ -79,9 +79,7 @@ STEP_OPTIONAL_PREREQS: dict[int, set[str]] = {
         "scripts/retrieval/validation/conformance.py",
     },
 }
-STEP_WAIVER_RULES: dict[int, dict[str, str]] = {
-    8: {"rendering/bibliography.py": "STEP7-BIB-PATH"},
-}
+STEP_WAIVER_RULES: dict[int, dict[str, str]] = {}
 
 OPENCODE_SERVER = "http://localhost:4096"
 CONTRACTS_DIR = PIPELINE_ROOT / ".cache" / "step_contracts"

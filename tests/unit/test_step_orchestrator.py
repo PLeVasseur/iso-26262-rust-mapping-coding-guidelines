@@ -139,7 +139,6 @@ def test_check_prerequisites_step9_marks_optional_paths(monkeypatch) -> None:
     )
 
 
-def test_step8_bibliography_waiver_rule_active() -> None:
+def test_step8_bibliography_waiver_rule_closed() -> None:
     token = _get_waiver_token(8, "rendering/bibliography.py")
-    assert token == "STEP7-BIB-PATH"
-    assert _has_active_waiver(token, "rendering/bibliography.py") is True
+    assert token is None
