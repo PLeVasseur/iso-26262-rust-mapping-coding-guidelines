@@ -12,7 +12,7 @@ from typing import Any
 if __package__ in {None, ""}:  # pragma: no cover - direct script invocation
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from scripts.judges_v2.stage_b import (
+from retrieval.judges.stage_b import (
     STAGE_B_JUDGES,
     _compute_verdict,
     evaluate_judge,

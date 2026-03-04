@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from scripts.validation_v2.conformance import validate_rst_conformance
+from retrieval.validation.conformance import validate_rst_conformance
 
 
 def validate_shape(

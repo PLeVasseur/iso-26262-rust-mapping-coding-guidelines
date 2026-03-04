@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.judges_v2.run_judges import run_judges
-from scripts.judges_v2.stage_b import (
+from scripts.retrieval.judges.run_judges import run_judges
+from scripts.retrieval.judges.stage_b import (
     _build_judge_prompt,
     _compute_verdict,
     _normalize_judge_decision,
 )
-from scripts.validation_v2.run_scope_check import run_scope_check
+from scripts.retrieval.validation.run_scope_check import run_scope_check
 from validation.scope import check_scope_cardinality
 
 

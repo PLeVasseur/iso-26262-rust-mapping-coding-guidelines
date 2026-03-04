@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.judges_v2.stage_b import evaluate_judge
+from scripts.retrieval.judges.stage_b import evaluate_judge
 
 
 def _contracts() -> dict:
@@ -19,9 +19,9 @@ def _contracts() -> dict:
 
 
 def test_llm_path_success(monkeypatch) -> None:
-    monkeypatch.setattr("scripts.judges_v2.stage_b.create_session", lambda **_: "ses_test")
+    monkeypatch.setattr("scripts.retrieval.judges.stage_b.create_session", lambda **_: "ses_test")
     monkeypatch.setattr(
-        "scripts.judges_v2.stage_b.run_opencode",
+        "scripts.retrieval.judges.stage_b.run_opencode",
         lambda *_args, **_kwargs: (
             0,
             {
@@ -48,9 +48,9 @@ def test_llm_path_success(monkeypatch) -> None:
 
 
 def test_llm_path_missing_required_schema_forces_fail(monkeypatch) -> None:
-    monkeypatch.setattr("scripts.judges_v2.stage_b.create_session", lambda **_: "ses_test")
+    monkeypatch.setattr("scripts.retrieval.judges.stage_b.create_session", lambda **_: "ses_test")
     monkeypatch.setattr(
-        "scripts.judges_v2.stage_b.run_opencode",
+        "scripts.retrieval.judges.stage_b.run_opencode",
         lambda *_args, **_kwargs: (0, {"decision": "pass", "summary": "missing fields"}),
     )
 
@@ -67,9 +67,9 @@ def test_llm_path_missing_required_schema_forces_fail(monkeypatch) -> None:
 
 
 def test_llm_path_forbidden_pattern_forces_fail(monkeypatch) -> None:
-    monkeypatch.setattr("scripts.judges_v2.stage_b.create_session", lambda **_: "ses_test")
+    monkeypatch.setattr("scripts.retrieval.judges.stage_b.create_session", lambda **_: "ses_test")
     monkeypatch.setattr(
-        "scripts.judges_v2.stage_b.run_opencode",
+        "scripts.retrieval.judges.stage_b.run_opencode",
         lambda *_args, **_kwargs: (
             0,
             {
@@ -94,9 +94,9 @@ def test_llm_path_forbidden_pattern_forces_fail(monkeypatch) -> None:
 
 
 def test_llm_path_transport_failure(monkeypatch) -> None:
-    monkeypatch.setattr("scripts.judges_v2.stage_b.create_session", lambda **_: "ses_test")
+    monkeypatch.setattr("scripts.retrieval.judges.stage_b.create_session", lambda **_: "ses_test")
     monkeypatch.setattr(
-        "scripts.judges_v2.stage_b.run_opencode", lambda *_args, **_kwargs: (400, None)
+        "scripts.retrieval.judges.stage_b.run_opencode", lambda *_args, **_kwargs: (400, None)
     )
 
     verdict = evaluate_judge(

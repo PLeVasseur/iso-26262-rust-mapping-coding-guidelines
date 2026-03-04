@@ -15,7 +15,7 @@ if __package__ in {None, ""}:  # pragma: no cover - direct script invocation
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.import_utils import GUIDELINES_REPO_ROOT
-from scripts.judges_v2.stage_b import STAGE_B_JUDGES, evaluate_judge, load_judge_contracts
+from scripts.retrieval.judges.stage_b import STAGE_B_JUDGES, evaluate_judge, load_judge_contracts
 
 
 def _append_jsonl(path: Path, event: dict[str, Any]) -> None:

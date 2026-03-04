@@ -13,7 +13,7 @@ if __package__ in {None, ""}:  # pragma: no cover - direct script invocation
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
-    from scripts.validation_v2.conformance import (
+    from retrieval.validation.conformance import (
         validate_batch_conformance,
         validate_rst_conformance,
     )

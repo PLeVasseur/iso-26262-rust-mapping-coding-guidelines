@@ -5,8 +5,8 @@ import re
 from pathlib import Path
 
 from scripts.import_utils import GUIDELINES_REPO_ROOT
-from scripts.rendering_v2.rerender_from_artifacts import rerender_from_artifacts
-from scripts.rendering_v2.rst_renderer import RendererInput, render_guideline_rst
+from scripts.retrieval.rendering.rerender_from_artifacts import rerender_from_artifacts
+from scripts.retrieval.rendering.rst_renderer import RendererInput, render_guideline_rst
 
 
 def _sample_input() -> RendererInput:

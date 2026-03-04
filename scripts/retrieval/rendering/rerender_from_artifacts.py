@@ -17,7 +17,7 @@ if __package__ in {None, ""}:  # pragma: no cover - direct script invocation
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
-    from scripts.rendering_v2.rst_renderer import (
+    from retrieval.rendering.rst_renderer import (
         RendererInput,
         render_guideline_rst,
         serialize_citation_key_map,

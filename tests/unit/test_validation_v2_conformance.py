@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 from scripts.import_utils import GUIDELINES_REPO_ROOT
-from scripts.validation_v2.conformance import (
+from scripts.retrieval.validation.conformance import (
     validate_batch_conformance,
     validate_rst_conformance,
 )
-from scripts.validation_v2.run_conformance import run_conformance_on_rerendered
+from scripts.retrieval.validation.run_conformance import run_conformance_on_rerendered
 
 
 def _valid_rst(guideline_id: str = "gui_AbC123xYz890") -> str:
