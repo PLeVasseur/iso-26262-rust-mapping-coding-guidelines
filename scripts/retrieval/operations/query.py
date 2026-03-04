@@ -62,6 +62,7 @@ from retrieval.query.row_markers import (
 )
 from retrieval.query.row_projection import apply_abstain_policy as core_apply_abstain_policy
 from retrieval.query.row_projection import build_row_projection as core_build_row_projection
+from retrieval.query.mode_finalizers import finalize_lexical_like_result
 from retrieval.query.result_payload import build_retrieval_result
 from retrieval.query.rewrite_rules import rewrite_query_text as _rewrite_query_text
 from retrieval.query.semantic_pipeline import semantic_candidates as core_semantic_candidates
@@ -805,44 +806,38 @@ def execute_retrieval_query(
         lexical_started = time.perf_counter()
         lexical_rows = _run_lexical()
         timing["lexical_ms"] += (time.perf_counter() - lexical_started) * 1000.0
-        workload["lexical_pool_size"] = int(len(lexical_rows))
-        workload["union_pool_size"] = int(len(lexical_rows))
-        for row in lexical_rows:
-            core_apply_component_scores(
-                row,
-                lexical_score=float(row.get("lexical_score", 0.0)),
-                semantic_score=0.0,
-                reranker_score=0.0,
-                lexical_weight=LEXICAL_WEIGHT,
-                semantic_weight=SEMANTIC_WEIGHT,
-                reranker_weight=RERANK_WEIGHT,
-            )
-        rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
-        projection_started = time.perf_counter()
-        row_projection_all = _build_row_projection(rows)
-        row_projection, abstain = _apply_abstain_policy(
-            row_projection_all,
-            policy=resolved_row_projection_policy,
-        )
-        timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
-        duration_ms = (time.perf_counter() - started) * 1000.0
-        return build_retrieval_result(
+        return finalize_lexical_like_result(
             requested_mode=mode,
             executed_mode=mode,
             degraded=False,
+            degraded_reason=None,
+            lexical_rows=lexical_rows,
+            top_k=top_k,
+            query_text=query_text,
+            corpus=corpus,
+            row_marker=row_marker,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
             semantic_retry_events=semantic_retry_events,
             score_definitions=score_definitions,
             workload=workload,
-            query_text=query_text,
-            effective_query_text=effective_query_text,
-            query_rewrite=rewrite,
-            row_marker=row_marker,
-            rows=rows,
-            duration_ms=duration_ms,
-            timing=_timing_payload(duration_ms),
-            row_projection=row_projection,
-            row_projection_all=row_projection_all,
-            abstain=abstain,
+            started=started,
+            timing=timing,
+            timing_payload=_timing_payload,
+            row_projection_policy=resolved_row_projection_policy,
+            apply_corpus_row_policy=lambda rows, query_text, corpus: _apply_corpus_row_policy(
+                rows,
+                query_text=query_text,
+                corpus=corpus,
+            ),
+            build_row_projection=_build_row_projection,
+            apply_abstain_policy=lambda projection, policy: _apply_abstain_policy(
+                projection,
+                policy=policy,
+            ),
+            lexical_weight=LEXICAL_WEIGHT,
+            semantic_weight=SEMANTIC_WEIGHT,
+            rerank_weight=RERANK_WEIGHT,
         )
 
     preflight_started = time.perf_counter()
@@ -863,45 +858,38 @@ def execute_retrieval_query(
         lexical_started = time.perf_counter()
         lexical_rows = _run_lexical()
         timing["lexical_ms"] += (time.perf_counter() - lexical_started) * 1000.0
-        workload["lexical_pool_size"] = int(len(lexical_rows))
-        workload["union_pool_size"] = int(len(lexical_rows))
-        for row in lexical_rows:
-            core_apply_component_scores(
-                row,
-                lexical_score=float(row.get("lexical_score", 0.0)),
-                semantic_score=0.0,
-                reranker_score=0.0,
-                lexical_weight=LEXICAL_WEIGHT,
-                semantic_weight=SEMANTIC_WEIGHT,
-                reranker_weight=RERANK_WEIGHT,
-            )
-        rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
-        projection_started = time.perf_counter()
-        row_projection_all = _build_row_projection(rows)
-        row_projection, abstain = _apply_abstain_policy(
-            row_projection_all,
-            policy=resolved_row_projection_policy,
-        )
-        timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
-        duration_ms = (time.perf_counter() - started) * 1000.0
-        return build_retrieval_result(
+        return finalize_lexical_like_result(
             requested_mode=mode,
             executed_mode="lexical",
             degraded=True,
             degraded_reason=error_code,
+            lexical_rows=lexical_rows,
+            top_k=top_k,
+            query_text=query_text,
+            corpus=corpus,
+            row_marker=row_marker,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
             semantic_retry_events=semantic_retry_events,
             score_definitions=score_definitions,
             workload=workload,
-            query_text=query_text,
-            effective_query_text=effective_query_text,
-            query_rewrite=rewrite,
-            row_marker=row_marker,
-            rows=rows,
-            duration_ms=duration_ms,
-            timing=_timing_payload(duration_ms),
-            row_projection=row_projection,
-            row_projection_all=row_projection_all,
-            abstain=abstain,
+            started=started,
+            timing=timing,
+            timing_payload=_timing_payload,
+            row_projection_policy=resolved_row_projection_policy,
+            apply_corpus_row_policy=lambda rows, query_text, corpus: _apply_corpus_row_policy(
+                rows,
+                query_text=query_text,
+                corpus=corpus,
+            ),
+            build_row_projection=_build_row_projection,
+            apply_abstain_policy=lambda projection, policy: _apply_abstain_policy(
+                projection,
+                policy=policy,
+            ),
+            lexical_weight=LEXICAL_WEIGHT,
+            semantic_weight=SEMANTIC_WEIGHT,
+            rerank_weight=RERANK_WEIGHT,
             preflight=preflight,
         )
 
@@ -937,45 +925,38 @@ def execute_retrieval_query(
         lexical_started = time.perf_counter()
         lexical_rows = _run_lexical()
         timing["lexical_ms"] += (time.perf_counter() - lexical_started) * 1000.0
-        workload["lexical_pool_size"] = int(len(lexical_rows))
-        workload["union_pool_size"] = int(len(lexical_rows))
-        for row in lexical_rows:
-            core_apply_component_scores(
-                row,
-                lexical_score=float(row.get("lexical_score", 0.0)),
-                semantic_score=0.0,
-                reranker_score=0.0,
-                lexical_weight=LEXICAL_WEIGHT,
-                semantic_weight=SEMANTIC_WEIGHT,
-                reranker_weight=RERANK_WEIGHT,
-            )
-        rows = _apply_corpus_row_policy(lexical_rows[:top_k], query_text=query_text, corpus=corpus)
-        projection_started = time.perf_counter()
-        row_projection_all = _build_row_projection(rows)
-        row_projection, abstain = _apply_abstain_policy(
-            row_projection_all,
-            policy=resolved_row_projection_policy,
-        )
-        timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
-        duration_ms = (time.perf_counter() - started) * 1000.0
-        return build_retrieval_result(
+        return finalize_lexical_like_result(
             requested_mode=mode,
             executed_mode="lexical",
             degraded=True,
             degraded_reason=mapped_code,
+            lexical_rows=lexical_rows,
+            top_k=top_k,
+            query_text=query_text,
+            corpus=corpus,
+            row_marker=row_marker,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
             semantic_retry_events=semantic_retry_events,
             score_definitions=score_definitions,
             workload=workload,
-            query_text=query_text,
-            effective_query_text=effective_query_text,
-            query_rewrite=rewrite,
-            row_marker=row_marker,
-            rows=rows,
-            duration_ms=duration_ms,
-            timing=_timing_payload(duration_ms),
-            row_projection=row_projection,
-            row_projection_all=row_projection_all,
-            abstain=abstain,
+            started=started,
+            timing=timing,
+            timing_payload=_timing_payload,
+            row_projection_policy=resolved_row_projection_policy,
+            apply_corpus_row_policy=lambda rows, query_text, corpus: _apply_corpus_row_policy(
+                rows,
+                query_text=query_text,
+                corpus=corpus,
+            ),
+            build_row_projection=_build_row_projection,
+            apply_abstain_policy=lambda projection, policy: _apply_abstain_policy(
+                projection,
+                policy=policy,
+            ),
+            lexical_weight=LEXICAL_WEIGHT,
+            semantic_weight=SEMANTIC_WEIGHT,
+            rerank_weight=RERANK_WEIGHT,
             preflight=preflight,
         )
 
