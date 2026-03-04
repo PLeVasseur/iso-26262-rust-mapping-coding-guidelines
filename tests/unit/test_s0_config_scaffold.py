@@ -1,22 +1,20 @@
 from __future__ import annotations
 
+import json
 from argparse import Namespace
 from pathlib import Path
 
-import yaml
-
 from scripts.retrieval.services.s0_phase_a_service import run_scaffold_s0_config
+from scripts.retrieval.services.capability import EXIT_UNSUPPORTED
 
 
-def test_scaffold_s0_gate_policy_includes_step8_retry_budget_keys(tmp_path: Path) -> None:
-    exit_code = run_scaffold_s0_config(Namespace(overwrite=False), root=tmp_path)
-    assert exit_code == 0
+def test_scaffold_s0_soft_retired_returns_typed_unsupported_payload(tmp_path: Path, capsys) -> None:
+    _ = tmp_path
+    exit_code = run_scaffold_s0_config(Namespace(overwrite=False), root=Path.cwd())
+    assert exit_code == EXIT_UNSUPPORTED
 
-    policy_path = tmp_path / "config" / "s0" / "s0_gate_policy.yaml"
-    policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
-
-    assert policy["convention_retry_budget"] == 50
-    assert policy["compilation_retry_budget"] == 15
-    assert policy["max_convention_retries"] == 50
-    assert policy["max_compilation_retries"] == 15
-    assert policy["max_judge_calls"] == 70
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out.strip().splitlines()[0])
+    assert payload["status"] == "unsupported_operation"
+    assert payload["operation"] == "scaffold-s0-config"
+    assert payload["corpus"] == "s0"

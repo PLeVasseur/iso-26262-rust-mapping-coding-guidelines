@@ -29,8 +29,8 @@ from retrieval.services import (
     inspect_service,
     materialize_service,
     migrate_service,
+    phase_a_retired,
     query_service,
-    s0_phase_a_service,
     smoke_service,
     validate_audit_service,
     validate_service,
@@ -200,17 +200,17 @@ def main() -> int:
             )
 
         if args.subcommand == "scaffold-s0-config":
-            return s0_phase_a_service.run_scaffold_s0_config(args, root=root)
+            return phase_a_retired.run_scaffold_s0_config(args, root=root)
         if args.subcommand == "doctor":
-            return s0_phase_a_service.run_doctor(args, root=root)
+            return phase_a_retired.run_doctor(args, root=root)
         if args.subcommand == "enumerate-targets":
-            return s0_phase_a_service.run_enumerate_targets(args, root=root)
+            return phase_a_retired.run_enumerate_targets(args, root=root)
         if args.subcommand == "calibration-run":
-            return s0_phase_a_service.run_calibration_run(args, root=root)
+            return phase_a_retired.run_calibration_run(args, root=root)
         if args.subcommand == "enforce-calibration-quality":
-            return s0_phase_a_service.run_enforce_calibration_quality(args, root=root)
+            return phase_a_retired.run_enforce_calibration_quality(args, root=root)
         if args.subcommand == "pack-reviewer-packet":
-            return s0_phase_a_service.run_pack_reviewer_packet(args, root=root)
+            return phase_a_retired.run_pack_reviewer_packet(args, root=root)
 
         defaults = load_corpus_runtime_defaults(root=root, corpus=str(args.corpus))
         support_map = {
