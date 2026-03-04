@@ -12,12 +12,12 @@ from typing import Any
 from urllib.request import urlopen
 
 from retrieval.operations.query import (
-    RetrievalContractProfile,
     _load_statement_corpus,
     _load_table1_row_requirements,
     _resolve_retrieval_contract_profile,
 )
 from retrieval.query.backend_retry import with_semantic_retries as _with_semantic_retries
+from retrieval.query.contracts import RetrievalContractProfile
 from retrieval.query.embedding_cache import (
     ensure_embedding_cache_table as _ensure_embedding_cache_table,
     load_embedding_cache as _load_embedding_cache,
