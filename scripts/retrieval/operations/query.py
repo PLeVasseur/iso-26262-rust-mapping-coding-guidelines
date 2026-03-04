@@ -62,6 +62,7 @@ from retrieval.query.row_markers import (
 )
 from retrieval.query.row_projection import apply_abstain_policy as core_apply_abstain_policy
 from retrieval.query.row_projection import build_row_projection as core_build_row_projection
+from retrieval.query.result_payload import build_retrieval_result
 from retrieval.query.rewrite_rules import rewrite_query_text as _rewrite_query_text
 from retrieval.query.semantic_pipeline import semantic_candidates as core_semantic_candidates
 from retrieval.query.review_artifacts import (
@@ -825,31 +826,24 @@ def execute_retrieval_query(
         )
         timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
-        return {
-            "requested_mode": mode,
-            "executed_mode": mode,
-            "degraded": False,
-            "semantic_retry_events": semantic_retry_events,
-            "score_definitions": score_definitions,
-            "candidate_generation": {
-                "lexical_pool_size": int(workload["lexical_pool_size"]),
-                "semantic_pool_size": int(workload["semantic_pool_size"]),
-                "union_pool_size": int(workload["union_pool_size"]),
-                "rerank_pool_size": int(workload["rerank_pool_size"]),
-                "rerank_doc_count": int(workload["rerank_doc_count"]),
-            },
-            "query_text": query_text,
-            "effective_query_text": effective_query_text,
-            "query_rewrite": rewrite,
-            "row_marker": row_marker,
-            "row_count": len(rows),
-            "duration_ms": round(duration_ms, 3),
-            "timing": _timing_payload(duration_ms),
-            "row_projection": row_projection,
-            "row_projection_all": row_projection_all,
-            "abstain": abstain,
-            "rows": rows,
-        }
+        return build_retrieval_result(
+            requested_mode=mode,
+            executed_mode=mode,
+            degraded=False,
+            semantic_retry_events=semantic_retry_events,
+            score_definitions=score_definitions,
+            workload=workload,
+            query_text=query_text,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
+            row_marker=row_marker,
+            rows=rows,
+            duration_ms=duration_ms,
+            timing=_timing_payload(duration_ms),
+            row_projection=row_projection,
+            row_projection_all=row_projection_all,
+            abstain=abstain,
+        )
 
     preflight_started = time.perf_counter()
     preflight = check_semantic_backend(semantic_config)
@@ -890,33 +884,26 @@ def execute_retrieval_query(
         )
         timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
-        return {
-            "requested_mode": mode,
-            "executed_mode": "lexical",
-            "degraded": True,
-            "degraded_reason": error_code,
-            "semantic_retry_events": semantic_retry_events,
-            "score_definitions": score_definitions,
-            "candidate_generation": {
-                "lexical_pool_size": int(workload["lexical_pool_size"]),
-                "semantic_pool_size": int(workload["semantic_pool_size"]),
-                "union_pool_size": int(workload["union_pool_size"]),
-                "rerank_pool_size": int(workload["rerank_pool_size"]),
-                "rerank_doc_count": int(workload["rerank_doc_count"]),
-            },
-            "preflight": preflight,
-            "query_text": query_text,
-            "effective_query_text": effective_query_text,
-            "query_rewrite": rewrite,
-            "row_marker": row_marker,
-            "row_count": len(rows),
-            "duration_ms": round(duration_ms, 3),
-            "timing": _timing_payload(duration_ms),
-            "row_projection": row_projection,
-            "row_projection_all": row_projection_all,
-            "abstain": abstain,
-            "rows": rows,
-        }
+        return build_retrieval_result(
+            requested_mode=mode,
+            executed_mode="lexical",
+            degraded=True,
+            degraded_reason=error_code,
+            semantic_retry_events=semantic_retry_events,
+            score_definitions=score_definitions,
+            workload=workload,
+            query_text=query_text,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
+            row_marker=row_marker,
+            rows=rows,
+            duration_ms=duration_ms,
+            timing=_timing_payload(duration_ms),
+            row_projection=row_projection,
+            row_projection_all=row_projection_all,
+            abstain=abstain,
+            preflight=preflight,
+        )
 
     ensure_embedding_cache_table(db_path, retrieval_contract)
 
@@ -971,33 +958,26 @@ def execute_retrieval_query(
         )
         timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
-        return {
-            "requested_mode": mode,
-            "executed_mode": "lexical",
-            "degraded": True,
-            "degraded_reason": mapped_code,
-            "semantic_retry_events": semantic_retry_events,
-            "score_definitions": score_definitions,
-            "candidate_generation": {
-                "lexical_pool_size": int(workload["lexical_pool_size"]),
-                "semantic_pool_size": int(workload["semantic_pool_size"]),
-                "union_pool_size": int(workload["union_pool_size"]),
-                "rerank_pool_size": int(workload["rerank_pool_size"]),
-                "rerank_doc_count": int(workload["rerank_doc_count"]),
-            },
-            "preflight": preflight,
-            "query_text": query_text,
-            "effective_query_text": effective_query_text,
-            "query_rewrite": rewrite,
-            "row_marker": row_marker,
-            "row_count": len(rows),
-            "duration_ms": round(duration_ms, 3),
-            "timing": _timing_payload(duration_ms),
-            "row_projection": row_projection,
-            "row_projection_all": row_projection_all,
-            "abstain": abstain,
-            "rows": rows,
-        }
+        return build_retrieval_result(
+            requested_mode=mode,
+            executed_mode="lexical",
+            degraded=True,
+            degraded_reason=mapped_code,
+            semantic_retry_events=semantic_retry_events,
+            score_definitions=score_definitions,
+            workload=workload,
+            query_text=query_text,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
+            row_marker=row_marker,
+            rows=rows,
+            duration_ms=duration_ms,
+            timing=_timing_payload(duration_ms),
+            row_projection=row_projection,
+            row_projection_all=row_projection_all,
+            abstain=abstain,
+            preflight=preflight,
+        )
 
     _annotate_rows_with_row_markers(semantic_rows, row_profiles)
     semantic_rows = _filter_rows_by_row_marker(semantic_rows, row_marker)
@@ -1031,32 +1011,25 @@ def execute_retrieval_query(
         )
         timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
         duration_ms = (time.perf_counter() - started) * 1000.0
-        return {
-            "requested_mode": mode,
-            "executed_mode": mode,
-            "degraded": False,
-            "semantic_retry_events": semantic_retry_events,
-            "score_definitions": score_definitions,
-            "candidate_generation": {
-                "lexical_pool_size": int(workload["lexical_pool_size"]),
-                "semantic_pool_size": int(workload["semantic_pool_size"]),
-                "union_pool_size": int(workload["union_pool_size"]),
-                "rerank_pool_size": int(workload["rerank_pool_size"]),
-                "rerank_doc_count": int(workload["rerank_doc_count"]),
-            },
-            "preflight": preflight,
-            "query_text": query_text,
-            "effective_query_text": effective_query_text,
-            "query_rewrite": rewrite,
-            "row_marker": row_marker,
-            "row_count": len(rows),
-            "duration_ms": round(duration_ms, 3),
-            "timing": _timing_payload(duration_ms),
-            "row_projection": row_projection,
-            "row_projection_all": row_projection_all,
-            "abstain": abstain,
-            "rows": rows,
-        }
+        return build_retrieval_result(
+            requested_mode=mode,
+            executed_mode=mode,
+            degraded=False,
+            semantic_retry_events=semantic_retry_events,
+            score_definitions=score_definitions,
+            workload=workload,
+            query_text=query_text,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
+            row_marker=row_marker,
+            rows=rows,
+            duration_ms=duration_ms,
+            timing=_timing_payload(duration_ms),
+            row_projection=row_projection,
+            row_projection_all=row_projection_all,
+            abstain=abstain,
+            preflight=preflight,
+        )
 
     lexical_started = time.perf_counter()
     lexical_rows = _run_lexical()
@@ -1115,52 +1088,47 @@ def execute_retrieval_query(
     )
     timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
     duration_ms = (time.perf_counter() - started) * 1000.0
-    return {
-        "requested_mode": mode,
-        "executed_mode": mode,
-        "degraded": False,
-        "semantic_retry_events": semantic_retry_events,
-        "score_definitions": score_definitions,
-        "candidate_generation": {
-            "lexical_pool_size": int(workload["lexical_pool_size"]),
-            "semantic_pool_size": int(workload["semantic_pool_size"]),
-            "union_pool_size": int(workload["union_pool_size"]),
-            "rerank_pool_size": int(workload["rerank_pool_size"]),
-            "rerank_doc_count": int(workload["rerank_doc_count"]),
+    return build_retrieval_result(
+        requested_mode=mode,
+        executed_mode=mode,
+        degraded=False,
+        semantic_retry_events=semantic_retry_events,
+        score_definitions=score_definitions,
+        workload=workload,
+        query_text=query_text,
+        effective_query_text=effective_query_text,
+        query_rewrite=rewrite,
+        row_marker=row_marker,
+        rows=rows,
+        duration_ms=duration_ms,
+        timing=_timing_payload(duration_ms),
+        row_projection=row_projection,
+        row_projection_all=row_projection_all,
+        abstain=abstain,
+        preflight=preflight,
+        extras={
+            "fusion_method": normalized_fusion_method,
+            "fusion_params": fusion_params,
+            "fusion_debug": fusion_debug,
+            "fusion_weights": {
+                "lexical": (
+                    WEIGHTED_V2_LEXICAL_WEIGHT
+                    if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
+                    else LEXICAL_WEIGHT
+                ),
+                "semantic": (
+                    WEIGHTED_V2_SEMANTIC_WEIGHT
+                    if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
+                    else SEMANTIC_WEIGHT
+                ),
+                "reranker": (
+                    WEIGHTED_V2_RERANK_WEIGHT
+                    if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
+                    else RERANK_WEIGHT
+                ),
+            },
         },
-        "preflight": preflight,
-        "query_text": query_text,
-        "effective_query_text": effective_query_text,
-        "query_rewrite": rewrite,
-        "fusion_method": normalized_fusion_method,
-        "fusion_params": fusion_params,
-        "fusion_debug": fusion_debug,
-        "fusion_weights": {
-            "lexical": (
-                WEIGHTED_V2_LEXICAL_WEIGHT
-                if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
-                else LEXICAL_WEIGHT
-            ),
-            "semantic": (
-                WEIGHTED_V2_SEMANTIC_WEIGHT
-                if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
-                else SEMANTIC_WEIGHT
-            ),
-            "reranker": (
-                WEIGHTED_V2_RERANK_WEIGHT
-                if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
-                else RERANK_WEIGHT
-            ),
-        },
-        "row_marker": row_marker,
-        "row_count": len(rows),
-        "duration_ms": round(duration_ms, 3),
-        "timing": _timing_payload(duration_ms),
-        "row_projection": row_projection,
-        "row_projection_all": row_projection_all,
-        "abstain": abstain,
-        "rows": rows,
-    }
+    )
 
 
 def _without_score_breakdown(result: dict[str, Any]) -> dict[str, Any]:
