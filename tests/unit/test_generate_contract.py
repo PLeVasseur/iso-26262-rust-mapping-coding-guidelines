@@ -11,7 +11,7 @@ from scripts.generate_contract import (
 
 def test_contract_metadata_templates_non_empty() -> None:
     assert _purpose_for_path("config/s0/s0_gate_policy.yaml")
-    assert _purpose_for_path("scripts/judges_v2/run_judges.py")
+    assert _purpose_for_path("scripts/retrieval/judges/run_judges.py")
     assert _change_for_path("scripts/integration_checkpoint.py")
     assert _change_for_path("STEP_DEVIATIONS.md")
 

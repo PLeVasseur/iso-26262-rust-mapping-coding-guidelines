@@ -75,8 +75,8 @@ STEP_PREREQ_REF_OVERRIDES: dict[int, dict[str, str]] = {
 STEP_OPTIONAL_PREREQS: dict[int, set[str]] = {
     8: {"retry_pilot_results.json"},
     9: {
-        "scripts/rendering_v2/rst_renderer.py",
-        "scripts/validation_v2/conformance.py",
+        "scripts/retrieval/rendering/rst_renderer.py",
+        "scripts/retrieval/validation/conformance.py",
     },
 }
 STEP_WAIVER_RULES: dict[int, dict[str, str]] = {
@@ -142,6 +142,22 @@ def _resolve_expected_file_path(raw_path: str) -> tuple[Path | None, str, list[s
         / "config"
         / "s0"
         / "writer_prompt_contracts.yaml",
+        "rerender_from_artifacts.py": PIPELINE_ROOT
+        / "scripts"
+        / "retrieval"
+        / "rendering"
+        / "rerender_from_artifacts.py",
+        "run_conformance.py": PIPELINE_ROOT
+        / "scripts"
+        / "retrieval"
+        / "validation"
+        / "run_conformance.py",
+        "run_scope_check.py": PIPELINE_ROOT
+        / "scripts"
+        / "retrieval"
+        / "validation"
+        / "run_scope_check.py",
+        "run_judges.py": PIPELINE_ROOT / "scripts" / "retrieval" / "judges" / "run_judges.py",
         "convention_spec.json": PIPELINE_ROOT / ".cache" / "convention_spec.json",
         "data/core_docs.db": PIPELINE_ROOT
         / ".cache"
@@ -505,6 +521,90 @@ def validate_dod(step_n: int) -> dict[str, bool]:
         check=False,
     )
     results["tests_pass"] = test_result.returncode == 0
+
+    if step_n == 9:
+        monolith = PIPELINE_ROOT / "scripts" / "retrieval" / "services" / "s0_phase_a_service.py"
+        if monolith.exists():
+            monolith_lines = len(monolith.read_text(encoding="utf-8").splitlines())
+            results["monolith_loc_cap"] = monolith_lines <= 1200
+        else:
+            results["monolith_loc_cap"] = False
+
+        v2_dirs = list((PIPELINE_ROOT / "scripts").glob("*_v2"))
+        results["no_v2_dirs"] = not any(path.is_dir() for path in v2_dirs)
+
+        tokens = (
+            "rendering" + "_v2",
+            "judges" + "_v2",
+            "validation" + "_v2",
+        )
+        hits: list[Path] = []
+        for root_name in ("scripts", "tests"):
+            root = PIPELINE_ROOT / root_name
+            if not root.exists():
+                continue
+            for path in root.rglob("*"):
+                if not path.is_file() or path.suffix not in {
+                    ".py",
+                    ".md",
+                    ".yaml",
+                    ".yml",
+                    ".json",
+                }:
+                    continue
+                if path == PIPELINE_ROOT / "scripts" / "step_orchestrator.py":
+                    continue
+                text = path.read_text(encoding="utf-8", errors="ignore")
+                if any(token in text for token in tokens):
+                    hits.append(path)
+        results["no_v2_refs"] = len(hits) == 0
+
+        report_dir = _discover_checkpoint_run_dir()
+        if report_dir is not None:
+            line_budget_path = report_dir / "line_budget_assessment.json"
+            symbol_manifest_path = report_dir / "v2_symbol_move_manifest.json"
+            integration_path = report_dir / "integration_verification.json"
+            compare_path = report_dir / "extraction_snapshot_compare.json"
+
+            results["line_budget_assessment_present"] = line_budget_path.exists()
+            results["symbol_manifest_present"] = symbol_manifest_path.exists()
+
+            integration_ok = False
+            if integration_path.exists():
+                try:
+                    integration = json.loads(integration_path.read_text(encoding="utf-8"))
+                    integration_ok = bool(
+                        integration.get("rst_match")
+                        and integration.get("conformance_match")
+                        and integration.get("judge_verdict_match")
+                    )
+                except (json.JSONDecodeError, OSError):
+                    integration_ok = False
+            results["integration_verification_pass"] = integration_ok
+
+            compare_ok = False
+            if compare_path.exists():
+                try:
+                    compare_data = json.loads(compare_path.read_text(encoding="utf-8"))
+                    compare_ok = bool(compare_data.get("no_drift"))
+                except (json.JSONDecodeError, OSError):
+                    compare_ok = False
+            results["snapshot_compare_no_drift"] = compare_ok
+        else:
+            results["line_budget_assessment_present"] = False
+            results["symbol_manifest_present"] = False
+            results["integration_verification_pass"] = False
+            results["snapshot_compare_no_drift"] = False
+
+        canonical_modules = [
+            PIPELINE_ROOT / "scripts" / "retrieval" / "rendering" / "rst_renderer.py",
+            PIPELINE_ROOT / "scripts" / "retrieval" / "judges" / "stage_b.py",
+            PIPELINE_ROOT / "scripts" / "retrieval" / "validation" / "conformance.py",
+        ]
+        results["no_internal_dynamic_trampoline"] = all(
+            module.exists() and "spec_from_file_location" not in module.read_text(encoding="utf-8")
+            for module in canonical_modules
+        )
     return results
 
 

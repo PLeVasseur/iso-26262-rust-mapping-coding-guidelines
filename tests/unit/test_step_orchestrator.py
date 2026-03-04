@@ -24,20 +24,20 @@ def test_resolve_writer_prompt_contract_basename() -> None:
 
 def test_resolve_rerender_script_basename() -> None:
     path, status, _candidates = _resolve_expected_file_path("rerender_from_artifacts.py")
-    assert status in {"basename_unique", "exact"}
+    assert status in {"alias", "basename_unique", "exact"}
     assert path is not None
-    assert str(path).endswith("scripts/rendering_v2/rerender_from_artifacts.py")
+    assert str(path).endswith("scripts/retrieval/rendering/rerender_from_artifacts.py")
 
 
 def test_extract_prerequisite_paths_from_markdown() -> None:
     text = """
 ## Prerequisites
 
-- [ ] Step 2 complete: `scripts/rendering_v2/rst_renderer.py` exists and tested
+- [ ] Step 2 complete: `scripts/retrieval/rendering/rst_renderer.py` exists and tested
 - [ ] `{run_dir}/rerendered_rst/` directory exists with re-rendered RST files (from `rerender_from_artifacts.py`)
 """
     paths = _extract_prerequisite_paths(text)
-    assert "scripts/rendering_v2/rst_renderer.py" in paths
+    assert "scripts/retrieval/rendering/rst_renderer.py" in paths
     assert "rerender_from_artifacts.py" in paths
 
 
@@ -73,8 +73,8 @@ def test_step9_prereq_normalization_and_optional_rules() -> None:
         )
         == ".cache/sqlite_kb/reports/phase_a_opencode_v3_exec2/targets.json"
     )
-    assert _is_optional_prerequisite(9, "scripts/rendering_v2/rst_renderer.py") is True
-    assert _is_optional_prerequisite(9, "scripts/validation_v2/conformance.py") is True
+    assert _is_optional_prerequisite(9, "scripts/retrieval/rendering/rst_renderer.py") is True
+    assert _is_optional_prerequisite(9, "scripts/retrieval/validation/conformance.py") is True
 
 
 def test_run_semantic_backend_preflight_check_reports_success(monkeypatch) -> None:
@@ -116,7 +116,7 @@ def test_check_prerequisites_step9_marks_optional_paths(monkeypatch) -> None:
     monkeypatch.setitem(step_orchestrator.STEP_DEPS, 9, [])
     monkeypatch.setattr(
         "scripts.step_orchestrator.load_step_file",
-        lambda step_n: "## Prerequisites\n\n- [ ] `scripts/rendering_v2/rst_renderer.py`\n",
+        lambda step_n: "## Prerequisites\n\n- [ ] `scripts/retrieval/rendering/rst_renderer.py`\n",
     )
     monkeypatch.setattr(
         "scripts.step_orchestrator._run_semantic_backend_preflight_check",
@@ -133,7 +133,7 @@ def test_check_prerequisites_step9_marks_optional_paths(monkeypatch) -> None:
     assert failures == []
     assert any(
         detail.get("kind") == "file"
-        and detail.get("ref") == "scripts/rendering_v2/rst_renderer.py"
+        and detail.get("ref") == "scripts/retrieval/rendering/rst_renderer.py"
         and detail.get("status") == "optional"
         for detail in details
     )
