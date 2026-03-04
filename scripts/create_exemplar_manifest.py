@@ -16,7 +16,7 @@ GUIDELINES_REPO = Path(
 
 
 def _curated_ids_from_s0_service() -> list[str]:
-    source_path = Path("scripts/retrieval/services/s0_phase_a_service.py")
+    source_path = Path("scripts/retrieval/services/s0_phase_a_impl.py")
     if not source_path.exists():
         return []
 

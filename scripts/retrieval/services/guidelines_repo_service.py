@@ -15,11 +15,11 @@ import yaml
 from retrieval.builders.guidelines_repo_builder import run_guidelines_repo_build
 from retrieval.guidelines.build_runner import run_guidelines_build
 from retrieval.operations.export_rst import export_guidelines
+from retrieval.services.guidelines_projection import export_projection_summary, run_m15_projection
 
 EXIT_SUCCESS = 0
 EXIT_PRECONDITION_FAIL = 2
 EXIT_RUNTIME_FAIL = 3
-
 
 @dataclass(frozen=True)
 class RunContext:
@@ -31,32 +31,20 @@ class RunContext:
     mode: str
     non_publishable: bool
     flags_used: list[str]
-
-
 def _utc_run_id() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-
-
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
-
-
 def _read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return payload if isinstance(payload, dict) else {}
-
-
 def _write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-
-
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     _write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
 def _parse_sources(root: Path) -> dict[str, Any]:
     config = _read_yaml(root / "config" / "corpora" / "guidelines_repo.yaml")
     sources_raw = config.get("sources")
@@ -69,15 +57,11 @@ def _parse_sources(root: Path) -> dict[str, Any]:
             str(value).strip() for value in (exemplar_ids if isinstance(exemplar_ids, list) else [])
         ],
     }
-
-
 def _resolve_repo_root(root: Path, repo_root_raw: str) -> Path:
     repo_root = Path(repo_root_raw)
     if not repo_root.is_absolute():
         repo_root = (root / repo_root).resolve()
     return repo_root
-
-
 def _run_idempotency_key(*, revision: str, root: Path) -> str:
     config_digest = hashlib.sha256(
         (root / "config" / "corpora" / "guidelines_repo.yaml")
@@ -90,8 +74,6 @@ def _run_idempotency_key(*, revision: str, root: Path) -> str:
         .encode("utf-8")
     ).hexdigest()[:12]
     return f"{revision}:{schema_manifest}:{config_digest}"
-
-
 def _base_summary(
     ctx: RunContext, *, did_work: bool, skipped_reason: str, status: str
 ) -> dict[str, Any]:
@@ -107,8 +89,6 @@ def _base_summary(
         "status": status,
         "run_id": ctx.run_id,
     }
-
-
 def _emit_failure(
     *,
     ctx: RunContext,
@@ -151,8 +131,6 @@ def _emit_failure(
     )
     _write_json(ctx.report_dir / "remediation.json", remediation)
     return EXIT_PRECONDITION_FAIL
-
-
 def _emit_success(
     ctx: RunContext, payload: dict[str, Any], *, stdout: str = "", stderr: str = ""
 ) -> int:
@@ -167,8 +145,6 @@ def _emit_success(
     _write_text(ctx.report_dir / "stdout.log", stdout if stdout else f"Command: {ctx.command}\n")
     _write_text(ctx.report_dir / "stderr.log", stderr)
     return EXIT_SUCCESS
-
-
 def _new_context(*, root: Path, operation: str, command: str, args: Namespace) -> RunContext:
     run_id = _utc_run_id()
     report_dir = root / ".cache" / "sqlite_kb" / "reports" / "guidelines_repo" / operation / run_id
@@ -192,8 +168,6 @@ def _new_context(*, root: Path, operation: str, command: str, args: Namespace) -
         non_publishable=(mode == "exploratory"),
         flags_used=flags_used,
     )
-
-
 def _compute_tree_hash(root: Path) -> str:
     entries: list[str] = []
     for path in sorted(root.glob("**/*")):
@@ -209,8 +183,6 @@ def _compute_tree_hash(root: Path) -> str:
             continue
         entries.append(rel_str + "::" + hashlib.sha256(path.read_bytes()).hexdigest())
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
-
-
 def _to_int(value: object, default: int = 0) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -226,8 +198,6 @@ def _to_int(value: object, default: int = 0) -> int:
             except ValueError:
                 return default
     return default
-
-
 def _git_clean(repo_root: Path) -> tuple[bool, str]:
     completed = subprocess.run(
         ["git", "status", "--porcelain"],
@@ -239,8 +209,6 @@ def _git_clean(repo_root: Path) -> tuple[bool, str]:
     if completed.returncode != 0:
         return False, (completed.stderr or completed.stdout or "git_status_failed").strip()
     return (completed.stdout.strip() == ""), completed.stdout.strip()
-
-
 def _ensure_checkout(repo_root: Path, revision: str, *, allow_main: bool) -> tuple[bool, str]:
     if not (repo_root / ".git").exists():
         return False, "missing_git_metadata"
@@ -282,8 +250,6 @@ def _ensure_checkout(repo_root: Path, revision: str, *, allow_main: bool) -> tup
     elif not allow_main:
         return False, "missing_revision_for_publishable"
     return True, ""
-
-
 def run_doctor(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo doctor"
     ctx = _new_context(root=root, operation="doctor", command=command, args=args)
@@ -356,8 +322,6 @@ def run_doctor(args: Namespace, *, root: Path) -> int:
             "revision": revision,
         },
     )
-
-
 def run_ensure_repo(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo ensure-repo"
     ctx = _new_context(root=root, operation="ensure_repo", command=command, args=args)
@@ -470,8 +434,6 @@ def run_ensure_repo(args: Namespace, *, root: Path) -> int:
             "repo_clean": True,
         },
     )
-
-
 def run_bootstrap_guidelines_repo(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo bootstrap-guidelines-repo --verify"
     ctx = _new_context(root=root, operation="bootstrap", command=command, args=args)
@@ -482,70 +444,6 @@ def run_bootstrap_guidelines_repo(args: Namespace, *, root: Path) -> int:
             "status_note": "bootstrap-guidelines-repo is deprecated under chapter-sidecar export mode",
         },
     )
-
-
-def _run_m15(repo_root: Path, report_dir: Path) -> tuple[int, str, str]:
-    output_json = repo_root / "build" / "examples" / "m1_5_results.json"
-    output_log = repo_root / "build" / "examples" / "m1_5_test_output.log"
-    output_json.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        "uv",
-        "run",
-        "python",
-        "scripts/extract_rust_examples.py",
-        "--test",
-        "--src-dir",
-        "src/coding-guidelines",
-        "--prelude",
-        "src/examples_prelude.rs",
-        "--json",
-        str(output_json),
-        "--fail-on-error",
-        "--verbose",
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=str(repo_root),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    _write_text(output_log, (completed.stdout or "") + "\n" + (completed.stderr or ""))
-    _write_text(report_dir / "m1_5_command.log", " ".join(str(token) for token in command) + "\n")
-    return int(completed.returncode), completed.stdout, completed.stderr
-
-
-def _export_projection(db_path: Path) -> dict[str, Any]:
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
-    try:
-        payload = {
-            "guidelines": conn.execute(
-                "SELECT guideline_id, source_file_path, quality_label, export_topic FROM guideline_records ORDER BY guideline_id"
-            ).fetchall(),
-            "blocks": conn.execute(
-                "SELECT guideline_id, block_type, order_index, content FROM guideline_blocks ORDER BY guideline_id, order_index"
-            ).fetchall(),
-            "bib_links": conn.execute(
-                "SELECT guideline_id, bib_key FROM guideline_bib_links ORDER BY guideline_id, bib_key"
-            ).fetchall(),
-            "citations": conn.execute(
-                "SELECT guideline_id, block_id, ref_target, order_index FROM guideline_citations ORDER BY guideline_id, block_id, order_index"
-            ).fetchall(),
-        }
-    finally:
-        conn.close()
-    encoded = json.dumps(payload, sort_keys=True)
-    return {
-        "hash": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
-        "counts": {
-            "guidelines": len(payload["guidelines"]),
-            "blocks": len(payload["blocks"]),
-            "bib_links": len(payload["bib_links"]),
-            "citations": len(payload["citations"]),
-        },
-    }
-
-
 def run_bump_pin(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo bump-pin --revision <sha>"
     ctx = _new_context(root=root, operation="bump_pin", command=command, args=args)
@@ -579,8 +477,6 @@ def run_bump_pin(args: Namespace, *, root: Path) -> int:
             "config_path": str(cfg_path),
         },
     )
-
-
 def run_reorg_path_mapping(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo reorg-path-mapping"
     ctx = _new_context(root=root, operation="reorg_path_mapping", command=command, args=args)
@@ -598,8 +494,6 @@ def run_reorg_path_mapping(args: Namespace, *, root: Path) -> int:
             "Provide a mapping file then rerun with --mapping-file <path> (operation intentionally guarded)"
         ],
     )
-
-
 def run_autopilot(args: Namespace, *, root: Path) -> int:
     command = (
         "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py "
@@ -727,7 +621,7 @@ def run_autopilot(args: Namespace, *, root: Path) -> int:
     )
     before_projection = None
     if db_path.exists():
-        before_projection = _export_projection(db_path)
+        before_projection = export_projection_summary(db_path)
 
     try:
         build_summary = run_guidelines_repo_build(args=build_args, root=root)
@@ -745,7 +639,7 @@ def run_autopilot(args: Namespace, *, root: Path) -> int:
             fix_commands=[command],
         )
 
-    m15_code, m15_stdout, m15_stderr = _run_m15(repo_root, ctx.report_dir)
+    m15_code, m15_stdout, m15_stderr = run_m15_projection(repo_root, ctx.report_dir)
     if m15_code != 0:
         return _emit_failure(
             ctx=ctx,
@@ -853,7 +747,7 @@ def run_autopilot(args: Namespace, *, root: Path) -> int:
             db_path=db_path,
             fix_commands=[command],
         )
-    after_projection = _export_projection(db_path)
+    after_projection = export_projection_summary(db_path)
     if before_projection is not None:
         before_counts_raw = before_projection.get("counts", {})
         before_counts = before_counts_raw if isinstance(before_counts_raw, dict) else {}
