@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import sqlite3
 import sys
@@ -14,17 +13,10 @@ from typing import Any
 
 import yaml
 
-from retrieval.core.candidate_policy import (
-    apply_hybrid_candidate_policy_v2_rerank as core_apply_hybrid_candidate_policy_v2_rerank,
-)
-from retrieval.core.candidate_policy import (
-    apply_hybrid_lexical_floor_rerank as core_apply_hybrid_lexical_floor_rerank,
-)
 from retrieval.core.engine import build_runtime_config
 from retrieval.core.fusion import (
     apply_component_scores as core_apply_component_scores,
 )
-from retrieval.core.fusion import apply_rrf_hybrid_scores as core_apply_rrf_hybrid_scores
 from retrieval.core.policy_loader import load_eval_policy
 from retrieval.core.profile import (
     DEFAULT_HYBRID_RRF_K,
@@ -56,12 +48,12 @@ from retrieval.query.embedding_cache import (
     ensure_embedding_cache_table,
 )
 from retrieval.query.errors import ModeExecutionError
+from retrieval.query.hybrid_pipeline import run_hybrid_pipeline as core_run_hybrid_pipeline
 from retrieval.query.lexical_pipeline import load_statement_corpus as core_load_statement_corpus
 from retrieval.query.lexical_pipeline import (
     load_table1_row_requirements as core_load_table1_row_requirements,
 )
 from retrieval.query.lexical_pipeline import run_lexical_query as core_run_lexical_query
-from retrieval.query.semantic_math import min_max_normalize
 from retrieval.query.row_markers import (
     annotate_rows_with_row_markers as _annotate_rows_with_row_markers,
 )
@@ -70,7 +62,6 @@ from retrieval.query.row_markers import (
 )
 from retrieval.query.row_projection import apply_abstain_policy as core_apply_abstain_policy
 from retrieval.query.row_projection import build_row_projection as core_build_row_projection
-from retrieval.query.rewrite_rules import load_rewrite_rules as _load_rewrite_rules
 from retrieval.query.rewrite_rules import rewrite_query_text as _rewrite_query_text
 from retrieval.query.semantic_pipeline import semantic_candidates as core_semantic_candidates
 from retrieval.query.review_artifacts import (
@@ -81,7 +72,6 @@ from retrieval.query.review_artifacts import (
 from semantic_backend_client import (
     SemanticBackendConfig,
     check_semantic_backend,
-    rerank_texts,
 )
 from sqlite_query_guardrails import GuardrailError, execute_contract_query
 
@@ -1071,126 +1061,52 @@ def execute_retrieval_query(
     lexical_started = time.perf_counter()
     lexical_rows = _run_lexical()
     timing["lexical_ms"] += (time.perf_counter() - lexical_started) * 1000.0
-    lexical_rows = lexical_rows[:candidate_limit]
-    semantic_rows = semantic_rows[:candidate_limit]
-    workload["lexical_pool_size"] = int(len(lexical_rows))
-    workload["semantic_pool_size"] = int(len(semantic_rows))
-
-    lexical_ids = [_row_identity(row) for row in lexical_rows]
-    lexical_values = [float(row.get("lexical_score", 0.0)) for row in lexical_rows]
-    lexical_norm = min_max_normalize(lexical_values)
-    lexical_score_by_id = dict(zip(lexical_ids, lexical_norm, strict=False))
-
-    merged: dict[str, dict[str, Any]] = {}
-    for row in semantic_rows:
-        row_id = _row_identity(row)
-        merged[row_id] = dict(row)
-        merged[row_id]["lexical_score"] = lexical_score_by_id.get(row_id, 0.0)
-
-    for row in lexical_rows:
-        row_id = _row_identity(row)
-        if row_id not in merged:
-            merged[row_id] = dict(row)
-            merged[row_id]["semantic_score"] = 0.0
-            merged[row_id]["reranker_score"] = 0.0
-        merged[row_id]["lexical_score"] = lexical_score_by_id.get(row_id, 0.0)
-
-    candidate_policy_debug: dict[str, Any] = {
-        "policy": normalized_candidate_policy,
-        "enabled": False,
-    }
 
     def _rerank_with_retries(query: str, documents: list[str]) -> list[float]:
         return _with_semantic_retries(
             "hybrid reranker scoring",
             semantic_retries,
-            lambda: rerank_texts(
-                config=semantic_config,
-                query_text=query,
-                documents=documents,
-            ),
+            lambda: semantic_rerank(query, documents),
             telemetry=semantic_retry_events,
         )
 
-    if normalized_candidate_policy == HYBRID_CANDIDATE_POLICY_V2:
-        candidate_policy_debug = core_apply_hybrid_candidate_policy_v2_rerank(
-            merged_rows=merged,
-            lexical_rows=lexical_rows,
-            semantic_rows=semantic_rows,
-            query_text=effective_query_text,
-            top_k=top_k,
-            rerank_pool_size=resolved_hybrid_rerank_pool_size,
-            lexical_min=resolved_hybrid_lexical_min,
-            semantic_min=resolved_hybrid_semantic_min,
-            row_identity=_row_identity,
-            rerank_documents=_rerank_with_retries,
-            normalize_scores=min_max_normalize,
-            timing=timing,
-            workload=workload,
-        )
-    else:
-        candidate_policy_debug = core_apply_hybrid_lexical_floor_rerank(
-            merged_rows=merged,
-            lexical_rows=lexical_rows,
-            semantic_rows=semantic_rows,
-            query_text=effective_query_text,
-            top_k=top_k,
-            floor_count=resolved_lexical_floor_count,
-            floor_share=resolved_lexical_floor_share,
-            row_identity=_row_identity,
-            rerank_documents=_rerank_with_retries,
-            normalize_scores=min_max_normalize,
-            timing=timing,
-            workload=workload,
+    def semantic_rerank(query: str, documents: list[str]) -> list[float]:
+        from semantic_backend_client import rerank_texts
+
+        return rerank_texts(
+            config=semantic_config,
+            query_text=query,
+            documents=documents,
         )
 
-    hybrid_rows: list[dict[str, Any]] = []
-    if normalized_fusion_method == HYBRID_FUSION_RRF_V1:
-        hybrid_rows, fusion_debug = core_apply_rrf_hybrid_scores(
-            merged_rows=merged,
-            lexical_rows=lexical_rows,
-            semantic_rows=semantic_rows,
-            rrf_k=resolved_rrf_k,
-            rrf_window=resolved_rrf_window,
-            row_identity=_row_identity,
-        )
-        fusion_debug["candidate_policy"] = candidate_policy_debug
-    else:
-        use_weighted_v2 = normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
-        for row in merged.values():
-            if use_weighted_v2:
-                core_apply_component_scores(
-                    row,
-                    lexical_score=float(row.get("lexical_score", 0.0)),
-                    semantic_score=float(row.get("semantic_score", 0.0)),
-                    reranker_score=float(row.get("reranker_score", 0.0)),
-                    lexical_weight=WEIGHTED_V2_LEXICAL_WEIGHT,
-                    semantic_weight=WEIGHTED_V2_SEMANTIC_WEIGHT,
-                    reranker_weight=WEIGHTED_V2_RERANK_WEIGHT,
-                )
-            else:
-                core_apply_component_scores(
-                    row,
-                    lexical_score=float(row.get("lexical_score", 0.0)),
-                    semantic_score=float(row.get("semantic_score", 0.0)),
-                    reranker_score=float(row.get("reranker_score", 0.0)),
-                    lexical_weight=LEXICAL_WEIGHT,
-                    semantic_weight=SEMANTIC_WEIGHT,
-                    reranker_weight=RERANK_WEIGHT,
-                )
-            hybrid_rows.append(row)
-
-        hybrid_rows.sort(
-            key=lambda row: (
-                -float(row.get("final_score", 0.0)),
-                -float(row.get("reranker_score", 0.0)),
-                _row_identity(row),
-            )
-        )
-        if candidate_policy_debug:
-            fusion_debug["candidate_policy"] = candidate_policy_debug
+    hybrid_rows, fusion_debug, union_pool_size = core_run_hybrid_pipeline(
+        lexical_rows=lexical_rows,
+        semantic_rows=semantic_rows,
+        candidate_limit=candidate_limit,
+        normalized_candidate_policy=normalized_candidate_policy,
+        normalized_fusion_method=normalized_fusion_method,
+        effective_query_text=effective_query_text,
+        top_k=top_k,
+        resolved_hybrid_rerank_pool_size=resolved_hybrid_rerank_pool_size,
+        resolved_hybrid_lexical_min=resolved_hybrid_lexical_min,
+        resolved_hybrid_semantic_min=resolved_hybrid_semantic_min,
+        resolved_lexical_floor_count=resolved_lexical_floor_count,
+        resolved_lexical_floor_share=resolved_lexical_floor_share,
+        resolved_rrf_k=resolved_rrf_k,
+        resolved_rrf_window=resolved_rrf_window,
+        lexical_weight=LEXICAL_WEIGHT,
+        semantic_weight=SEMANTIC_WEIGHT,
+        rerank_weight=RERANK_WEIGHT,
+        weighted_v2_lexical_weight=WEIGHTED_V2_LEXICAL_WEIGHT,
+        weighted_v2_semantic_weight=WEIGHTED_V2_SEMANTIC_WEIGHT,
+        weighted_v2_rerank_weight=WEIGHTED_V2_RERANK_WEIGHT,
+        row_identity=_row_identity,
+        rerank_documents=_rerank_with_retries,
+        timing=timing,
+        workload=workload,
+    )
     rows = _apply_corpus_row_policy(hybrid_rows[:top_k], query_text=query_text, corpus=corpus)
-    workload["union_pool_size"] = int(len(merged))
+    workload["union_pool_size"] = int(union_pool_size)
     projection_started = time.perf_counter()
     row_projection_all = _build_row_projection(rows)
     row_projection, abstain = _apply_abstain_policy(
