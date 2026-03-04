@@ -1,9 +1,0 @@
-{
-  "run_id": "step9_closure_20260304T173405Z",
-  "baseline_dir": ".cache/extraction_baseline/outputs",
-  "comparison": "scripts/compare_extraction_snapshot.py",
-  "generated_at": "2026-03-04T17:34:38Z",
-  "no_drift": true,
-  "compared_file_count": 106,
-  "mismatches": []
-}
