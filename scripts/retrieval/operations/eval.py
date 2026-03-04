@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
-import sqlite3
 import subprocess
 import sys
 import time
@@ -12,8 +10,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from retrieval.core.policy_loader import load_eval_policy
 from retrieval.core.profile_loader import (
@@ -28,6 +24,26 @@ from retrieval.eval.prompt_routing import (
     HYBRID_FUSION_ROUTING_OFF,
     classify_prompt_family,
     resolve_hybrid_fusion_method_for_case,
+)
+from retrieval.eval.metrics import (
+    aggregate_duration_metrics,
+    aggregate_mode_metrics,
+    aggregate_projection_metrics,
+    anchor_hit,
+    mode_skew_alarm,
+    mrr_at_k,
+    ndcg_at_k,
+    precision_at_k,
+    projection_f1,
+    row_hit,
+)
+from retrieval.eval.runtime_support import (
+    is_relevant as _is_relevant,
+    load_build_provenance as _load_build_provenance,
+    load_trace_ids_by_context as _load_trace_ids_by_context,
+    load_yaml_mapping as _load_yaml,
+    utc_now as _utc_now,
+    validate_required_evidence_fields as _validate_required_evidence_fields,
 )
 from retrieval.eval.reporting import (
     infer_root_cause_run_and_cell as eval_infer_root_cause_run_and_cell,
@@ -54,14 +70,6 @@ DEFAULT_TOP_K = 10
 DEFAULT_CANDIDATE_LIMIT = 5000
 SLICES = {"issue_identification", "resolution_identification"}
 MODES = {"lexical", "semantic", "hybrid"}
-TARGET_SCOPES = {"any", "qnx", "vxworks", "embedded"}
-ROW_MARKERS = tuple(f"1{chr(ord('a') + idx)}" for idx in range(9))
-OVERRIDABLE_MIN_METRICS = {
-    "precision_at_k",
-    "mrr_at_k",
-    "ndcg_at_k",
-    "row_hit_rate",
-}
 SKEW_THRESHOLDS = {
     "max_row_share": 0.75,
     "min_row_entropy": 0.35,
@@ -90,539 +98,8 @@ THRESHOLDS = {
 }
 
 
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
-
-
-def _split_csv(raw: str) -> set[str]:
-    return {token.strip().lower() for token in str(raw).split(",") if token.strip()}
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        payload = yaml.safe_load(handle) or {}
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"YAML payload at {path} must be a mapping")
-    return payload
-
-
 def load_eval_prompts(path: Path) -> list[dict[str, Any]]:
-    payload = _load_yaml(path)
-    require_extended_metadata = str(payload.get("suite_id", "")).startswith("core_docs_")
-    prompts = payload.get("prompts")
-    if not isinstance(prompts, list) or not prompts:
-        raise RuntimeError("Retrieval eval file must define non-empty prompts list")
-
-    normalized: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
-    for raw_prompt in prompts:
-        if not isinstance(raw_prompt, dict):
-            raise RuntimeError("Each prompt entry must be a mapping")
-
-        prompt_id = str(raw_prompt.get("prompt_id", "")).strip()
-        if not prompt_id:
-            raise RuntimeError("Prompt missing prompt_id")
-        if prompt_id in seen_ids:
-            raise RuntimeError(f"Duplicate prompt_id: {prompt_id}")
-        seen_ids.add(prompt_id)
-
-        slice_name = str(raw_prompt.get("slice", "")).strip()
-        if slice_name not in SLICES:
-            raise RuntimeError(f"Prompt {prompt_id} has invalid slice {slice_name}")
-
-        query_text = str(raw_prompt.get("query_text", "")).strip()
-        if not query_text:
-            raise RuntimeError(f"Prompt {prompt_id} missing query_text")
-
-        raw_modes = raw_prompt.get("modes")
-        if not isinstance(raw_modes, list) or not raw_modes:
-            raise RuntimeError(f"Prompt {prompt_id} must define non-empty modes")
-        modes = [str(mode).strip() for mode in raw_modes]
-        if any(mode not in MODES for mode in modes):
-            raise RuntimeError(f"Prompt {prompt_id} includes unknown mode")
-
-        expected_row_markers = [
-            str(value).strip().lower()
-            for value in (raw_prompt.get("expected_row_markers") or [])
-            if str(value).strip()
-        ]
-        relevant_statement_ids = [
-            str(value).strip() for value in (raw_prompt.get("relevant_statement_ids") or [])
-        ]
-        relevant_anchor_prefixes = [
-            str(value).strip() for value in (raw_prompt.get("relevant_anchor_prefixes") or [])
-        ]
-        relevant_terms = [
-            str(value).strip().lower() for value in (raw_prompt.get("relevant_terms") or [])
-        ]
-        hard_negative_statement_ids = [
-            str(value).strip() for value in (raw_prompt.get("hard_negative_statement_ids") or [])
-        ]
-        expected_item_kinds = [
-            str(value).strip().lower()
-            for value in (raw_prompt.get("expected_item_kinds") or [])
-            if str(value).strip()
-        ]
-        required_evidence_fields = [
-            str(value).strip()
-            for value in (raw_prompt.get("required_evidence_fields") or [])
-            if str(value).strip()
-        ]
-        target_scope = str(raw_prompt.get("target_scope", "any")).strip().lower()
-        if target_scope not in TARGET_SCOPES:
-            raise RuntimeError(f"Prompt {prompt_id} has invalid target_scope {target_scope}")
-        raw_min_metrics = raw_prompt.get("min_metrics") or {}
-        if not isinstance(raw_min_metrics, dict):
-            raise RuntimeError(f"Prompt {prompt_id} min_metrics must be a mapping")
-
-        min_metrics: dict[str, dict[str, float]] = {}
-        for mode_name, metric_mapping in raw_min_metrics.items():
-            mode_key = str(mode_name).strip()
-            if mode_key not in MODES:
-                raise RuntimeError(f"Prompt {prompt_id} min_metrics has unknown mode {mode_key}")
-            if not isinstance(metric_mapping, dict):
-                raise RuntimeError(
-                    f"Prompt {prompt_id} min_metrics for {mode_key} must be a mapping"
-                )
-
-            normalized_metrics: dict[str, float] = {}
-            for metric_name, metric_value in metric_mapping.items():
-                metric_key = str(metric_name).strip()
-                if metric_key not in OVERRIDABLE_MIN_METRICS:
-                    raise RuntimeError(
-                        f"Prompt {prompt_id} min_metrics has unsupported metric {metric_key}"
-                    )
-                normalized_metrics[metric_key] = float(metric_value)
-            if normalized_metrics:
-                min_metrics[mode_key] = normalized_metrics
-
-        if not (
-            expected_row_markers
-            or relevant_statement_ids
-            or relevant_anchor_prefixes
-            or relevant_terms
-        ):
-            raise RuntimeError(
-                f"Prompt {prompt_id} must define at least one relevance signal "
-                "(row markers, statement ids, anchor prefixes, or terms)"
-            )
-        if require_extended_metadata and not expected_item_kinds:
-            raise RuntimeError(f"Prompt {prompt_id} missing expected_item_kinds")
-        if require_extended_metadata and not required_evidence_fields:
-            raise RuntimeError(f"Prompt {prompt_id} missing required_evidence_fields")
-
-        if not expected_item_kinds:
-            expected_item_kinds = ["statement"]
-        if not required_evidence_fields:
-            required_evidence_fields = ["row_markers"]
-
-        normalized.append(
-            {
-                "prompt_id": prompt_id,
-                "category": str(raw_prompt.get("category", "")).strip().lower(),
-                "slice": slice_name,
-                "query_text": query_text,
-                "modes": modes,
-                "expected_row_markers": expected_row_markers,
-                "relevant_statement_ids": relevant_statement_ids,
-                "relevant_anchor_prefixes": relevant_anchor_prefixes,
-                "relevant_terms": relevant_terms,
-                "hard_negative_statement_ids": hard_negative_statement_ids,
-                "expected_item_kinds": expected_item_kinds,
-                "required_evidence_fields": required_evidence_fields,
-                "target_scope": target_scope,
-                "min_metrics": min_metrics,
-                "semantic_focus": bool(raw_prompt.get("semantic_focus", False)),
-                "expect_abstain": bool(raw_prompt.get("expect_abstain", False)),
-            }
-        )
-
-    return normalized
-
-
-def _validate_required_evidence_fields(db_path: Path, prompts: list[dict[str, Any]]) -> None:
-    required_fields = sorted(
-        {
-            str(field).strip()
-            for prompt in prompts
-            for field in list(prompt.get("required_evidence_fields") or [])
-            if str(field).strip()
-        }
-    )
-    if not required_fields:
-        return
-
-    known_field_sources: dict[str, tuple[str, str]] = {
-        "item_path": ("core_docs_chunk_metadata", "item_path"),
-        "item_kind": ("core_docs_chunk_metadata", "item_kind"),
-        "signature": ("core_docs_chunk_metadata", "signature"),
-        "stability": ("core_docs_chunk_metadata", "stability"),
-        "safety_notes": ("core_docs_chunk_metadata", "safety_notes"),
-        "panic_behavior": ("core_docs_chunk_metadata", "panic_behavior"),
-        "example_snippets": ("core_docs_chunk_metadata", "example_snippets"),
-        "target_triple": ("core_docs_chunk_metadata", "target_triple"),
-        "target_env": ("core_docs_chunk_metadata", "target_env"),
-        "cfg_signature": ("core_docs_chunk_metadata", "cfg_signature"),
-        "cfg_signature_sha256": ("core_docs_chunk_metadata", "cfg_signature_sha256"),
-        "row_markers": ("table1_rows", "row_marker"),
-    }
-
-    missing_mappings = [field for field in required_fields if field not in known_field_sources]
-    if missing_mappings:
-        raise RuntimeError(
-            "Unknown required_evidence_fields in prompt suite: " + ", ".join(missing_mappings)
-        )
-
-    connection = sqlite3.connect(db_path)
-    try:
-        for field in required_fields:
-            table_name, column_name = known_field_sources[field]
-            columns = [
-                str(row[1])
-                for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
-            ]
-            if column_name not in columns:
-                raise RuntimeError(
-                    f"Required evidence field {field} missing column {column_name} in {table_name}"
-                )
-            sql = (
-                f"SELECT {column_name} FROM {table_name} "
-                f"WHERE {column_name} IS NOT NULL AND {column_name} <> '' LIMIT 1"
-            )
-            value = connection.execute(sql).fetchone()
-            if value is None:
-                raise RuntimeError(
-                    "Required evidence field "
-                    f"{field} has no non-empty values in {table_name}.{column_name}"
-                )
-    finally:
-        connection.close()
-
-
-def _is_relevant(row: dict[str, Any], prompt: dict[str, Any]) -> bool:
-    statement_id = str(row.get("statement_id", ""))
-    source_anchor = str(row.get("source_anchor", ""))
-    row_markers = {value.lower() for value in row.get("row_markers", [])}
-    statement_text = str(row.get("statement_text", "")).lower()
-
-    if statement_id and statement_id in set(prompt["relevant_statement_ids"]):
-        return True
-
-    anchor_prefixes = [prefix for prefix in prompt["relevant_anchor_prefixes"] if prefix]
-    if anchor_prefixes and any(source_anchor.startswith(prefix) for prefix in anchor_prefixes):
-        return True
-
-    expected_rows = set(prompt["expected_row_markers"])
-    row_match = bool(expected_rows.intersection(row_markers)) if expected_rows else True
-
-    relevant_terms = [term for term in prompt["relevant_terms"] if term]
-    if relevant_terms:
-        term_match = any(term in statement_text for term in relevant_terms)
-        if row_match and term_match:
-            return True
-
-    if expected_rows and row_match and not relevant_terms and not anchor_prefixes:
-        return True
-
-    return False
-
-
-def _precision_at_k(relevance: list[int], k: int) -> float:
-    if k <= 0:
-        return 0.0
-    observed = relevance[:k]
-    if not observed:
-        return 0.0
-    return float(sum(observed)) / float(len(observed))
-
-
-def _mrr_at_k(relevance: list[int], k: int) -> float:
-    for idx, rel in enumerate(relevance[:k], start=1):
-        if rel:
-            return 1.0 / float(idx)
-    return 0.0
-
-
-def _ndcg_at_k(relevance: list[int], k: int) -> float:
-    def _dcg(values: list[int]) -> float:
-        score = 0.0
-        for idx, value in enumerate(values, start=1):
-            if value <= 0:
-                continue
-            score += float(value) / math.log2(idx + 1.0)
-        return score
-
-    observed = _dcg(relevance[:k])
-    ideal = _dcg(sorted(relevance[:k], reverse=True))
-    if ideal <= 0.0:
-        return 0.0
-    return observed / ideal
-
-
-def _row_hit(rows: list[dict[str, Any]], expected_row_markers: list[str], k: int) -> float:
-    if not expected_row_markers:
-        return 1.0
-    expected = set(expected_row_markers)
-    for row in rows[:k]:
-        markers = {value.lower() for value in row.get("row_markers", [])}
-        if expected.intersection(markers):
-            return 1.0
-    return 0.0
-
-
-def _anchor_hit(rows: list[dict[str, Any]], anchor_prefixes: list[str], k: int) -> float:
-    prefixes = [prefix for prefix in anchor_prefixes if prefix]
-    if not prefixes:
-        return 1.0
-    for row in rows[:k]:
-        source_anchor = str(row.get("source_anchor", ""))
-        if any(source_anchor.startswith(prefix) for prefix in prefixes):
-            return 1.0
-    return 0.0
-
-
-def _projection_f1(expected: set[str], predicted: set[str]) -> tuple[float, float, float]:
-    if not expected and not predicted:
-        return 1.0, 1.0, 1.0
-    if not predicted:
-        return 0.0, 0.0, 0.0
-
-    overlap = expected.intersection(predicted)
-    precision = float(len(overlap)) / float(len(predicted))
-    recall = 0.0 if not expected else float(len(overlap)) / float(len(expected))
-    if precision + recall <= 0.0:
-        return precision, recall, 0.0
-    return precision, recall, (2.0 * precision * recall) / (precision + recall)
-
-
-def _aggregate_mode_metrics(case_rows: list[dict[str, Any]]) -> dict[str, float]:
-    if not case_rows:
-        return {
-            "precision_at_k": 0.0,
-            "mrr_at_k": 0.0,
-            "ndcg_at_k": 0.0,
-            "row_hit_rate": 0.0,
-            "anchor_hit_rate": 0.0,
-            "hard_negative_rate": 0.0,
-            "projection_macro_f1": 0.0,
-        }
-
-    metric_names = [
-        "precision_at_k",
-        "mrr_at_k",
-        "ndcg_at_k",
-        "row_hit_rate",
-        "anchor_hit_rate",
-        "hard_negative_rate",
-        "projection_macro_f1",
-    ]
-    return {
-        name: round(sum(float(case[name]) for case in case_rows) / float(len(case_rows)), 6)
-        for name in metric_names
-    }
-
-
-def _aggregate_projection_metrics(case_rows: list[dict[str, Any]]) -> dict[str, float]:
-    if not case_rows:
-        return {
-            "macro_f1": 0.0,
-            "macro_precision": 0.0,
-            "macro_recall": 0.0,
-            "abstain_rate": 0.0,
-            "abstain_precision": 0.0,
-            "abstain_recall": 0.0,
-        }
-
-    macro_f1 = sum(float(case.get("projection_f1", 0.0)) for case in case_rows) / float(
-        len(case_rows)
-    )
-    macro_precision = sum(
-        float(case.get("projection_precision", 0.0)) for case in case_rows
-    ) / float(len(case_rows))
-    macro_recall = sum(float(case.get("projection_recall", 0.0)) for case in case_rows) / float(
-        len(case_rows)
-    )
-
-    abstain_pred_count = sum(1 for case in case_rows if bool(case.get("abstain_active", False)))
-    abstain_expected_count = sum(1 for case in case_rows if bool(case.get("expect_abstain", False)))
-    abstain_tp = sum(
-        1
-        for case in case_rows
-        if bool(case.get("abstain_active", False)) and bool(case.get("expect_abstain", False))
-    )
-
-    return {
-        "macro_f1": round(float(macro_f1), 6),
-        "macro_precision": round(float(macro_precision), 6),
-        "macro_recall": round(float(macro_recall), 6),
-        "abstain_rate": round(float(abstain_pred_count) / float(len(case_rows)), 6),
-        "abstain_precision": round(
-            float(abstain_tp) / float(abstain_pred_count) if abstain_pred_count > 0 else 0.0,
-            6,
-        ),
-        "abstain_recall": round(
-            float(abstain_tp) / float(abstain_expected_count)
-            if abstain_expected_count > 0
-            else 1.0,
-            6,
-        ),
-    }
-
-
-def _aggregate_duration_metrics(case_rows: list[dict[str, Any]]) -> dict[str, float]:
-    if not case_rows:
-        return {
-            "total_ms": 0.0,
-            "avg_ms": 0.0,
-            "p50_ms": 0.0,
-            "p95_ms": 0.0,
-            "max_ms": 0.0,
-        }
-
-    durations = sorted(float(case.get("duration_ms", 0.0)) for case in case_rows)
-    total = sum(durations)
-    count = len(durations)
-    p50_index = int((count - 1) * 0.50)
-    p95_index = int((count - 1) * 0.95)
-    return {
-        "total_ms": round(float(total), 3),
-        "avg_ms": round(float(total) / float(count), 3),
-        "p50_ms": round(float(durations[p50_index]), 3),
-        "p95_ms": round(float(durations[p95_index]), 3),
-        "max_ms": round(float(durations[-1]), 3),
-    }
-
-
-def _mode_skew_alarm(case_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    predicted_markers = [
-        str(case.get("top_projected_row_marker", "")).strip().lower()
-        for case in case_rows
-        if str(case.get("top_projected_row_marker", "")).strip()
-    ]
-    total = len(predicted_markers)
-    distribution = {
-        marker: predicted_markers.count(marker) for marker in sorted(set(predicted_markers))
-    }
-
-    max_row_share = 0.0
-    row_entropy = 0.0
-    row_gini = 0.0
-    if total > 0:
-        probabilities = [float(count) / float(total) for count in distribution.values()]
-        max_row_share = max(probabilities)
-        row_entropy = -sum(p * math.log2(p) for p in probabilities if p > 0.0)
-        max_entropy = math.log2(float(len(ROW_MARKERS)))
-        if max_entropy > 0.0:
-            row_entropy = row_entropy / max_entropy
-        row_gini = 1.0 - sum(p * p for p in probabilities)
-
-    abstain_rate = float(
-        sum(1 for case in case_rows if bool(case.get("abstain_active", False)))
-    ) / float(max(1, len(case_rows)))
-    expected_abstain_count = sum(1 for case in case_rows if bool(case.get("expect_abstain", False)))
-
-    alerts: list[str] = []
-    if max_row_share > float(SKEW_THRESHOLDS["max_row_share"]):
-        alerts.append(f"max_row_share>{SKEW_THRESHOLDS['max_row_share']}: {max_row_share:.4f}")
-    if total > 1 and row_entropy < float(SKEW_THRESHOLDS["min_row_entropy"]):
-        alerts.append(f"row_entropy<{SKEW_THRESHOLDS['min_row_entropy']}: {row_entropy:.4f}")
-    if expected_abstain_count > 0 and abstain_rate < float(
-        SKEW_THRESHOLDS["min_abstain_rate_with_expected"]
-    ):
-        alerts.append(
-            "abstain_rate_collapse: "
-            f"{abstain_rate:.4f} < {SKEW_THRESHOLDS['min_abstain_rate_with_expected']}"
-        )
-
-    return {
-        "max_row_share": round(float(max_row_share), 6),
-        "row_entropy": round(float(row_entropy), 6),
-        "row_gini": round(float(row_gini), 6),
-        "abstain_rate": round(float(abstain_rate), 6),
-        "expected_abstain_count": int(expected_abstain_count),
-        "predicted_distribution": distribution,
-        "alerts": alerts,
-    }
-
-
-def _load_build_provenance(db_path: Path) -> dict[str, Any]:
-    try:
-        connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
-    except sqlite3.Error:
-        return {
-            "kb_metadata": {},
-            "snapshot": {},
-            "counts": {"chunks": 0, "statements": 0, "docs": 0},
-        }
-
-    try:
-        connection.row_factory = sqlite3.Row
-        kb_metadata = connection.execute(
-            "SELECT kb_id, source_name, source_revision, extractor_version, "
-            "built_at, notes FROM kb_metadata LIMIT 1"
-        ).fetchone()
-        snapshot = connection.execute(
-            "SELECT snapshot_id, commit_sha, source_url, fetched_at, sha256 FROM snapshots LIMIT 1"
-        ).fetchone()
-        counts = connection.execute(
-            "SELECT (SELECT COUNT(*) FROM chunks) AS chunk_count, "
-            "(SELECT COUNT(*) FROM statements) AS statement_count, "
-            "(SELECT COUNT(*) FROM docs) AS doc_count"
-        ).fetchone()
-    except sqlite3.Error:
-        return {
-            "kb_metadata": {},
-            "snapshot": {},
-            "counts": {"chunks": 0, "statements": 0, "docs": 0},
-        }
-    finally:
-        connection.close()
-
-    return {
-        "kb_metadata": dict(kb_metadata) if kb_metadata is not None else {},
-        "snapshot": dict(snapshot) if snapshot is not None else {},
-        "counts": {
-            "chunks": int(counts["chunk_count"]) if counts is not None else 0,
-            "statements": int(counts["statement_count"]) if counts is not None else 0,
-            "docs": int(counts["doc_count"]) if counts is not None else 0,
-        },
-    }
-
-
-def _load_trace_ids_by_context(path: Path | None) -> dict[str, list[str]]:
-    if path is None or not path.exists():
-        return {}
-
-    by_context: dict[str, list[str]] = {}
-    seen_by_context: dict[str, set[str]] = {}
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {}
-
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, dict):
-            continue
-
-        context = str(payload.get("context", "")).strip()
-        trace_id = str(payload.get("trace_id", "")).strip()
-        if not context or not trace_id:
-            continue
-
-        seen = seen_by_context.setdefault(context, set())
-        if trace_id in seen:
-            continue
-        seen.add(trace_id)
-        by_context.setdefault(context, []).append(trace_id)
-
-    return by_context
+    return eval_load_eval_prompts(path)
 
 
 def evaluate_retrieval_prompts(
@@ -767,15 +244,15 @@ def evaluate_retrieval_prompts(
                 "union_pool_size": int(candidate_generation.get("union_pool_size", 0)),
                 "rerank_pool_size": int(candidate_generation.get("rerank_pool_size", 0)),
                 "rerank_doc_count": int(candidate_generation.get("rerank_doc_count", 0)),
-                "precision_at_k": round(_precision_at_k(relevance, top_k), 6),
-                "mrr_at_k": round(_mrr_at_k(relevance, top_k), 6),
-                "ndcg_at_k": round(_ndcg_at_k(relevance, top_k), 6),
+                "precision_at_k": round(precision_at_k(relevance, top_k), 6),
+                "mrr_at_k": round(mrr_at_k(relevance, top_k), 6),
+                "ndcg_at_k": round(ndcg_at_k(relevance, top_k), 6),
                 "row_hit_rate": round(
-                    _row_hit(rows, prompt["expected_row_markers"], top_k),
+                    row_hit(rows, prompt["expected_row_markers"], top_k),
                     6,
                 ),
                 "anchor_hit_rate": round(
-                    _anchor_hit(rows, prompt["relevant_anchor_prefixes"], top_k),
+                    anchor_hit(rows, prompt["relevant_anchor_prefixes"], top_k),
                     6,
                 ),
                 "hard_negative_rate": round(float(hard_negative_hits) / float(max(1, top_k)), 6),
@@ -815,7 +292,7 @@ def evaluate_retrieval_prompts(
                 if str(row.get("row_marker", "")).strip()
             }
             expected_markers = set(prompt["expected_row_markers"])
-            projection_precision, projection_recall, projection_f1 = _projection_f1(
+            projection_precision, projection_recall, projection_f1_score = projection_f1(
                 expected_markers,
                 predicted_markers,
             )
@@ -824,7 +301,7 @@ def evaluate_retrieval_prompts(
             if bool(prompt.get("expect_abstain", False)):
                 projection_precision = 1.0 if abstain_active else 0.0
                 projection_recall = projection_precision
-                projection_f1 = projection_precision
+                projection_f1_score = projection_precision
 
             case_result["abstain_active"] = abstain_active
             case_result["abstain_reason_code"] = str(
@@ -832,7 +309,7 @@ def evaluate_retrieval_prompts(
             )
             case_result["projection_precision"] = round(float(projection_precision), 6)
             case_result["projection_recall"] = round(float(projection_recall), 6)
-            case_result["projection_f1"] = round(float(projection_f1), 6)
+            case_result["projection_f1"] = round(float(projection_f1_score), 6)
             case_result["projection_macro_f1"] = case_result["projection_f1"]
             case_result["projected_row_markers"] = sorted(predicted_markers)
             case_result["top_projected_row_marker"] = (
@@ -877,27 +354,35 @@ def evaluate_retrieval_prompts(
         if case["status"] == "fail":
             failures += 1
 
-    summary_modes = {
-        mode: _aggregate_mode_metrics(rows) for mode, rows in by_mode_retrieval.items()
-    }
+    summary_modes = {mode: aggregate_mode_metrics(rows) for mode, rows in by_mode_retrieval.items()}
     summary_slices = {
-        slice_name: {mode: _aggregate_mode_metrics(rows) for mode, rows in per_mode.items()}
+        slice_name: {mode: aggregate_mode_metrics(rows) for mode, rows in per_mode.items()}
         for slice_name, per_mode in by_slice_mode_retrieval.items()
     }
 
     summary_semantic_focus = {
-        mode: _aggregate_mode_metrics(rows)
+        mode: aggregate_mode_metrics(rows)
         for mode, rows in semantic_focus_by_mode_retrieval.items()
     }
     summary_projection = {
-        mode: _aggregate_projection_metrics(rows) for mode, rows in by_mode.items()
+        mode: aggregate_projection_metrics(rows) for mode, rows in by_mode.items()
     }
-    summary_durations = {mode: _aggregate_duration_metrics(rows) for mode, rows in by_mode.items()}
+    summary_durations = {mode: aggregate_duration_metrics(rows) for mode, rows in by_mode.items()}
     summary_durations_failed = {
-        mode: _aggregate_duration_metrics([case for case in rows if case.get("status") == "fail"])
+        mode: aggregate_duration_metrics([case for case in rows if case.get("status") == "fail"])
         for mode, rows in by_mode.items()
     }
-    skew_alarms = {mode: _mode_skew_alarm(rows) for mode, rows in by_mode.items()}
+    skew_alarms = {
+        mode: mode_skew_alarm(
+            rows,
+            max_row_share_threshold=float(SKEW_THRESHOLDS["max_row_share"]),
+            min_row_entropy_threshold=float(SKEW_THRESHOLDS["min_row_entropy"]),
+            min_abstain_rate_with_expected_threshold=float(
+                SKEW_THRESHOLDS["min_abstain_rate_with_expected"]
+            ),
+        )
+        for mode, rows in by_mode.items()
+    }
 
     degraded_counts = {
         mode: sum(1 for case in rows if bool(case.get("degraded", False)))
@@ -1086,24 +571,6 @@ def evaluate_retrieval_prompts(
         "cases": case_results,
     }
     return report
-
-
-def _infer_root_cause_run_and_cell(report_path: Path) -> tuple[str, str]:
-    parts = list(report_path.parts)
-    run_id = ""
-    cell_id = ""
-
-    if "root_cause" in parts:
-        idx = parts.index("root_cause")
-        if idx + 1 < len(parts):
-            run_id = str(parts[idx + 1]).strip()
-
-    if "matrix" in parts:
-        idx = parts.index("matrix")
-        if idx + 1 < len(parts):
-            cell_id = str(parts[idx + 1]).strip()
-
-    return run_id, cell_id
 
 
 def parse_args() -> argparse.Namespace:
