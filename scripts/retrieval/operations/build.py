@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
-import sqlite3
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,9 +10,9 @@ from typing import Any
 
 from retrieval.build.artifacts import build_retrieval_artifacts
 from retrieval.build.cli import parse_build_args
+from retrieval.build.database_write import materialize_snapshot_db
 from retrieval.build.persistence import (
     compute_snapshot_sha256 as _compute_snapshot_sha256,
-    insert_payload as _insert_payload,
 )
 from retrieval.build.reports import (
     load_manifest as _load_manifest,
@@ -30,12 +28,10 @@ from retrieval.build.reference_parsing import (
     load_source_documents as _load_source_documents,
     parse_summary as _parse_summary,
 )
-from retrieval.build.schema import initialize_schema
 from retrieval.build.source_checkout import (
     resolve_reference_checkout as _resolve_reference_checkout,
 )
 from retrieval.core.provenance import (
-    apply_pending_migrations,
     canonical_json_hash,
     compute_source_state_from_db,
     record_pipeline_run,
@@ -202,57 +198,37 @@ def build_rust_reference_db(
         chunks=chunks,
     )
 
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_root.mkdir(parents=True, exist_ok=True)
-    if db_path.exists():
-        db_path.unlink()
-
-    connection = sqlite3.connect(db_path)
-    latest_migration_id = ""
-    try:
-        initialize_schema(connection)
-        connection.commit()
-        connection.close()
-        latest_migration_id, _ = apply_pending_migrations(
-            db_path, root=Path(__file__).resolve().parents[3]
-        )
-        connection = sqlite3.connect(db_path)
-        _insert_payload(
-            connection=connection,
-            snapshot_id=snapshot_id,
-            commit_sha=commit_sha,
-            fetched_at=source_fetched_at,
-            source_url=DEFAULT_REFERENCE_SOURCE_URL,
-            snapshot_sha256=snapshot_sha256,
-            chapters=chapters,
-            documents=documents,
-            sections=sections,
-            statements=statements,
-            chunks=chunks,
-            chunk_spans=chunk_spans,
-            mechanisms=mechanisms,
-            mechanism_evidence=mechanism_evidence,
-            table_rows=table_rows,
-            row_verdicts=row_verdicts,
-            row_mechanisms=row_mechanisms,
-            semantic_models=semantic_models,
-            semantic_corpus=semantic_corpus,
-            row_mechanism_scores=row_mechanism_scores,
-            extractor_version=(
-                "sqlite-build-rust-reference-v7::"
-                f"{strategy.strategy_id}@{strategy.strategy_version}"
-            ),
-            build_notes=(
-                "chunk-first schema and deterministic block parsing via "
-                f"{strategy.strategy_id}@{strategy.strategy_version}"
-            ),
-        )
-        connection.commit()
-    finally:
-        connection.close()
-
-    snapshot_db_path = snapshot_root / f"{snapshot_id}.sqlite"
-    shutil.copy2(db_path, snapshot_db_path)
+    latest_migration_id, snapshot_db_path = materialize_snapshot_db(
+        db_path=db_path,
+        snapshot_root=snapshot_root,
+        snapshot_id=snapshot_id,
+        commit_sha=commit_sha,
+        source_fetched_at=source_fetched_at,
+        source_url=DEFAULT_REFERENCE_SOURCE_URL,
+        snapshot_sha256=snapshot_sha256,
+        chapters=chapters,
+        documents=documents,
+        sections=sections,
+        statements=statements,
+        chunks=chunks,
+        chunk_spans=chunk_spans,
+        mechanisms=mechanisms,
+        mechanism_evidence=mechanism_evidence,
+        table_rows=table_rows,
+        row_verdicts=row_verdicts,
+        row_mechanisms=row_mechanisms,
+        semantic_models=semantic_models,
+        semantic_corpus=semantic_corpus,
+        row_mechanism_scores=row_mechanism_scores,
+        extractor_version=(
+            f"sqlite-build-rust-reference-v7::{strategy.strategy_id}@{strategy.strategy_version}"
+        ),
+        build_notes=(
+            "chunk-first schema and deterministic block parsing via "
+            f"{strategy.strategy_id}@{strategy.strategy_version}"
+        ),
+        project_root=Path(__file__).resolve().parents[3],
+    )
 
     validation_report = validate_rust_reference_db(
         db_path=db_path,
