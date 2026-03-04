@@ -1,0 +1,45 @@
+{
+  "closure_generated_at": "2026-03-04T17:34:05Z",
+  "source_run_id": "step9_closure_20260304T173405Z",
+  "fresh_regeneration": true,
+  "blocking_findings_closed": {
+    "S9-1": true,
+    "S9-2": true,
+    "S9-3": true
+  },
+  "warn_findings_dispositioned": {
+    "S9-4": {
+      "status": "resolved",
+      "evidence_path": "STEP_DEVIATIONS.md",
+      "summary": "Phase-A helper liveness matrix added with explicit module classifications and dispositions."
+    },
+    "S9-5": {
+      "status": "deferred",
+      "evidence_path": "STEP_DEVIATIONS.md",
+      "summary": "Outstanding decomposition targets have defer decisions with owners, triggers, and target step."
+    }
+  },
+  "runtime_artifact_paths": {
+    "extraction_baseline_checksums": ".cache/extraction_baseline/checksums.sha256",
+    "extraction_baseline_outputs": ".cache/extraction_baseline/outputs",
+    "integration_verification": ".cache/sqlite_kb/reports/step9_closure_20260304T173405Z/integration_verification.json",
+    "extraction_snapshot_compare": ".cache/sqlite_kb/reports/step9_closure_20260304T173405Z/extraction_snapshot_compare.json",
+    "line_budget_assessment": ".cache/sqlite_kb/reports/step9_closure_20260304T173405Z/line_budget_assessment.json",
+    "v2_symbol_move_manifest": ".cache/sqlite_kb/reports/step9_closure_20260304T173405Z/v2_symbol_move_manifest.json"
+  },
+  "tracked_artifact_paths": {
+    "closure_index": "docs/reports/step9_closure_evidence/closure_index.json",
+    "extraction_baseline_checksums": "docs/reports/step9_closure_evidence/extraction_baseline_checksums.sha256",
+    "integration_verification": "docs/reports/step9_closure_evidence/integration_verification.json",
+    "extraction_snapshot_compare": "docs/reports/step9_closure_evidence/extraction_snapshot_compare.json",
+    "line_budget_assessment": "docs/reports/step9_closure_evidence/line_budget_assessment.json",
+    "v2_symbol_move_manifest": "docs/reports/step9_closure_evidence/v2_symbol_move_manifest.json",
+    "waiver_closure_note": "docs/reports/step9_closure_evidence/waiver_closure_note.md",
+    "delta_ratification_summary": "docs/reports/step9_closure_evidence/delta_ratification_summary.md",
+    "readiness_verdict": "docs/reports/step9_closure_evidence/readiness_verdict.md"
+  },
+  "notes": [
+    "Closure evidence is source-portable under docs/reports/step9_closure_evidence/.",
+    "Fresh closure runtime run id pinned for traceability: step9_closure_20260304T173405Z."
+  ]
+}
