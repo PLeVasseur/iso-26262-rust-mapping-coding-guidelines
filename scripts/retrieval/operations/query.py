@@ -62,6 +62,10 @@ from retrieval.query.row_markers import (
 from retrieval.query.row_projection import apply_abstain_policy as core_apply_abstain_policy
 from retrieval.query.row_projection import build_row_projection as core_build_row_projection
 from retrieval.query.mode_finalizers import finalize_lexical_like_result
+from retrieval.query.output_filters import (
+    apply_corpus_row_policy as _apply_corpus_row_policy,
+)
+from retrieval.query.output_filters import without_score_breakdown as core_without_score_breakdown
 from retrieval.query.policy_resolution import RowProjectionPolicy
 from retrieval.query.policy_resolution import (
     resolve_row_projection_policy,
@@ -463,21 +467,6 @@ def _apply_abstain_policy(
     policy: RowProjectionPolicy,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     return core_apply_abstain_policy(projection, policy=policy)
-
-
-def _apply_corpus_row_policy(
-    rows: list[dict[str, Any]], *, query_text: str, corpus: str
-) -> list[dict[str, Any]]:
-    normalized_corpus = str(corpus).strip().lower()
-    if normalized_corpus == "core_docs":
-        from retrieval.query_policies.core_docs import apply_target_hint_preference
-
-        return apply_target_hint_preference(rows, query_text=query_text)
-    if normalized_corpus == "rust_reference":
-        from retrieval.query_policies.rust_reference import apply_intent_path_preference
-
-        return apply_intent_path_preference(rows, query_text=query_text)
-    return rows
 
 
 def execute_retrieval_query(
@@ -937,17 +926,7 @@ def execute_retrieval_query(
 
 
 def _without_score_breakdown(result: dict[str, Any]) -> dict[str, Any]:
-    projected = dict(result)
-    projected.pop("row_projection", None)
-    projected.pop("row_projection_all", None)
-
-    rows = []
-    for row in result.get("rows", []):
-        if not isinstance(row, dict):
-            continue
-        rows.append({key: value for key, value in row.items() if key not in SCORE_FIELDS})
-    projected["rows"] = rows
-    return projected
+    return core_without_score_breakdown(result, score_fields=SCORE_FIELDS)
 
 
 def main() -> int:
