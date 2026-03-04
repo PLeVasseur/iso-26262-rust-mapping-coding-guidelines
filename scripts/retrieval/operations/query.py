@@ -12,11 +12,7 @@ from typing import Any
 from retrieval.core.engine import build_runtime_config
 from retrieval.core.profile import (
     DEFAULT_HYBRID_RRF_K,
-    HYBRID_CANDIDATE_POLICIES,
     HYBRID_CANDIDATE_POLICY_LEGACY,
-    HYBRID_CANDIDATE_POLICY_V2,
-    HYBRID_FUSION_METHODS,
-    HYBRID_FUSION_RRF_V1,
     HYBRID_FUSION_WEIGHTED_V1,
 )
 from retrieval.core.profile_loader import (
@@ -24,7 +20,6 @@ from retrieval.core.profile_loader import (
     enforce_profile_corpus,
     load_retrieval_profile,
 )
-from retrieval.core.rewrite import rewrite_query_text as core_rewrite_query_text
 from retrieval.core.telemetry import (
     init_retrieval_timing,
     init_retrieval_workload,
@@ -32,9 +27,9 @@ from retrieval.core.telemetry import (
 from retrieval.core.telemetry import (
     timing_payload as core_timing_payload,
 )
-from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
 from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
 from retrieval.query.backend_retry import with_semantic_retries as _with_semantic_retries
+from retrieval.query.cli import parse_args as parse_query_args
 from retrieval.query.contracts import RetrievalContractProfile
 from retrieval.query.contracts import (
     resolve_retrieval_contract_profile as _resolve_retrieval_contract_profile,
@@ -116,222 +111,10 @@ WEIGHTED_V2_RERANK_WEIGHT = 0.30
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Read-only query wrapper for rust_reference.sqlite"
+    return parse_query_args(
+        default_top_k=DEFAULT_TOP_K,
+        default_candidate_limit=DEFAULT_CANDIDATE_LIMIT,
     )
-    parser.add_argument(
-        "--corpus",
-        choices=list_supported_corpora(),
-        default="rust_reference",
-        help="Corpus adapter used to resolve default DB/contract paths",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=("contract", "lexical", "semantic", "hybrid"),
-        default="contract",
-        help="Query mode (contract passthrough or retrieval mode)",
-    )
-    parser.add_argument("--query-id", default=None, help="Contract query id to execute")
-    parser.add_argument(
-        "--params-json",
-        default="{}",
-        help="JSON object of named params passed to the contract query",
-    )
-    parser.add_argument(
-        "--query-text",
-        default="",
-        help="Natural-language query text for lexical/semantic/hybrid retrieval",
-    )
-    parser.add_argument(
-        "--retrieval-profile-path",
-        default="",
-        help="Optional retrieval profile YAML for model/fusion defaults",
-    )
-    parser.add_argument(
-        "--row-marker",
-        default="",
-        help="Optional Table 1 row marker filter (1a..1i)",
-    )
-    parser.add_argument(
-        "--top-k",
-        type=int,
-        default=DEFAULT_TOP_K,
-        help="Maximum number of retrieval rows returned",
-    )
-    parser.add_argument(
-        "--candidate-limit",
-        type=int,
-        default=DEFAULT_CANDIDATE_LIMIT,
-        help="Maximum candidate statement rows considered during retrieval",
-    )
-    parser.add_argument(
-        "--hybrid-fusion-method",
-        choices=HYBRID_FUSION_METHODS,
-        default=HYBRID_FUSION_WEIGHTED_V1,
-        help="Hybrid fusion method",
-    )
-    parser.add_argument(
-        "--hybrid-rrf-k",
-        type=int,
-        default=DEFAULT_HYBRID_RRF_K,
-        help="RRF rank constant k for --hybrid-fusion-method rrf-v1",
-    )
-    parser.add_argument(
-        "--hybrid-rrf-window",
-        type=int,
-        default=0,
-        help="Optional rank window for RRF (0 means auto max(top_k*8,64))",
-    )
-    parser.add_argument(
-        "--hybrid-candidate-policy",
-        choices=HYBRID_CANDIDATE_POLICIES,
-        default=HYBRID_CANDIDATE_POLICY_LEGACY,
-        help="Hybrid candidate assembly policy before fusion",
-    )
-    parser.add_argument(
-        "--hybrid-rerank-pool-size",
-        type=int,
-        default=0,
-        help="Hybrid rerank pool target size (0 means auto max(top_k*8,64))",
-    )
-    parser.add_argument(
-        "--hybrid-lexical-min",
-        type=int,
-        default=0,
-        help="Minimum lexical candidates included in hybrid rerank pool when policy=v2",
-    )
-    parser.add_argument(
-        "--hybrid-semantic-min",
-        type=int,
-        default=0,
-        help="Minimum semantic candidates included in hybrid rerank pool when policy=v2",
-    )
-    parser.add_argument(
-        "--hybrid-lexical-floor-count",
-        type=int,
-        default=0,
-        help="Minimum lexical candidates to include in hybrid reranker pool",
-    )
-    parser.add_argument(
-        "--hybrid-lexical-floor-share",
-        type=float,
-        default=0.0,
-        help="Minimum lexical share of hybrid reranker window [0,1]",
-    )
-    parser.add_argument(
-        "--include-score-breakdown",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Include score component fields in retrieval output",
-    )
-    parser.add_argument(
-        "--prompt-id",
-        default="",
-        help="Optional prompt identifier for saved review artifacts",
-    )
-    parser.add_argument(
-        "--save-response-path",
-        default="",
-        help="Optional JSON path to persist full query response review artifact",
-    )
-    parser.add_argument(
-        "--save-response-dir",
-        default="",
-        help=(
-            "Optional directory for persisted review artifact JSON using "
-            "<timestamp>__<prompt_id>__<mode>.json naming"
-        ),
-    )
-    parser.add_argument(
-        "--allow-degraded",
-        action="store_true",
-        help="Allow lexical degraded fallback if semantic backend is unavailable",
-    )
-    parser.add_argument(
-        "--semantic-base-url",
-        default="http://127.0.0.1:8080",
-        help="Fallback semantic backend base URL",
-    )
-    parser.add_argument(
-        "--semantic-embed-base-url",
-        default="http://127.0.0.1:8080",
-        help="Optional embedding backend base URL override",
-    )
-    parser.add_argument(
-        "--semantic-rerank-base-url",
-        default="http://127.0.0.1:8081",
-        help="Optional reranker backend base URL override",
-    )
-    parser.add_argument(
-        "--embed-model-id",
-        default="Qwen/Qwen3-Embedding-4B",
-        help="Embedding model identifier",
-    )
-    parser.add_argument(
-        "--reranker-model-id",
-        default="BAAI/bge-reranker-v2-m3",
-        help="Reranker model identifier",
-    )
-    parser.add_argument(
-        "--semantic-timeout-sec",
-        type=float,
-        default=60.0,
-        help="Timeout for semantic backend HTTP requests",
-    )
-    parser.add_argument(
-        "--semantic-retries",
-        type=int,
-        default=0,
-        help="Retry count for transient semantic backend failures",
-    )
-    parser.add_argument(
-        "--persist-semantic-cache",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Persist per-statement embeddings in sqlite cache table",
-    )
-    parser.add_argument(
-        "--allow-online-corpus-embedding",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "Allow semantic query path to embed missing corpus rows on demand "
-            "(disabled by default; prefer materialize-first)"
-        ),
-    )
-    parser.add_argument(
-        "--db-path",
-        default="",
-        help="Path to corpus sqlite database (defaults from --corpus)",
-    )
-    parser.add_argument(
-        "--contract-path",
-        default="",
-        help="Path to corpus query contract YAML (defaults from --corpus)",
-    )
-    parser.add_argument(
-        "--query-log-root",
-        default="",
-        help="Directory used for query audit logs (defaults by corpus)",
-    )
-    parser.add_argument(
-        "--rewrite-mode",
-        choices=("auto", "off"),
-        default="auto",
-        help="Deterministic query rewrite mode",
-    )
-    parser.add_argument(
-        "--rewrite-rules-path",
-        default="",
-        help="Path to deterministic query rewrite rules YAML (defaults by corpus)",
-    )
-    parser.add_argument(
-        "--row-limit",
-        type=int,
-        default=None,
-        help="Optional override for row limit (guardrailed)",
-    )
-    return parser.parse_args()
 
 
 def _parse_params(raw: str) -> dict[str, Any]:
@@ -537,7 +320,7 @@ def execute_retrieval_query(
         Path(__file__).resolve().parents[3] / DEFAULT_REWRITE_RULES_PATH
     )
     try:
-        rewrite = core_rewrite_query_text(
+        rewrite = _rewrite_query_text(
             query_text=query_text,
             row_marker=row_marker,
             mode=mode,
