@@ -6,12 +6,16 @@ import json
 import shutil
 import sqlite3
 import sys
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from retrieval.build.artifacts import build_retrieval_artifacts
 from retrieval.build.cli import parse_build_args
+from retrieval.build.persistence import (
+    compute_snapshot_sha256 as _compute_snapshot_sha256,
+    insert_payload as _insert_payload,
+)
 from retrieval.build.reports import (
     load_manifest as _load_manifest,
     read_previous_snapshot_path as _read_previous_snapshot_path,
@@ -26,30 +30,17 @@ from retrieval.build.reference_parsing import (
     load_source_documents as _load_source_documents,
     parse_summary as _parse_summary,
 )
-from retrieval.build.mechanisms import (
-    extract_mechanisms_and_evidence as _extract_mechanisms_and_evidence,
-)
-from retrieval.build.persistence import (
-    compute_snapshot_sha256 as _compute_snapshot_sha256,
-    insert_payload as _insert_payload,
-)
-from retrieval.build.queryability import (
-    build_row_queryability as _build_row_queryability,
-    build_semantic_corpus as _build_semantic_corpus,
-    build_semantic_models as _build_semantic_models,
-)
 from retrieval.build.schema import initialize_schema
 from retrieval.build.source_checkout import (
     resolve_reference_checkout as _resolve_reference_checkout,
 )
-from retrieval.build.table1_rows import resolve_table1_rows as _resolve_table1_rows
 from retrieval.core.provenance import (
     apply_pending_migrations,
     canonical_json_hash,
     compute_source_state_from_db,
     record_pipeline_run,
 )
-from retrieval.ingest.contracts import ChunkInput, CleanInput
+from retrieval.ingest.contracts import CleanInput
 from retrieval.ingest.registry import resolve_ingest_strategy
 
 EXIT_SUCCESS = 0
@@ -89,29 +80,6 @@ DEFAULT_RETRIEVAL_CORPUS = "chunk"
 RETRIEVAL_CORPUS_VALUES = ("statement", "chunk")
 
 CLEAN_TEXT_NORMALIZER_VERSION = "clean-v1"
-
-
-@dataclass(frozen=True)
-class ChunkRecord:
-    chunk_uid: str
-    section_id: str
-    raw_text: str
-    clean_text: str
-    char_len: int
-    token_len: int
-    source_sha256: str
-    source_fetched_at: str
-    source_commit_sha: str
-    order_index: int
-
-
-@dataclass(frozen=True)
-class ChunkSpanRecord:
-    chunk_uid: str
-    source_anchor: str
-    start_offset: int
-    end_offset: int
-    span_order: int
 
 
 def build_rust_reference_db(
@@ -193,50 +161,16 @@ def build_rust_reference_db(
             CleanInput(raw_text=text, source_type="markdown", context={"corpus": "rust_reference"})
         ).cleaned_text,
     )
-    chunk_result = strategy.build_chunks(
-        ChunkInput(
-            sections=sections,
-            target_min_tokens=int(chunk_target_min_tokens),
-            target_max_tokens=int(chunk_target_max_tokens),
-            overlap_percent=float(chunk_overlap_percent),
-        )
-    )
-    chunks = [
-        ChunkRecord(
-            chunk_uid=str(row["chunk_uid"]),
-            section_id=str(row["section_id"]),
-            raw_text=str(row["raw_text"]),
-            clean_text=str(row["clean_text"]),
-            char_len=int(row["char_len"]),
-            token_len=int(row["token_len"]),
-            source_sha256=str(row["source_sha256"]),
-            source_fetched_at=str(row["source_fetched_at"]),
-            source_commit_sha=str(row["source_commit_sha"]),
-            order_index=int(row["order_index"]),
-        )
-        for row in chunk_result.chunks
-    ]
-    chunk_spans = [
-        ChunkSpanRecord(
-            chunk_uid=str(row["chunk_uid"]),
-            source_anchor=str(row["source_anchor"]),
-            start_offset=int(row["start_offset"]),
-            end_offset=int(row["end_offset"]),
-            span_order=int(row["span_order"]),
-        )
-        for row in chunk_result.spans
-    ]
-    mechanisms, mechanism_evidence, evidence_count_by_mechanism, best_anchor_by_mechanism = (
-        _extract_mechanisms_and_evidence(
-            sections=sections,
-            statements=statements,
-            source_fetched_at=source_fetched_at,
-            source_url=DEFAULT_REFERENCE_SOURCE_URL,
-        )
-    )
-    semantic_models = _build_semantic_models(
+    artifacts = build_retrieval_artifacts(
+        strategy=strategy,
+        sections=sections,
+        statements=statements,
         source_fetched_at=source_fetched_at,
+        extractor_db=extractor_db,
+        table_node_id=table_node_id,
+        reference_source_url=DEFAULT_REFERENCE_SOURCE_URL,
         retrieval_mode=retrieval_mode,
+        semantic_profile_version=semantic_profile_version,
         embedding_model_id=embedding_model_id,
         embedding_model_revision=embedding_model_revision,
         embedding_model_license=embedding_model_license,
@@ -244,30 +178,21 @@ def build_rust_reference_db(
         reranker_model_id=reranker_model_id,
         reranker_model_revision=reranker_model_revision,
         reranker_model_license=reranker_model_license,
+        chunk_target_min_tokens=chunk_target_min_tokens,
+        chunk_target_max_tokens=chunk_target_max_tokens,
+        chunk_overlap_percent=chunk_overlap_percent,
     )
-
-    table_rows = _resolve_table1_rows(extractor_db=extractor_db, table_node_id=table_node_id)
-    semantic_corpus = _build_semantic_corpus(
-        table_rows=table_rows,
-        mechanisms=mechanisms,
-        mechanism_evidence=mechanism_evidence,
-        statements=statements,
-        source_fetched_at=source_fetched_at,
-        reference_source_url=DEFAULT_REFERENCE_SOURCE_URL,
-    )
-
-    row_verdicts, row_mechanisms, row_mechanism_scores, counts = _build_row_queryability(
-        table_rows=table_rows,
-        mechanisms=mechanisms,
-        mechanism_evidence=mechanism_evidence,
-        statements=statements,
-        evidence_count_by_mechanism=evidence_count_by_mechanism,
-        best_anchor_by_mechanism=best_anchor_by_mechanism,
-        source_fetched_at=source_fetched_at,
-        retrieval_mode=retrieval_mode,
-        semantic_profile_version=semantic_profile_version,
-        reference_source_url=DEFAULT_REFERENCE_SOURCE_URL,
-    )
+    chunks = artifacts["chunks"]
+    chunk_spans = artifacts["chunk_spans"]
+    mechanisms = artifacts["mechanisms"]
+    mechanism_evidence = artifacts["mechanism_evidence"]
+    semantic_models = artifacts["semantic_models"]
+    table_rows = artifacts["table_rows"]
+    semantic_corpus = artifacts["semantic_corpus"]
+    row_verdicts = artifacts["row_verdicts"]
+    row_mechanisms = artifacts["row_mechanisms"]
+    row_mechanism_scores = artifacts["row_mechanism_scores"]
+    counts = artifacts["counts"]
 
     snapshot_sha256 = _compute_snapshot_sha256(
         commit_sha=commit_sha,
