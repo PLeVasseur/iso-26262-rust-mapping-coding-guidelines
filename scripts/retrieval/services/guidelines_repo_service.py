@@ -1,18 +1,28 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import sqlite3
 import subprocess
 from argparse import Namespace
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from retrieval.builders.guidelines_repo_builder import run_guidelines_repo_build
+from retrieval.guidelines_repo.common import (
+    RunContext,
+    compute_tree_hash as _compute_tree_hash,
+    emit_failure as _emit_failure,
+    emit_success as _emit_success,
+    ensure_checkout as _ensure_checkout,
+    new_context as _new_context,
+    parse_sources as _parse_sources,
+    read_yaml as _read_yaml,
+    resolve_repo_root as _resolve_repo_root,
+    run_idempotency_key as _run_idempotency_key,
+    to_int as _to_int,
+    utc_now as _utc_now,
+)
 from retrieval.guidelines.build_runner import run_guidelines_build
 from retrieval.operations.export_rst import export_guidelines
 from retrieval.services.guidelines_projection import export_projection_summary, run_m15_projection
@@ -21,235 +31,7 @@ EXIT_SUCCESS = 0
 EXIT_PRECONDITION_FAIL = 2
 EXIT_RUNTIME_FAIL = 3
 
-@dataclass(frozen=True)
-class RunContext:
-    operation: str
-    run_id: str
-    report_dir: Path
-    command: str
-    profile: str
-    mode: str
-    non_publishable: bool
-    flags_used: list[str]
-def _utc_run_id() -> str:
-    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
-def _read_yaml(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return payload if isinstance(payload, dict) else {}
-def _write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    _write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-def _parse_sources(root: Path) -> dict[str, Any]:
-    config = _read_yaml(root / "config" / "corpora" / "guidelines_repo.yaml")
-    sources_raw = config.get("sources")
-    sources = sources_raw if isinstance(sources_raw, dict) else {}
-    exemplar_ids = sources.get("known_good_exemplar_ids")
-    return {
-        "guidelines_repo_root": str(sources.get("guidelines_repo_root", "")).strip(),
-        "guidelines_repo_revision": str(sources.get("guidelines_repo_revision", "")).strip(),
-        "known_good_exemplar_ids": [
-            str(value).strip() for value in (exemplar_ids if isinstance(exemplar_ids, list) else [])
-        ],
-    }
-def _resolve_repo_root(root: Path, repo_root_raw: str) -> Path:
-    repo_root = Path(repo_root_raw)
-    if not repo_root.is_absolute():
-        repo_root = (root / repo_root).resolve()
-    return repo_root
-def _run_idempotency_key(*, revision: str, root: Path) -> str:
-    config_digest = hashlib.sha256(
-        (root / "config" / "corpora" / "guidelines_repo.yaml")
-        .read_text(encoding="utf-8")
-        .encode("utf-8")
-    ).hexdigest()[:12]
-    schema_manifest = hashlib.sha256(
-        (root / "config" / "sqlite_migrations" / "manifest.yaml")
-        .read_text(encoding="utf-8")
-        .encode("utf-8")
-    ).hexdigest()[:12]
-    return f"{revision}:{schema_manifest}:{config_digest}"
-def _base_summary(
-    ctx: RunContext, *, did_work: bool, skipped_reason: str, status: str
-) -> dict[str, Any]:
-    return {
-        "operation": ctx.operation,
-        "corpus": "guidelines_repo",
-        "did_work": did_work,
-        "skipped_reason": skipped_reason,
-        "idempotency_key": "unresolved_precondition",
-        "selected_profile": ctx.profile,
-        "selected_mode": ctx.mode,
-        "non_publishable": ctx.non_publishable,
-        "status": status,
-        "run_id": ctx.run_id,
-    }
-def _emit_failure(
-    *,
-    ctx: RunContext,
-    failure_code: str,
-    skipped_reason: str,
-    owner_hint: str,
-    expected: dict[str, Any],
-    observed: dict[str, Any],
-    failing_path_or_key: str,
-    repo_root: Path,
-    db_path: Path,
-    fix_commands: list[str],
-    stdout: str = "",
-    stderr: str = "",
-) -> int:
-    summary = _base_summary(
-        ctx,
-        did_work=False,
-        skipped_reason=skipped_reason,
-        status="failed_precondition",
-    )
-    remediation = {
-        "failure_code": failure_code,
-        "operation": ctx.operation,
-        "expected": expected,
-        "observed": observed,
-        "failing_path_or_key": failing_path_or_key,
-        "repo_root": str(repo_root),
-        "db_path": str(db_path),
-        "flags_used": list(ctx.flags_used),
-        "rerun_command": ctx.command,
-        "fix_commands": fix_commands,
-        "owner_hint": owner_hint,
-    }
-    _write_json(ctx.report_dir / "summary.json", summary)
-    _write_text(ctx.report_dir / "stdout.log", stdout if stdout else f"Command: {ctx.command}\n")
-    _write_text(
-        ctx.report_dir / "stderr.log",
-        stderr if stderr else json.dumps(observed, sort_keys=True) + "\n",
-    )
-    _write_json(ctx.report_dir / "remediation.json", remediation)
-    return EXIT_PRECONDITION_FAIL
-def _emit_success(
-    ctx: RunContext, payload: dict[str, Any], *, stdout: str = "", stderr: str = ""
-) -> int:
-    summary = _base_summary(
-        ctx,
-        did_work=True,
-        skipped_reason="",
-        status="ok",
-    )
-    summary.update(payload)
-    _write_json(ctx.report_dir / "summary.json", summary)
-    _write_text(ctx.report_dir / "stdout.log", stdout if stdout else f"Command: {ctx.command}\n")
-    _write_text(ctx.report_dir / "stderr.log", stderr)
-    return EXIT_SUCCESS
-def _new_context(*, root: Path, operation: str, command: str, args: Namespace) -> RunContext:
-    run_id = _utc_run_id()
-    report_dir = root / ".cache" / "sqlite_kb" / "reports" / "guidelines_repo" / operation / run_id
-    report_dir.mkdir(parents=True, exist_ok=True)
-    profile = str(getattr(args, "profile", "fast"))
-    mode = str(getattr(args, "mode", "publishable"))
-    flags_used: list[str] = []
-    if getattr(args, "profile", None) is not None:
-        flags_used.extend(["--profile", profile])
-    if getattr(args, "mode", None) is not None:
-        flags_used.extend(["--mode", mode])
-    if bool(getattr(args, "allow_main", False)):
-        flags_used.append("--allow-main")
-    return RunContext(
-        operation=operation,
-        run_id=run_id,
-        report_dir=report_dir,
-        command=command,
-        profile=profile,
-        mode=mode,
-        non_publishable=(mode == "exploratory"),
-        flags_used=flags_used,
-    )
-def _compute_tree_hash(root: Path) -> str:
-    entries: list[str] = []
-    for path in sorted(root.glob("**/*")):
-        if path.is_dir():
-            continue
-        rel = path.relative_to(root)
-        rel_str = rel.as_posix()
-        if (
-            rel_str.startswith(".git/")
-            or rel_str.startswith("build/")
-            or rel_str.startswith(".venv/")
-        ):
-            continue
-        entries.append(rel_str + "::" + hashlib.sha256(path.read_bytes()).hexdigest())
-    return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
-def _to_int(value: object, default: int = 0) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str):
-        token = value.strip()
-        if token:
-            try:
-                return int(token)
-            except ValueError:
-                return default
-    return default
-def _git_clean(repo_root: Path) -> tuple[bool, str]:
-    completed = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=str(repo_root),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return False, (completed.stderr or completed.stdout or "git_status_failed").strip()
-    return (completed.stdout.strip() == ""), completed.stdout.strip()
-def _ensure_checkout(repo_root: Path, revision: str, *, allow_main: bool) -> tuple[bool, str]:
-    if not (repo_root / ".git").exists():
-        return False, "missing_git_metadata"
-    clean, details = _git_clean(repo_root)
-    if not clean:
-        dirty_lines = [line.strip() for line in str(details).splitlines() if line.strip()]
-        if dirty_lines and all(line.endswith("uv.lock") for line in dirty_lines):
-            restore = subprocess.run(
-                ["git", "restore", "uv.lock"],
-                cwd=str(repo_root),
-                text=True,
-                capture_output=True,
-                check=False,
-            )
-            if restore.returncode == 0:
-                clean, details = _git_clean(repo_root)
-        if not clean:
-            return False, details
 
-    if revision:
-        fetch = subprocess.run(
-            ["git", "fetch", "--tags", "--prune"],
-            cwd=str(repo_root),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if fetch.returncode != 0:
-            return False, (fetch.stderr or fetch.stdout).strip()
-        checkout = subprocess.run(
-            ["git", "checkout", "--detach", revision],
-            cwd=str(repo_root),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if checkout.returncode != 0:
-            return False, (checkout.stderr or checkout.stdout).strip()
-    elif not allow_main:
-        return False, "missing_revision_for_publishable"
-    return True, ""
 def run_doctor(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo doctor"
     ctx = _new_context(root=root, operation="doctor", command=command, args=args)
@@ -322,6 +104,8 @@ def run_doctor(args: Namespace, *, root: Path) -> int:
             "revision": revision,
         },
     )
+
+
 def run_ensure_repo(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo ensure-repo"
     ctx = _new_context(root=root, operation="ensure_repo", command=command, args=args)
@@ -434,6 +218,8 @@ def run_ensure_repo(args: Namespace, *, root: Path) -> int:
             "repo_clean": True,
         },
     )
+
+
 def run_bootstrap_guidelines_repo(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo bootstrap-guidelines-repo --verify"
     ctx = _new_context(root=root, operation="bootstrap", command=command, args=args)
@@ -444,6 +230,8 @@ def run_bootstrap_guidelines_repo(args: Namespace, *, root: Path) -> int:
             "status_note": "bootstrap-guidelines-repo is deprecated under chapter-sidecar export mode",
         },
     )
+
+
 def run_bump_pin(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo bump-pin --revision <sha>"
     ctx = _new_context(root=root, operation="bump_pin", command=command, args=args)
@@ -477,6 +265,8 @@ def run_bump_pin(args: Namespace, *, root: Path) -> int:
             "config_path": str(cfg_path),
         },
     )
+
+
 def run_reorg_path_mapping(args: Namespace, *, root: Path) -> int:
     command = "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py guidelines-repo reorg-path-mapping"
     ctx = _new_context(root=root, operation="reorg_path_mapping", command=command, args=args)
@@ -494,6 +284,8 @@ def run_reorg_path_mapping(args: Namespace, *, root: Path) -> int:
             "Provide a mapping file then rerun with --mapping-file <path> (operation intentionally guarded)"
         ],
     )
+
+
 def run_autopilot(args: Namespace, *, root: Path) -> int:
     command = (
         "uv run --extra guidelines-integration --extra guidelines-export python scripts/sqlite_kb.py "
