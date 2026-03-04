@@ -104,6 +104,8 @@ def evaluate_retrieval_prompts(
     operation: str = "eval",
     row_projection_policy: RowProjectionPolicy | None = None,
     corpus: str = "rust_reference",
+    rewrite_mode: str = "auto",
+    rewrite_rules_path: Path | None = None,
     thresholds: dict[str, Any] | None = None,
     skew_thresholds: dict[str, float] | None = None,
     execute_retrieval_fn: Any | None = None,
@@ -162,6 +164,8 @@ def evaluate_retrieval_prompts(
                     hybrid_semantic_min=hybrid_semantic_min,
                     row_projection_policy=row_projection_policy,
                     corpus=corpus,
+                    rewrite_mode=rewrite_mode,
+                    rewrite_rules_path=rewrite_rules_path,
                 )
                 status = "pass"
                 reason = ""
@@ -504,6 +508,8 @@ def evaluate_retrieval_prompts(
             "backend_attempt_log_path": str(backend_attempt_log_path)
             if backend_attempt_log_path is not None
             else "",
+            "rewrite_mode": str(rewrite_mode).strip(),
+            "rewrite_rules_path": str(rewrite_rules_path) if rewrite_rules_path is not None else "",
         },
         "backend": {
             "profile": str(backend_profile).strip(),

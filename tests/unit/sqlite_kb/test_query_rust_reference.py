@@ -284,7 +284,10 @@ class QueryRustReferenceTests(unittest.TestCase):
         self.assertEqual(first.get("original_query"), "unsafe diagnostics")
         self.assertEqual(
             first.get("rewritten_query"),
-            "unsafe diagnostics invariant boundary review lint warning policy intent semantics",
+            (
+                "semantic intent unsafe diagnostics "
+                "invariant boundary review lint warning policy intent semantics rule-check"
+            ),
         )
         self.assertEqual(
             first.get("added_terms"),
@@ -297,11 +300,14 @@ class QueryRustReferenceTests(unittest.TestCase):
                 "policy",
                 "intent",
                 "semantics",
+                "rule-check",
             ],
         )
         self.assertIn("token-expansion", list(first.get("strategy_tags", [])))
         self.assertNotIn("row-marker-terms", list(first.get("strategy_tags", [])))
         self.assertIn("mode-terms", list(first.get("strategy_tags", [])))
+        self.assertIn("mode-specific-token-expansion", list(first.get("strategy_tags", [])))
+        self.assertIn("semantic-intent-prefix", list(first.get("strategy_tags", [])))
 
     def test_query_rewrite_off_and_noop_behaviors(self) -> None:
         rewrite_rules_path = self._rewrite_rules_path()

@@ -1,0 +1,294 @@
+{
+  "generated_at_utc": "2026-03-04T23:10:30Z",
+  "step": "step_10_retrieval_infrastructure_recovery",
+  "run_dir": ".cache/sqlite_kb/reports/step10_retrieval_recovery_20260304T192658Z",
+  "status": "stop",
+  "decision": {
+    "overall": "stop",
+    "per_corpus": {
+      "rust_reference": {
+        "decision": "stop",
+        "best_variant": "rust_reference_before_pool0_weighted_v2.json",
+        "semantic_mrr": 0.550794,
+        "hybrid_precision": 0.47619,
+        "hybrid_vs_best_single_mrr_delta": -0.048678
+      },
+      "core_docs": {
+        "decision": "target",
+        "best_variant": "core_docs_pool80_weighted_v2_noprofile.json",
+        "semantic_mrr": 0.862381,
+        "hybrid_precision": 0.696,
+        "hybrid_vs_best_single_mrr_delta": -0.019999999999999907
+      }
+    },
+    "rationale": [
+      "Baseline+pool sweeps completed for both corpora; additional fallback variants (rrf-v1, lexical-floor, noprofile) were captured in the same run directory.",
+      "rust_reference remains below hybrid precision exception floor and below hybrid-vs-best-single tolerance across all tested variants; no tuned variant improved over baseline.",
+      "core_docs reaches target policy under noprofile pool80 variant (hybrid precision 0.696, hybrid-vs-best-single delta -0.020).",
+      "Overall Step 10 Part A decision is STOP because per-corpus policy requires all corpora to satisfy target/exception, and rust_reference remains structural-failure."
+    ]
+  },
+  "policy_reference": {
+    "target": {
+      "semantic_mrr_min": 0.6,
+      "hybrid_precision_min": 0.65,
+      "hybrid_vs_best_single_mrr_delta_min": -0.03
+    },
+    "exception_floor": {
+      "semantic_mrr_min": 0.54,
+      "hybrid_precision_min": 0.55,
+      "hybrid_vs_best_single_mrr_delta_min": -0.03
+    }
+  },
+  "before": {
+    "rust_reference": {
+      "file": "rust_reference_before_pool0_weighted_v2.json",
+      "metrics": {
+        "lexical": {
+          "precision_at_k": 0.619577,
+          "mrr_at_k": 0.730159,
+          "ndcg_at_k": 0.764539,
+          "row_hit_rate": 0.904762
+        },
+        "semantic": {
+          "precision_at_k": 0.4,
+          "mrr_at_k": 0.550794,
+          "ndcg_at_k": 0.615623,
+          "row_hit_rate": 0.952381
+        },
+        "hybrid": {
+          "precision_at_k": 0.47619,
+          "mrr_at_k": 0.681481,
+          "ndcg_at_k": 0.695098,
+          "row_hit_rate": 0.952381
+        }
+      },
+      "semantic_vs_lexical_mrr_delta": -0.179365,
+      "hybrid_vs_best_single_mrr_delta": -0.048678
+    },
+    "core_docs": {
+      "file": "core_docs_before_pool0_weighted_v2.json",
+      "metrics": {
+        "lexical": {
+          "precision_at_k": 0.65054,
+          "mrr_at_k": 0.784667,
+          "ndcg_at_k": 0.827171,
+          "row_hit_rate": 0.92
+        },
+        "semantic": {
+          "precision_at_k": 0.692,
+          "mrr_at_k": 0.862381,
+          "ndcg_at_k": 0.872066,
+          "row_hit_rate": 1.0
+        },
+        "hybrid": {
+          "precision_at_k": 0.692,
+          "mrr_at_k": 0.809333,
+          "ndcg_at_k": 0.866461,
+          "row_hit_rate": 1.0
+        }
+      },
+      "semantic_vs_lexical_mrr_delta": 0.07771399999999995,
+      "hybrid_vs_best_single_mrr_delta": -0.053047999999999984
+    }
+  },
+  "after": {
+    "rust_reference": {
+      "selected_file": "rust_reference_before_pool0_weighted_v2.json",
+      "metrics": {
+        "lexical": {
+          "precision_at_k": 0.619577,
+          "mrr_at_k": 0.730159,
+          "ndcg_at_k": 0.764539,
+          "row_hit_rate": 0.904762
+        },
+        "semantic": {
+          "precision_at_k": 0.4,
+          "mrr_at_k": 0.550794,
+          "ndcg_at_k": 0.615623,
+          "row_hit_rate": 0.952381
+        },
+        "hybrid": {
+          "precision_at_k": 0.47619,
+          "mrr_at_k": 0.681481,
+          "ndcg_at_k": 0.695098,
+          "row_hit_rate": 0.952381
+        }
+      },
+      "semantic_vs_lexical_mrr_delta": -0.179365,
+      "hybrid_vs_best_single_mrr_delta": -0.048678
+    },
+    "core_docs": {
+      "selected_file": "core_docs_pool80_weighted_v2_noprofile.json",
+      "metrics": {
+        "lexical": {
+          "precision_at_k": 0.65054,
+          "mrr_at_k": 0.784667,
+          "ndcg_at_k": 0.827171,
+          "row_hit_rate": 0.92
+        },
+        "semantic": {
+          "precision_at_k": 0.692,
+          "mrr_at_k": 0.862381,
+          "ndcg_at_k": 0.872066,
+          "row_hit_rate": 1.0
+        },
+        "hybrid": {
+          "precision_at_k": 0.696,
+          "mrr_at_k": 0.842381,
+          "ndcg_at_k": 0.871522,
+          "row_hit_rate": 1.0
+        }
+      },
+      "semantic_vs_lexical_mrr_delta": 0.07771399999999995,
+      "hybrid_vs_best_single_mrr_delta": -0.019999999999999907
+    }
+  },
+  "configs_tested": [
+    {
+      "file": "core_docs_before_pool0_weighted_v2.json",
+      "corpus": "core_docs",
+      "variant": "before_pool0_weighted_v2",
+      "semantic_mrr": 0.862381,
+      "hybrid_precision": 0.692,
+      "hybrid_mrr": 0.809333,
+      "lexical_mrr": 0.784667,
+      "hybrid_vs_best_single_mrr_delta": -0.053047999999999984
+    },
+    {
+      "file": "core_docs_pool120_weighted_v2.json",
+      "corpus": "core_docs",
+      "variant": "pool120_weighted_v2",
+      "semantic_mrr": 0.862381,
+      "hybrid_precision": 0.692,
+      "hybrid_mrr": 0.809333,
+      "lexical_mrr": 0.784667,
+      "hybrid_vs_best_single_mrr_delta": -0.053047999999999984
+    },
+    {
+      "file": "core_docs_pool160_weighted_v2.json",
+      "corpus": "core_docs",
+      "variant": "pool160_weighted_v2",
+      "semantic_mrr": 0.862381,
+      "hybrid_precision": 0.692,
+      "hybrid_mrr": 0.809333,
+      "lexical_mrr": 0.784667,
+      "hybrid_vs_best_single_mrr_delta": -0.053047999999999984
+    },
+    {
+      "file": "core_docs_pool80_weighted_v2.json",
+      "corpus": "core_docs",
+      "variant": "pool80_weighted_v2",
+      "semantic_mrr": 0.862381,
+      "hybrid_precision": 0.692,
+      "hybrid_mrr": 0.809333,
+      "lexical_mrr": 0.784667,
+      "hybrid_vs_best_single_mrr_delta": -0.053047999999999984
+    },
+    {
+      "file": "core_docs_pool80_weighted_v2_noprofile.json",
+      "corpus": "core_docs",
+      "variant": "pool80_weighted_v2_noprofile",
+      "semantic_mrr": 0.862381,
+      "hybrid_precision": 0.696,
+      "hybrid_mrr": 0.842381,
+      "lexical_mrr": 0.784667,
+      "hybrid_vs_best_single_mrr_delta": -0.019999999999999907
+    },
+    {
+      "file": "rust_reference_before_pool0_weighted_v2.json",
+      "corpus": "rust_reference",
+      "variant": "before_pool0_weighted_v2",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.47619,
+      "hybrid_mrr": 0.681481,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.048678
+    },
+    {
+      "file": "rust_reference_pool120_rrf_v1.json",
+      "corpus": "rust_reference",
+      "variant": "pool120_rrf_v1",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.47619,
+      "hybrid_mrr": 0.681481,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.048678
+    },
+    {
+      "file": "rust_reference_pool120_weighted_v2.json",
+      "corpus": "rust_reference",
+      "variant": "pool120_weighted_v2",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.47619,
+      "hybrid_mrr": 0.681481,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.048678
+    },
+    {
+      "file": "rust_reference_pool120_weighted_v2_lexfloor.json",
+      "corpus": "rust_reference",
+      "variant": "pool120_weighted_v2_lexfloor",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.47619,
+      "hybrid_mrr": 0.681481,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.048678
+    },
+    {
+      "file": "rust_reference_pool120_weighted_v2_noprofile.json",
+      "corpus": "rust_reference",
+      "variant": "pool120_weighted_v2_noprofile",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.414286,
+      "hybrid_mrr": 0.590476,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.139683
+    },
+    {
+      "file": "rust_reference_pool160_weighted_v2.json",
+      "corpus": "rust_reference",
+      "variant": "pool160_weighted_v2",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.47619,
+      "hybrid_mrr": 0.681481,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.048678
+    },
+    {
+      "file": "rust_reference_pool160_weighted_v2_noprofile.json",
+      "corpus": "rust_reference",
+      "variant": "pool160_weighted_v2_noprofile",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.414286,
+      "hybrid_mrr": 0.590476,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.139683
+    },
+    {
+      "file": "rust_reference_pool80_weighted_v2.json",
+      "corpus": "rust_reference",
+      "variant": "pool80_weighted_v2",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.47619,
+      "hybrid_mrr": 0.681481,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.048678
+    },
+    {
+      "file": "rust_reference_pool80_weighted_v2_noprofile.json",
+      "corpus": "rust_reference",
+      "variant": "pool80_weighted_v2_noprofile",
+      "semantic_mrr": 0.550794,
+      "hybrid_precision": 0.414286,
+      "hybrid_mrr": 0.590476,
+      "lexical_mrr": 0.730159,
+      "hybrid_vs_best_single_mrr_delta": -0.139683
+    }
+  ],
+  "exception_rationale": {
+    "used": true,
+    "path": "stop",
+    "details": "rust_reference fails exception floors and no tested fallback variant closes the gap."
+  }
+}

@@ -17,7 +17,17 @@ def load_rewrite_rules(path: Path) -> dict[str, Any]:
     return payload
 
 
-def rewrite_query_text(
+def _normalize_term_mapping(raw_mapping: dict[str, Any]) -> dict[str, list[str]]:
+    return {
+        str(token).strip().lower(): [
+            str(term).strip().lower() for term in list(values or []) if str(term).strip()
+        ]
+        for token, values in raw_mapping.items()
+        if str(token).strip()
+    }
+
+
+def rewrite_query(
     *,
     query_text: str,
     row_marker: str,
@@ -45,27 +55,9 @@ def rewrite_query_text(
     suppress_tokens_raw = rules.get("suppress_tokens_when_present") or {}
     allow_row_marker_terms = bool(rules.get("allow_row_marker_terms", True))
 
-    token_expansions = {
-        str(token).strip().lower(): [
-            str(term).strip().lower() for term in list(values or []) if str(term).strip()
-        ]
-        for token, values in token_expansions_raw.items()
-        if str(token).strip()
-    }
-    row_terms = {
-        str(marker).strip().lower(): [
-            str(term).strip().lower() for term in list(values or []) if str(term).strip()
-        ]
-        for marker, values in row_terms_raw.items()
-        if str(marker).strip()
-    }
-    mode_terms = {
-        str(mode_name).strip().lower(): [
-            str(term).strip().lower() for term in list(values or []) if str(term).strip()
-        ]
-        for mode_name, values in mode_terms_raw.items()
-        if str(mode_name).strip()
-    }
+    token_expansions = _normalize_term_mapping(token_expansions_raw)
+    row_terms = _normalize_term_mapping(row_terms_raw)
+    mode_terms = _normalize_term_mapping(mode_terms_raw)
     suppress_tokens = {
         str(token).strip().lower(): {
             str(trigger).strip().lower() for trigger in list(values or []) if str(trigger).strip()
@@ -110,7 +102,8 @@ def rewrite_query_text(
         strategy_tags.append("row-marker-terms")
 
     mode_terms_added = False
-    for term in mode_terms.get(str(mode).strip().lower(), []):
+    normalized_mode_name = str(mode).strip().lower()
+    for term in mode_terms.get(normalized_mode_name, []):
         if term in seen:
             continue
         seen.add(term)
@@ -119,7 +112,31 @@ def rewrite_query_text(
     if mode_terms_added:
         strategy_tags.append("mode-terms")
 
+    mode_specific_rules_raw = rules.get("mode_specific_rules") or {}
+    if not isinstance(mode_specific_rules_raw, dict):
+        raise ValueError("mode_specific_rules must be a mapping")
+    scoped_rules = mode_specific_rules_raw.get(normalized_mode_name) or {}
+    if scoped_rules and not isinstance(scoped_rules, dict):
+        raise ValueError(f"mode_specific_rules.{normalized_mode_name} must be a mapping")
+
+    mode_token_expansions = _normalize_term_mapping(scoped_rules.get("token_expansions") or {})
+    scoped_added = False
+    for token in filtered_tokens:
+        for term in mode_token_expansions.get(token, []):
+            if term in seen:
+                continue
+            seen.add(term)
+            added_terms.append(term)
+            scoped_added = True
+    if scoped_added:
+        strategy_tags.append("mode-specific-token-expansion")
+
     rewritten = " ".join(filtered_tokens + added_terms).strip() or original
+    semantic_intent_prefix = str(scoped_rules.get("semantic_intent_prefix", "")).strip().lower()
+    if semantic_intent_prefix and normalized_mode_name in {"semantic", "hybrid"}:
+        rewritten = f"{semantic_intent_prefix} {rewritten}".strip()
+        strategy_tags.append("semantic-intent-prefix")
+
     return {
         "enabled": True,
         "strategy_tags": strategy_tags,
@@ -128,3 +145,20 @@ def rewrite_query_text(
         "rewritten_query": rewritten,
         "added_terms": added_terms,
     }
+
+
+def rewrite_query_text(
+    *,
+    query_text: str,
+    row_marker: str,
+    mode: str,
+    rewrite_mode: str,
+    rewrite_rules_path: Path,
+) -> dict[str, Any]:
+    return rewrite_query(
+        query_text=query_text,
+        row_marker=row_marker,
+        mode=mode,
+        rewrite_mode=rewrite_mode,
+        rewrite_rules_path=rewrite_rules_path,
+    )

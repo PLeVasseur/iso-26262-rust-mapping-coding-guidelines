@@ -204,6 +204,7 @@ def main() -> int:
     )
     eval_path = (root / eval_path_raw).resolve()
     query_log_root = runtime_paths.query_log_root
+    rewrite_rules_path = runtime_paths.rewrite_rules_path
     report_path = (
         (root / args.report_path).resolve()
         if args.report_path
@@ -312,6 +313,8 @@ def main() -> int:
             operation=str(args.operation),
             row_projection_policy=row_projection_policy,
             corpus=corpus,
+            rewrite_mode="auto",
+            rewrite_rules_path=rewrite_rules_path,
             thresholds=thresholds,
             skew_thresholds=skew_thresholds,
         )

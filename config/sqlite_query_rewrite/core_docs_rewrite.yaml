@@ -21,3 +21,15 @@ row_marker_terms:
 mode_terms:
   semantic: [intent, semantics]
   hybrid: [intent, semantics]
+
+mode_specific_rules:
+  semantic:
+    token_expansions:
+      diagnostics: [compliance, assurance]
+      concurrency: [determinism, scheduling]
+    semantic_intent_prefix: "semantic intent"
+  hybrid:
+    token_expansions:
+      typing: [soundness, constraints]
+      error: [recovery, robustness]
+    semantic_intent_prefix: "semantic intent"

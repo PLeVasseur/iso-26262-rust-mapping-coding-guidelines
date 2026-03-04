@@ -23,3 +23,15 @@ suppress_tokens_when_present:
 mode_terms:
   semantic: [intent, semantics]
   hybrid: [intent, semantics]
+
+mode_specific_rules:
+  semantic:
+    token_expansions:
+      diagnostics: [rule-check, static-analysis]
+      unsafe: [aliasing, provenance]
+    semantic_intent_prefix: "semantic intent"
+  hybrid:
+    token_expansions:
+      diagnostics: [rule-check]
+      concurrency: [happens-before, ordering]
+    semantic_intent_prefix: "semantic intent"
