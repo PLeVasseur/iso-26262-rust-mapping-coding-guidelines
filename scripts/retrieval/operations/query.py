@@ -8,7 +8,6 @@ import os
 import sqlite3
 import sys
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -52,12 +51,14 @@ from retrieval.core.telemetry import (
 )
 from retrieval.corpora.registry import get_corpus_adapter, list_supported_corpora
 from retrieval.corpora.runtime_paths import resolve_corpus_runtime_paths
+from retrieval.query.backend_retry import with_semantic_retries as _with_semantic_retries
 from retrieval.query.embedding_cache import (
     ensure_embedding_cache_table,
     load_embedding_cache,
     persist_embedding_cache,
     sha256_text,
 )
+from retrieval.query.errors import ModeExecutionError
 from retrieval.query.semantic_math import cosine_similarity, min_max_normalize
 from retrieval.query.row_markers import (
     annotate_rows_with_row_markers as _annotate_rows_with_row_markers,
@@ -79,7 +80,6 @@ from retrieval.query.review_artifacts import (
 )
 from semantic_backend_client import (
     SemanticBackendConfig,
-    SemanticBackendError,
     check_semantic_backend,
     embed_texts,
     rerank_texts,
@@ -94,12 +94,6 @@ FULL_CORPUS_PAGE_LIMIT = 5000
 DEFAULT_QUERY_REVIEW_DIR = ".cache/sqlite_kb/reports/rust_reference/query_reviews"
 DEFAULT_REWRITE_RULES_PATH = "config/sqlite_query_rewrite/rust_reference_rewrite.yaml"
 REVIEW_ARTIFACT_SCHEMA_VERSION = 1
-
-
-class ModeExecutionError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
 
 
 SCORE_FIELDS = {
@@ -667,98 +661,6 @@ def _to_fts_query(query_text: str) -> str:
     if not ordered:
         raise GuardrailError("Query text did not yield searchable lexical tokens")
     return " OR ".join(ordered)
-
-
-def _classify_semantic_error(detail: str) -> str:
-    text = str(detail).strip().lower()
-    if "timed out" in text:
-        return "timeout"
-    if "http 404" in text:
-        return "http_404"
-    if "http " in text:
-        return "http"
-    if "non-json" in text or "payload" in text:
-        return "payload"
-    if "request failed" in text:
-        return "connection"
-    return "unknown"
-
-
-def _with_semantic_retries(
-    description: str,
-    retries: int,
-    call: Callable[[], Any],
-    telemetry: list[dict[str, Any]] | None = None,
-) -> Any:
-    attempts = max(0, int(retries)) + 1
-    last_error: SemanticBackendError | None = None
-    attempt_events: list[dict[str, Any]] = []
-    total_started = time.perf_counter()
-    for attempt in range(attempts):
-        attempt_started = time.perf_counter()
-        try:
-            value = call()
-            attempt_duration_ms = (time.perf_counter() - attempt_started) * 1000.0
-            attempt_events.append(
-                {
-                    "attempt": attempt + 1,
-                    "status": "pass",
-                    "duration_ms": round(float(attempt_duration_ms), 3),
-                }
-            )
-            if telemetry is not None:
-                telemetry.append(
-                    {
-                        "operation": description,
-                        "status": "pass",
-                        "max_attempts": attempts,
-                        "attempts_used": attempt + 1,
-                        "retry_count": attempt,
-                        "total_duration_ms": round(
-                            float((time.perf_counter() - total_started) * 1000.0),
-                            3,
-                        ),
-                        "attempt_events": attempt_events,
-                    }
-                )
-            return value
-        except SemanticBackendError as exc:
-            last_error = exc
-            attempt_duration_ms = (time.perf_counter() - attempt_started) * 1000.0
-            detail = str(exc)
-            attempt_events.append(
-                {
-                    "attempt": attempt + 1,
-                    "status": "fail",
-                    "duration_ms": round(float(attempt_duration_ms), 3),
-                    "error": detail,
-                    "error_class": _classify_semantic_error(detail),
-                }
-            )
-            if attempt + 1 >= attempts:
-                break
-            time.sleep(0.2 * (attempt + 1))
-    message = str(last_error) if last_error is not None else "unknown semantic backend error"
-    if telemetry is not None:
-        telemetry.append(
-            {
-                "operation": description,
-                "status": "fail",
-                "max_attempts": attempts,
-                "attempts_used": attempts,
-                "retry_count": max(0, attempts - 1),
-                "error": message,
-                "error_class": _classify_semantic_error(message),
-                "total_duration_ms": round(
-                    float((time.perf_counter() - total_started) * 1000.0), 3
-                ),
-                "attempt_events": attempt_events,
-            }
-        )
-    raise ModeExecutionError(
-        code="SEMANTIC_BACKEND_UNAVAILABLE",
-        message=f"{description} failed after {attempts} attempts: {message}",
-    )
 
 
 def _build_semantic_config(args: argparse.Namespace) -> SemanticBackendConfig:

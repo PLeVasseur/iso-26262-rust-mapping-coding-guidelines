@@ -12,18 +12,18 @@ from typing import Any
 from urllib.request import urlopen
 
 from retrieval.operations.query import (
-    ModeExecutionError,
     RetrievalContractProfile,
     _load_statement_corpus,
     _load_table1_row_requirements,
     _resolve_retrieval_contract_profile,
-    _with_semantic_retries,
 )
+from retrieval.query.backend_retry import with_semantic_retries as _with_semantic_retries
 from retrieval.query.embedding_cache import (
     ensure_embedding_cache_table as _ensure_embedding_cache_table,
     load_embedding_cache as _load_embedding_cache,
     sha256_text as _sha256_text,
 )
+from retrieval.query.errors import ModeExecutionError
 from retrieval.query.row_markers import (
     annotate_rows_with_row_markers as _annotate_rows_with_row_markers,
 )
