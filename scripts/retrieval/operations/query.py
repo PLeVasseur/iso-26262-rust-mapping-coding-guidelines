@@ -10,9 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from retrieval.core.engine import build_runtime_config
-from retrieval.core.fusion import (
-    apply_component_scores as core_apply_component_scores,
-)
 from retrieval.core.profile import (
     DEFAULT_HYBRID_RRF_K,
     HYBRID_CANDIDATE_POLICIES,
@@ -21,7 +18,6 @@ from retrieval.core.profile import (
     HYBRID_FUSION_METHODS,
     HYBRID_FUSION_RRF_V1,
     HYBRID_FUSION_WEIGHTED_V1,
-    HYBRID_FUSION_WEIGHTED_V2,
 )
 from retrieval.core.profile_loader import (
     apply_profile_defaults,
@@ -48,7 +44,6 @@ from retrieval.query.embedding_cache import (
 )
 from retrieval.query.errors import ModeExecutionError
 from retrieval.query.fusion_metadata import build_fusion_metadata
-from retrieval.query.hybrid_pipeline import run_hybrid_pipeline as core_run_hybrid_pipeline
 from retrieval.query.lexical_pipeline import load_statement_corpus as core_load_statement_corpus
 from retrieval.query.lexical_pipeline import (
     load_table1_row_requirements as core_load_table1_row_requirements,
@@ -63,6 +58,7 @@ from retrieval.query.row_markers import (
 from retrieval.query.row_projection import apply_abstain_policy as core_apply_abstain_policy
 from retrieval.query.row_projection import build_row_projection as core_build_row_projection
 from retrieval.query.mode_finalizers import finalize_lexical_like_result
+from retrieval.query.mode_execution import finalize_hybrid_mode, finalize_semantic_mode
 from retrieval.query.output_filters import (
     apply_corpus_row_policy as _apply_corpus_row_policy,
 )
@@ -72,7 +68,6 @@ from retrieval.query.policy_resolution import (
     resolve_row_projection_policy,
     row_projection_policy_from_globals as _row_projection_policy_from_globals,
 )
-from retrieval.query.result_payload import build_retrieval_result
 from retrieval.query.rewrite_rules import rewrite_query_text as _rewrite_query_text
 from retrieval.query.semantic_pipeline import semantic_candidates as core_semantic_candidates
 from retrieval.query.review_artifacts import (
@@ -763,51 +758,37 @@ def execute_retrieval_query(
     workload["semantic_pool_size"] = int(len(semantic_rows))
 
     if mode == "semantic":
-        for row in semantic_rows:
-            core_apply_component_scores(
-                row,
-                lexical_score=0.0,
-                semantic_score=float(row.get("semantic_score", 0.0)),
-                reranker_score=float(row.get("reranker_score", 0.0)),
-                lexical_weight=LEXICAL_WEIGHT,
-                semantic_weight=SEMANTIC_WEIGHT,
-                reranker_weight=RERANK_WEIGHT,
-            )
-        semantic_rows.sort(
-            key=lambda row: (
-                -float(row.get("final_score", 0.0)),
-                -float(row.get("reranker_score", 0.0)),
-                _row_identity(row),
-            )
-        )
-        rows = _apply_corpus_row_policy(semantic_rows[:top_k], query_text=query_text, corpus=corpus)
-        workload["union_pool_size"] = int(len(semantic_rows))
-        projection_started = time.perf_counter()
-        row_projection_all = _build_row_projection(rows)
-        row_projection, abstain = _apply_abstain_policy(
-            row_projection_all,
-            policy=resolved_row_projection_policy,
-        )
-        timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
-        duration_ms = (time.perf_counter() - started) * 1000.0
-        return build_retrieval_result(
-            requested_mode=mode,
-            executed_mode=mode,
-            degraded=False,
+        return finalize_semantic_mode(
+            mode=mode,
+            semantic_rows=semantic_rows,
+            top_k=top_k,
+            query_text=query_text,
+            corpus=corpus,
+            row_marker=row_marker,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
             semantic_retry_events=semantic_retry_events,
             score_definitions=score_definitions,
             workload=workload,
-            query_text=query_text,
-            effective_query_text=effective_query_text,
-            query_rewrite=rewrite,
-            row_marker=row_marker,
-            rows=rows,
-            duration_ms=duration_ms,
-            timing=_timing_payload(duration_ms),
-            row_projection=row_projection,
-            row_projection_all=row_projection_all,
-            abstain=abstain,
+            started=started,
+            timing=timing,
+            timing_payload=_timing_payload,
             preflight=preflight,
+            apply_corpus_row_policy=lambda rows, query_text, corpus: _apply_corpus_row_policy(
+                rows,
+                query_text=query_text,
+                corpus=corpus,
+            ),
+            build_row_projection=_build_row_projection,
+            apply_abstain_policy=lambda projection, policy: _apply_abstain_policy(
+                projection,
+                policy=policy,
+            ),
+            row_projection_policy=resolved_row_projection_policy,
+            row_identity=_row_identity,
+            lexical_weight=LEXICAL_WEIGHT,
+            semantic_weight=SEMANTIC_WEIGHT,
+            rerank_weight=RERANK_WEIGHT,
         )
 
     lexical_started = time.perf_counter()
@@ -831,7 +812,8 @@ def execute_retrieval_query(
             documents=documents,
         )
 
-    hybrid_rows, fusion_debug, union_pool_size = core_run_hybrid_pipeline(
+    return finalize_hybrid_mode(
+        mode=mode,
         lexical_rows=lexical_rows,
         semantic_rows=semantic_rows,
         candidate_limit=candidate_limit,
@@ -856,57 +838,27 @@ def execute_retrieval_query(
         rerank_documents=_rerank_with_retries,
         timing=timing,
         workload=workload,
-    )
-    rows = _apply_corpus_row_policy(hybrid_rows[:top_k], query_text=query_text, corpus=corpus)
-    workload["union_pool_size"] = int(union_pool_size)
-    projection_started = time.perf_counter()
-    row_projection_all = _build_row_projection(rows)
-    row_projection, abstain = _apply_abstain_policy(
-        row_projection_all,
-        policy=resolved_row_projection_policy,
-    )
-    timing["projection_ms"] += (time.perf_counter() - projection_started) * 1000.0
-    duration_ms = (time.perf_counter() - started) * 1000.0
-    return build_retrieval_result(
-        requested_mode=mode,
-        executed_mode=mode,
-        degraded=False,
+        query_text=query_text,
+        corpus=corpus,
+        row_marker=row_marker,
+        query_rewrite=rewrite,
         semantic_retry_events=semantic_retry_events,
         score_definitions=score_definitions,
-        workload=workload,
-        query_text=query_text,
-        effective_query_text=effective_query_text,
-        query_rewrite=rewrite,
-        row_marker=row_marker,
-        rows=rows,
-        duration_ms=duration_ms,
-        timing=_timing_payload(duration_ms),
-        row_projection=row_projection,
-        row_projection_all=row_projection_all,
-        abstain=abstain,
+        fusion_params=fusion_params,
+        started=started,
+        timing_payload=_timing_payload,
         preflight=preflight,
-        extras={
-            "fusion_method": normalized_fusion_method,
-            "fusion_params": fusion_params,
-            "fusion_debug": fusion_debug,
-            "fusion_weights": {
-                "lexical": (
-                    WEIGHTED_V2_LEXICAL_WEIGHT
-                    if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
-                    else LEXICAL_WEIGHT
-                ),
-                "semantic": (
-                    WEIGHTED_V2_SEMANTIC_WEIGHT
-                    if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
-                    else SEMANTIC_WEIGHT
-                ),
-                "reranker": (
-                    WEIGHTED_V2_RERANK_WEIGHT
-                    if normalized_fusion_method == HYBRID_FUSION_WEIGHTED_V2
-                    else RERANK_WEIGHT
-                ),
-            },
-        },
+        apply_corpus_row_policy=lambda rows, query_text, corpus: _apply_corpus_row_policy(
+            rows,
+            query_text=query_text,
+            corpus=corpus,
+        ),
+        build_row_projection=_build_row_projection,
+        apply_abstain_policy=lambda projection, policy: _apply_abstain_policy(
+            projection,
+            policy=policy,
+        ),
+        row_projection_policy=resolved_row_projection_policy,
     )
 
 
