@@ -35,7 +35,12 @@ from retrieval.services import (
     validate_audit_service,
     validate_service,
     verify_service,
+    writer_publish_service,
+    writer_quality_gate_service,
+    writer_review_packet_service,
+    writer_run_service,
     writer_host_service,
+    writer_targets_service,
 )
 from retrieval.services.capability import emit_unsupported
 from retrieval.services.provenance_guard import enforce_provenance_guard
@@ -144,6 +149,54 @@ def parse_args() -> argparse.Namespace:
     writer_host.add_argument("--agent", default="")
     writer_host.add_argument("--dry-run", action="store_true")
 
+    writer_targets = subparsers.add_parser("writer-targets")
+    _add_common(writer_targets)
+    writer_targets.add_argument("--profile", choices=("fast", "full"), default="fast")
+    writer_targets.add_argument("--targets", default="")
+    writer_targets.add_argument(
+        "--query-testset-path",
+        default="data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
+    )
+    writer_targets.add_argument("--output", default="")
+
+    writer_run = subparsers.add_parser("writer-run")
+    _add_common(writer_run)
+    writer_run.add_argument("--targets", required=True)
+    writer_run.add_argument("--run-id", default="")
+    writer_run.add_argument("--report-root", default="")
+    writer_run.add_argument("--contract-path", default="config/s0/writer_prompt_contracts.yaml")
+    writer_run.add_argument(
+        "--query-testset-path",
+        default="data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
+    )
+    writer_run.add_argument(
+        "--query-mode", choices=("lexical", "semantic", "hybrid"), default="lexical"
+    )
+    writer_run.add_argument("--top-k", type=int, default=20)
+    writer_run.add_argument("--max-retries", type=int, default=2)
+    writer_run.add_argument("--model", default="")
+    writer_run.add_argument("--agent", default="")
+    writer_run.add_argument("--dry-run", action="store_true")
+
+    writer_quality_gate = subparsers.add_parser("writer-quality-gate")
+    _add_common(writer_quality_gate)
+    writer_quality_gate.add_argument("--run-dir", required=True)
+    writer_quality_gate.add_argument("--output", default="")
+
+    writer_review_packet = subparsers.add_parser("writer-review-packet")
+    _add_common(writer_review_packet)
+    writer_review_packet.add_argument("--run-dir", required=True)
+    writer_review_packet.add_argument("--output", default="")
+
+    writer_publish = subparsers.add_parser("writer-publish")
+    _add_common(writer_publish)
+    writer_publish.add_argument(
+        "--mode", choices=("publishable", "exploratory"), default="publishable"
+    )
+    writer_publish.add_argument("--profile", choices=("fast", "full"), default="fast")
+    writer_publish.add_argument("--dry-run", action="store_true")
+    writer_publish.add_argument("--output", default="")
+
     scaffold = subparsers.add_parser("scaffold-s0-config")
     scaffold.add_argument("--corpus-set", choices=("s0",), default="s0")
     scaffold.add_argument("--overwrite", action="store_true")
@@ -250,6 +303,11 @@ def main() -> int:
             "migrate": defaults.supports_migrate,
             "validate-audit": defaults.supports_eval,
             "writer-host-run": defaults.supports_query,
+            "writer-targets": defaults.supports_query,
+            "writer-run": defaults.supports_query,
+            "writer-quality-gate": defaults.supports_query,
+            "writer-review-packet": defaults.supports_query,
+            "writer-publish": defaults.supports_query,
         }
         if not bool(support_map.get(str(args.subcommand), True)):
             return emit_unsupported(
@@ -300,6 +358,16 @@ def main() -> int:
             return validate_audit_service.run(args, root=root)
         if args.subcommand == "writer-host-run":
             return writer_host_service.run(args, root=root)
+        if args.subcommand == "writer-targets":
+            return writer_targets_service.run(args, root=root)
+        if args.subcommand == "writer-run":
+            return writer_run_service.run(args, root=root)
+        if args.subcommand == "writer-quality-gate":
+            return writer_quality_gate_service.run(args, root=root)
+        if args.subcommand == "writer-review-packet":
+            return writer_review_packet_service.run(args, root=root)
+        if args.subcommand == "writer-publish":
+            return writer_publish_service.run(args, root=root)
     except Exception as exc:  # pragma: no cover - defensive CLI boundary
         print(f"[sqlite_kb][error] {exc}")
         return EXIT_RUNTIME_FAIL

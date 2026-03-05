@@ -115,6 +115,40 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.corpus, "rust_reference")
         self.assertEqual(args.targets, "RET-ISSUE-005,RET-RESOLVE-008")
 
+    def test_parse_args_for_writer_targets(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-targets",
+                "--corpus",
+                "rust_reference",
+                "--profile",
+                "fast",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-targets")
+        self.assertEqual(args.profile, "fast")
+
+    def test_parse_args_for_writer_quality_gate(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-quality-gate",
+                "--corpus",
+                "rust_reference",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-quality-gate")
+        self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
+
 
 if __name__ == "__main__":
     unittest.main()
