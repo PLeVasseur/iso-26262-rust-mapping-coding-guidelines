@@ -19,6 +19,7 @@ from retrieval.writer_host.artifacts import (
     write_writer_outputs,
 )
 from retrieval.writer_host.contracts import REQUIRED_ROLES, build_contract_snapshot, load_contracts
+from retrieval.writer_host.manifest import load_manifest, target_index
 from retrieval.writer_host.retry import run_role_with_retry
 from retrieval.writer_host.roles import (
     build_role_prompt,
@@ -99,6 +100,58 @@ def _query_target(
     return json.loads(latest.read_text(encoding="utf-8"))
 
 
+def _manifest_evidence_rows(target_row: dict[str, Any]) -> list[dict[str, Any]]:
+    selected = target_row.get("selected_evidence") if isinstance(target_row, dict) else []
+    if not isinstance(selected, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in selected:
+        if not isinstance(item, dict):
+            continue
+        statement_id = str(item.get("statement_id", "")).strip()
+        if not statement_id:
+            continue
+        rows.append(
+            {
+                "statement_id": statement_id,
+                "source_anchor": str(item.get("source_anchor", "")).strip(),
+                "final_score": float(item.get("score", 0.0) or 0.0),
+                "statement_text": str(item.get("statement_text", "")).strip(),
+                "doc_id": str(item.get("doc_id", "")).strip(),
+            }
+        )
+    return rows
+
+
+def _normalize_synth_output(
+    output: dict[str, Any], *, target_id: str
+) -> tuple[dict[str, Any], bool]:
+    if not isinstance(output, dict):
+        return output, False
+    changed = False
+    normalized = dict(output)
+    prompt_id = str(normalized.get("prompt_id", "")).strip()
+    if not prompt_id:
+        normalized["prompt_id"] = target_id
+        prompt_id = target_id
+        changed = True
+    claim_map = normalized.get("claim_to_evidence_map")
+    if isinstance(claim_map, list):
+        rewritten: list[Any] = []
+        for index, claim in enumerate(claim_map, start=1):
+            if not isinstance(claim, dict):
+                rewritten.append(claim)
+                continue
+            entry = dict(claim)
+            expected = f"{prompt_id}::claim::{index}"
+            if str(entry.get("claim_id", "")).strip() != expected:
+                entry["claim_id"] = expected
+                changed = True
+            rewritten.append(entry)
+        normalized["claim_to_evidence_map"] = rewritten
+    return normalized, changed
+
+
 def run(args: Namespace, *, root: Path) -> int:
     run_id = str(getattr(args, "run_id", "") or "").strip() or _now_run_id()
     report_root = str(getattr(args, "report_root", "") or "").strip()
@@ -130,9 +183,20 @@ def run(args: Namespace, *, root: Path) -> int:
         )
         return 0
 
+    evidence_manifest_raw = str(getattr(args, "evidence_manifest", "") or "").strip()
+    manifest_lookup: dict[str, dict[str, Any]] = {}
+    evidence_manifest_path = ""
+    if evidence_manifest_raw:
+        manifest_path = Path(evidence_manifest_raw).resolve()
+        manifest = load_manifest(manifest_path)
+        manifest_lookup = target_index(manifest)
+        evidence_manifest_path = str(manifest_path)
+
     target_ids = _parse_targets(str(getattr(args, "targets", "") or ""))
+    if not target_ids and manifest_lookup:
+        target_ids = list(manifest_lookup.keys())
     if not target_ids:
-        raise RuntimeError("writer-host-run requires --targets")
+        raise RuntimeError("writer-run requires --targets or --evidence-manifest")
 
     prompt_catalog = _load_prompt_catalog(
         (
@@ -166,37 +230,52 @@ def run(args: Namespace, *, root: Path) -> int:
         prompt = prompt_catalog.get(target_id)
         if not isinstance(prompt, dict):
             raise RuntimeError(f"prompt_id not found in query testset: {target_id}")
-        query_text = str(prompt.get("query_text", "")).strip()
-        expected_row_markers = list(prompt.get("expected_row_markers") or [])
-        expected_row_marker = str(expected_row_markers[0]) if expected_row_markers else ""
-        query_payload = _query_target(
-            root=root,
-            corpus=corpus,
-            profile_path=profile_path,
-            prompt_id=target_id,
-            query_text=query_text,
-            mode=mode,
-            top_k=top_k,
-            save_response_dir=evidence_dir,
+        manifest_target = manifest_lookup.get(target_id, {})
+        query_text = str(
+            manifest_target.get("query_text", "") or prompt.get("query_text", "")
+        ).strip()
+        expected_row_markers = list(
+            manifest_target.get("expected_row_markers") or prompt.get("expected_row_markers") or []
         )
-        response = query_payload.get("response") if isinstance(query_payload, dict) else {}
-        rows = list(response.get("rows") or []) if isinstance(response, dict) else []
-        evidence_rows: list[dict[str, Any]] = []
-        for row in rows[:5]:
-            if not isinstance(row, dict):
-                continue
-            statement_id = str(row.get("statement_id") or row.get("top_statement_id") or "").strip()
-            if not statement_id:
-                continue
-            evidence_rows.append(
-                {
-                    "statement_id": statement_id,
-                    "source_anchor": str(
-                        row.get("source_anchor") or row.get("top_source_anchor") or ""
-                    ),
-                    "score": float(row.get("final_score") or 0.0),
-                }
+        expected_row_marker = str(expected_row_markers[0]) if expected_row_markers else ""
+        evidence_rows: list[dict[str, Any]]
+        if manifest_target:
+            evidence_rows = _manifest_evidence_rows(manifest_target)
+        else:
+            query_payload = _query_target(
+                root=root,
+                corpus=corpus,
+                profile_path=profile_path,
+                prompt_id=target_id,
+                query_text=query_text,
+                mode=mode,
+                top_k=top_k,
+                save_response_dir=evidence_dir,
             )
+            response = query_payload.get("response") if isinstance(query_payload, dict) else {}
+            rows = list(response.get("rows") or []) if isinstance(response, dict) else []
+            evidence_rows = []
+            for row in rows[:5]:
+                if not isinstance(row, dict):
+                    continue
+                statement_id = str(
+                    row.get("statement_id") or row.get("top_statement_id") or ""
+                ).strip()
+                if not statement_id:
+                    continue
+                evidence_rows.append(
+                    {
+                        "statement_id": statement_id,
+                        "source_anchor": str(
+                            row.get("source_anchor") or row.get("top_source_anchor") or ""
+                        ),
+                        "score": float(row.get("final_score") or 0.0),
+                        "statement_text": str(
+                            row.get("statement_text") or row.get("chunk_text") or ""
+                        ),
+                        "doc_id": str(row.get("doc_id") or row.get("top_doc_id") or ""),
+                    }
+                )
         evidence_ids_by_target[target_id] = {
             str(row.get("statement_id", "")) for row in evidence_rows
         }
@@ -235,6 +314,14 @@ def run(args: Namespace, *, root: Path) -> int:
                 model=model,
                 agent=agent,
             )
+            normalized_applied = False
+            if role_name == "evidence_synthesizer" and isinstance(outcome.output, dict):
+                normalized_output, normalized_applied = _normalize_synth_output(
+                    outcome.output, target_id=target_id
+                )
+                outcome.output = normalized_output
+                if normalized_applied:
+                    outcome.violations = _validate(outcome.output)
             prior_outputs[role_name] = outcome.output
             role_rows[role_name].append(
                 {
@@ -260,6 +347,7 @@ def run(args: Namespace, *, root: Path) -> int:
                     "oscillation_detected": outcome.oscillation_detected,
                     "diminishing_returns": outcome.diminishing_returns,
                     "budget_exhausted": outcome.budget_exhausted,
+                    "normalization_fallback_applied": normalized_applied,
                 }
             )
             validation_entries.append(
@@ -356,6 +444,7 @@ def run(args: Namespace, *, root: Path) -> int:
             "run_dir": str(run_dir),
             "normalization_report": str(run_dir / "normalization_report.json"),
             "evidence_gate_report": str(run_dir / "evidence_synthesizer_gate_report.json"),
+            "evidence_manifest": evidence_manifest_path,
         },
     )
     return 0 if not has_violations else 2

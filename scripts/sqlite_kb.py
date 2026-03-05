@@ -36,6 +36,7 @@ from retrieval.services import (
     validate_service,
     verify_service,
     writer_publish_service,
+    writer_evidence_service,
     writer_quality_gate_service,
     writer_review_packet_service,
     writer_run_service,
@@ -161,9 +162,10 @@ def parse_args() -> argparse.Namespace:
 
     writer_run = subparsers.add_parser("writer-run")
     _add_common(writer_run)
-    writer_run.add_argument("--targets", required=True)
+    writer_run.add_argument("--targets", default="")
     writer_run.add_argument("--run-id", default="")
     writer_run.add_argument("--report-root", default="")
+    writer_run.add_argument("--evidence-manifest", default="")
     writer_run.add_argument("--contract-path", default="config/s0/writer_prompt_contracts.yaml")
     writer_run.add_argument(
         "--query-testset-path",
@@ -177,6 +179,23 @@ def parse_args() -> argparse.Namespace:
     writer_run.add_argument("--model", default="")
     writer_run.add_argument("--agent", default="")
     writer_run.add_argument("--dry-run", action="store_true")
+
+    writer_evidence = subparsers.add_parser("writer-evidence")
+    _add_common(writer_evidence)
+    writer_evidence.add_argument("--targets", required=True)
+    writer_evidence.add_argument("--run-id", default="")
+    writer_evidence.add_argument("--report-root", default="")
+    writer_evidence.add_argument("--output", default="")
+    writer_evidence.add_argument("--modes", default="lexical,semantic,hybrid")
+    writer_evidence.add_argument("--top-k", type=int, default=20)
+    writer_evidence.add_argument("--top-n", type=int, default=8)
+    writer_evidence.add_argument("--rrf-k", type=int, default=60)
+    writer_evidence.add_argument("--rank-window", type=int, default=100)
+    writer_evidence.add_argument("--allow-degraded", action="store_true")
+    writer_evidence.add_argument(
+        "--query-testset-path",
+        default="data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
+    )
 
     writer_quality_gate = subparsers.add_parser("writer-quality-gate")
     _add_common(writer_quality_gate)
@@ -304,6 +323,7 @@ def main() -> int:
             "validate-audit": defaults.supports_eval,
             "writer-host-run": defaults.supports_query,
             "writer-targets": defaults.supports_query,
+            "writer-evidence": defaults.supports_query,
             "writer-run": defaults.supports_query,
             "writer-quality-gate": defaults.supports_query,
             "writer-review-packet": defaults.supports_query,
@@ -362,6 +382,8 @@ def main() -> int:
             return writer_targets_service.run(args, root=root)
         if args.subcommand == "writer-run":
             return writer_run_service.run(args, root=root)
+        if args.subcommand == "writer-evidence":
+            return writer_evidence_service.run(args, root=root)
         if args.subcommand == "writer-quality-gate":
             return writer_quality_gate_service.run(args, root=root)
         if args.subcommand == "writer-review-packet":

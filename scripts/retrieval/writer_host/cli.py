@@ -10,6 +10,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Writer host runtime")
     parser.add_argument("--corpus", default="rust_reference")
     parser.add_argument("--targets", default="")
+    parser.add_argument("--evidence-manifest", default="")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--report-root", default="")
     parser.add_argument("--contract-path", default="config/s0/writer_prompt_contracts.yaml")

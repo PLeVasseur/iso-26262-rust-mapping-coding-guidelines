@@ -76,6 +76,7 @@ roles:
     required_output_schema:
       required:
       - target_id
+      - prompt_id
       - hazard
       - mechanism
       - mitigation

@@ -149,6 +149,40 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.subcommand, "writer-quality-gate")
         self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
 
+    def test_parse_args_for_writer_evidence(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-evidence",
+                "--corpus",
+                "rust_reference",
+                "--targets",
+                "RET-ISSUE-001",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-evidence")
+        self.assertEqual(args.modes, "lexical,semantic,hybrid")
+
+    def test_parse_args_for_writer_run_with_manifest(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-run",
+                "--corpus",
+                "rust_reference",
+                "--evidence-manifest",
+                ".cache/sqlite_kb/reports/demo/manifest.json",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-run")
+        self.assertEqual(args.evidence_manifest, ".cache/sqlite_kb/reports/demo/manifest.json")
+
 
 if __name__ == "__main__":
     unittest.main()

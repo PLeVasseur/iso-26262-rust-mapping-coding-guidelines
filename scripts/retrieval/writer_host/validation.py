@@ -29,6 +29,9 @@ def validate_role_output(
             violations.append(f"forbidden_pattern:{p}")
 
     if role_name == "evidence_synthesizer":
+        prompt_id = str(output.get("prompt_id", "")).strip()
+        if not prompt_id:
+            violations.append("missing_prompt_id")
         construct_scope = output.get("construct_scope")
         if not isinstance(construct_scope, list):
             violations.append("construct_scope_not_list")
@@ -43,8 +46,7 @@ def validate_role_output(
                     violations.append(f"claim_not_object:{index}")
                     continue
                 claim_id = str(claim.get("claim_id", "")).strip()
-                prompt_id = str(output.get("prompt_id", "")).strip()
-                if prompt_id and not re.match(rf"^{re.escape(prompt_id)}::claim::\d+$", claim_id):
+                if not re.match(rf"^{re.escape(prompt_id)}::claim::\d+$", claim_id):
                     violations.append(f"claim_id_format:{index}")
                 refs = claim.get("evidence_refs")
                 if not isinstance(refs, list) or not refs:
