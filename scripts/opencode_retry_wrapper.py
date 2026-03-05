@@ -183,6 +183,8 @@ def retry_with_violations(
     expected_field_count: int | None = None,
     expected_min_length: int | None = None,
     stop_on_same_violations: bool = True,
+    model: str | None = None,
+    agent: str | None = None,
 ) -> RetryResult:
     """Run retry loop with content validation and violation feedback."""
     violation_history: list[set[str]] = []
@@ -196,7 +198,12 @@ def retry_with_violations(
 
     for attempt in range(budget):
         attempts += 1
-        exit_code, output = run_opencode(current_session_id, prompt)
+        exit_code, output = run_opencode(
+            current_session_id,
+            prompt,
+            model=model,
+            agent=agent,
+        )
 
         if exit_code != 0:
             time.sleep(min(BACKOFF_BASE**attempt, MAX_BACKOFF))

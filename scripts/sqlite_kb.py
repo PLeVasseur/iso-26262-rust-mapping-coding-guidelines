@@ -35,6 +35,7 @@ from retrieval.services import (
     validate_audit_service,
     validate_service,
     verify_service,
+    writer_host_service,
 )
 from retrieval.services.capability import emit_unsupported
 from retrieval.services.provenance_guard import enforce_provenance_guard
@@ -121,6 +122,27 @@ def parse_args() -> argparse.Namespace:
     ):
         subparser = subparsers.add_parser(name)
         _add_common(subparser)
+
+    writer_host = subparsers.add_parser("writer-host-run")
+    _add_common(writer_host)
+    writer_host.add_argument("--targets", required=True)
+    writer_host.add_argument("--run-id", default="")
+    writer_host.add_argument("--report-root", default="")
+    writer_host.add_argument("--contract-path", default="config/s0/writer_prompt_contracts.yaml")
+    writer_host.add_argument(
+        "--query-testset-path",
+        default="data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
+    )
+    writer_host.add_argument(
+        "--query-mode",
+        choices=("lexical", "semantic", "hybrid"),
+        default="lexical",
+    )
+    writer_host.add_argument("--top-k", type=int, default=20)
+    writer_host.add_argument("--max-retries", type=int, default=2)
+    writer_host.add_argument("--model", default="")
+    writer_host.add_argument("--agent", default="")
+    writer_host.add_argument("--dry-run", action="store_true")
 
     scaffold = subparsers.add_parser("scaffold-s0-config")
     scaffold.add_argument("--corpus-set", choices=("s0",), default="s0")
@@ -227,6 +249,7 @@ def main() -> int:
             "validate": defaults.supports_validate,
             "migrate": defaults.supports_migrate,
             "validate-audit": defaults.supports_eval,
+            "writer-host-run": defaults.supports_query,
         }
         if not bool(support_map.get(str(args.subcommand), True)):
             return emit_unsupported(
@@ -275,6 +298,8 @@ def main() -> int:
             return migrate_service.run(args, root=root)
         if args.subcommand == "validate-audit":
             return validate_audit_service.run(args, root=root)
+        if args.subcommand == "writer-host-run":
+            return writer_host_service.run(args, root=root)
     except Exception as exc:  # pragma: no cover - defensive CLI boundary
         print(f"[sqlite_kb][error] {exc}")
         return EXIT_RUNTIME_FAIL

@@ -95,6 +95,26 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.guidelines_subcommand, "bump-pin")
         self.assertEqual(args.revision, "abc123")
 
+    def test_parse_args_for_writer_host_run(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-host-run",
+                "--corpus",
+                "rust_reference",
+                "--targets",
+                "RET-ISSUE-005,RET-RESOLVE-008",
+                "--query-mode",
+                "lexical",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-host-run")
+        self.assertEqual(args.corpus, "rust_reference")
+        self.assertEqual(args.targets, "RET-ISSUE-005,RET-RESOLVE-008")
+
 
 if __name__ == "__main__":
     unittest.main()

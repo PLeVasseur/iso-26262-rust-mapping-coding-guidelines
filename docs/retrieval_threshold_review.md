@@ -59,6 +59,13 @@
 
 ## Writer Contract Status (Step 11 Part E)
 
-- Writer-prompt contract iteration remains **deferred**.
+- Writer-prompt contract update is **applied** in `config/s0/writer_prompt_contracts.yaml` (canonical schema example + grounding constraint).
+- Runtime effectiveness proof is **active_validated** via Step 11.5 writer host run:
+  - run dir: `.cache/sqlite_kb/reports/step11_5_writer_host_llm_20260305T113441Z`
+  - targets: `RET-ISSUE-005`, `RET-RESOLVE-008`
+  - role generation path: `opencode run --format json` via `scripts/retrieval/writer_host/retry.py`
+  - `normalization_report.json` canonical_rate: `1.0`
+  - `evidence_synthesizer_gate_report.json` status: `pass` (no overreach blocks)
+  - `writer_output_auditor_report.json` status: `pass` (blocked_count `0`)
 - No runtime claims are made from retired writer flow.
 - No Step 11 deliverable depends on retired S0/Phase-A writer execution paths.

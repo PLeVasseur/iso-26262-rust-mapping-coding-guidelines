@@ -13,6 +13,53 @@ roles:
       Bind each normative claim to cited evidence IDs from {{evidence_ids}}.
       Use worked positive/negative examples and style excerpts included in the prompt context.
       Never emit final publishable prose or uncited factual assertions.
+
+      GROUNDING CONSTRAINT: Every claim in claim_to_evidence_map MUST be directly
+      supported by a chunk in {{evidence_ids}}. Do not synthesize claims from
+      background knowledge. If the retrieved evidence does not support a claim,
+      omit the claim entirely rather than asserting it uncited.
+
+      OUTPUT FORMAT: Your response MUST be a JSON object with this exact structure.
+      Do not use dict-of-dicts for claim_to_evidence_map. Do not use a string for
+      construct_scope. Deviations from this schema will be rejected.
+
+      {
+        "target_id": "{{target_id}}",
+        "prompt_id": "EXAMPLE-001",
+        "construct_scope": [
+          "std::sync::atomic::Ordering",
+          "std::sync::atomic::fence"
+        ],
+        "claim_to_evidence_map": [
+          {
+            "claim_id": "EXAMPLE-001::claim::1",
+            "claim_text": "fence() panics at runtime when called with Ordering::Relaxed",
+            "evidence_refs": [
+              {
+                "evidence_id": "chunk::abc123...",
+                "doc_id": "core::sync::atomic",
+                "anchor": "fence"
+              }
+            ]
+          },
+          {
+            "claim_id": "EXAMPLE-001::claim::2",
+            "claim_text": "compare_exchange failure ordering may be weaker than success ordering",
+            "evidence_refs": [
+              {
+                "evidence_id": "chunk::def456...",
+                "doc_id": "core::sync::atomic"
+              }
+            ]
+          }
+        ]
+      }
+    # Schema rules enforced by canonical_output_example:
+    # - construct_scope: list[str] of fully-qualified Rust paths, never a bare string
+    # - claim_to_evidence_map: list[object], never dict-of-dicts
+    # - claim_id: "{prompt_id}::claim::{N}" format
+    # - evidence_refs: at least one entry per claim, each with a real evidence_id
+    #   from the retrieved evidence bundle; no fabricated IDs
     allowed_placeholders:
     - target_id
     - table1_row
