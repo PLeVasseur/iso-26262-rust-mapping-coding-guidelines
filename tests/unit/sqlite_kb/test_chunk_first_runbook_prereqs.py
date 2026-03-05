@@ -305,29 +305,33 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
                 "retrieval.operations.materialize.embed_texts",
                 side_effect=lambda _config, texts: [[0.1, 0.2, 0.3] for _ in texts],
             ):
-                with patch.object(
-                    sys,
-                    "argv",
-                    [
-                        "materialize.py",
-                        "--db-path",
-                        str(db_path),
-                        "--contract-path",
-                        str(contract_path),
-                        "--query-log-root",
-                        str(materialize_query_log_root),
-                        "--row-marker",
-                        "1a",
-                        "--allow-partial-corpus",
-                        "--batch-size",
-                        "4",
-                        "--semantic-retries",
-                        "0",
-                        "--progress-log-path",
-                        str(materialize_progress),
-                    ],
+                with patch(
+                    "retrieval.operations.materialize._health_device",
+                    return_value="mps",
                 ):
-                    self.assertEqual(materialize_main(), 0)
+                    with patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "materialize.py",
+                            "--db-path",
+                            str(db_path),
+                            "--contract-path",
+                            str(contract_path),
+                            "--query-log-root",
+                            str(materialize_query_log_root),
+                            "--row-marker",
+                            "1a",
+                            "--allow-partial-corpus",
+                            "--batch-size",
+                            "4",
+                            "--semantic-retries",
+                            "0",
+                            "--progress-log-path",
+                            str(materialize_progress),
+                        ],
+                    ):
+                        self.assertEqual(materialize_main(), 0)
 
             materialize_query_ids = self._query_ids_from_logs(materialize_query_log_root)
             self.assertTrue(
@@ -405,24 +409,28 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
                 "retrieval.operations.materialize.embed_texts",
                 side_effect=lambda _config, texts: [[0.1, 0.2, 0.3] for _ in texts],
             ):
-                with patch.object(
-                    sys,
-                    "argv",
-                    [
-                        "materialize.py",
-                        "--db-path",
-                        str(db_path),
-                        "--contract-path",
-                        str(contract_path),
-                        "--query-log-root",
-                        str(temp_root / "query_logs"),
-                        "--batch-size",
-                        "8",
-                        "--semantic-retries",
-                        "0",
-                    ],
+                with patch(
+                    "retrieval.operations.materialize._health_device",
+                    return_value="mps",
                 ):
-                    self.assertEqual(materialize_main(), 0)
+                    with patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "materialize.py",
+                            "--db-path",
+                            str(db_path),
+                            "--contract-path",
+                            str(contract_path),
+                            "--query-log-root",
+                            str(temp_root / "query_logs"),
+                            "--batch-size",
+                            "8",
+                            "--semantic-retries",
+                            "0",
+                        ],
+                    ):
+                        self.assertEqual(materialize_main(), 0)
 
             connection = sqlite3.connect(db_path)
             try:

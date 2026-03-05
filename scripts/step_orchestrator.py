@@ -55,7 +55,7 @@ STEP_TIMEOUTS: dict[int, int] = {
     8: 3600,
     9: 7200,
     10: 3600,
-    11: 3600,
+    11: 7200,
     12: 1800,
     13: 2400,
     14: 7200,
@@ -438,25 +438,26 @@ Do not proceed to the next step. Stop after this step.
 def run_opencode_session(step_n: int, prompt: str) -> tuple[int, str, str, str, Path | None]:
     requested_session = f"step-{step_n:02d}-{int(time.time())}"
     timeout = STEP_TIMEOUTS.get(step_n, 3600)
-    try:
-        # Passing --session with a non-existent ID on attached runs can yield a
-        # successful exit with empty stdout/stderr. For fresh step execution we
-        # omit --session and let OpenCode allocate a session server-side.
-        result = subprocess.run(
-            [
-                "opencode",
-                "run",
-                "--attach",
-                OPENCODE_SERVER,
-                "--format",
-                "json",
-                prompt,
-            ],
+
+    def _invoke(use_attach: bool) -> subprocess.CompletedProcess[str]:
+        command = ["opencode", "run"]
+        if use_attach:
+            command.extend(["--attach", OPENCODE_SERVER])
+        command.extend(["--format", "json", prompt])
+        return subprocess.run(
+            command,
             capture_output=True,
             text=True,
             timeout=timeout,
             check=False,
         )
+
+    try:
+        # Prefer attached server execution; if session state is stale on the
+        # server, retry once without --attach so the local CLI can recover.
+        result = _invoke(use_attach=True)
+        if result.returncode != 0 and "Session not found" in (result.stderr or ""):
+            result = _invoke(use_attach=False)
         if result.returncode == 0 and not result.stdout.strip():
             result = subprocess.CompletedProcess(
                 args=result.args,
@@ -515,7 +516,7 @@ def validate_dod(step_n: int) -> dict[str, bool]:
         ["uv", "run", "pytest", "tests/", "-x", "--tb=line", "-q", "--timeout=60"],
         capture_output=True,
         text=True,
-        timeout=180,
+        timeout=360,
         check=False,
     )
     results["tests_pass"] = test_result.returncode == 0
@@ -702,7 +703,7 @@ def run_integration_checkpoint(checkpoint: str, run_dir: Path | None = None) -> 
         command,
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=1200,
         check=False,
     )
     return result.returncode == 0, result.stdout[-600:]

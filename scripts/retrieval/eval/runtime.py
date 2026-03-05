@@ -498,6 +498,13 @@ def evaluate_retrieval_prompts(
 
     provenance = _load_build_provenance(db_path)
 
+    threshold_outcomes = {
+        "blocking_failures": gate_failures,
+        "advisory_warnings": advisory_warnings,
+        "blocking_failure_count": len(gate_failures),
+        "advisory_warning_count": len(advisory_warnings),
+    }
+
     return {
         "suite_id": str(suite_id).strip() or "retrieval_eval_v1",
         "operation": str(operation).strip() or "eval",
@@ -549,5 +556,6 @@ def evaluate_retrieval_prompts(
         "provenance": provenance,
         "gate_failures": gate_failures,
         "advisory_warnings": advisory_warnings,
+        "threshold_outcomes": threshold_outcomes,
         "cases": case_results,
     }
