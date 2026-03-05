@@ -25,7 +25,7 @@ from retrieval.writer_host.roles import (
     extract_claim_map,
     extract_construct_terms,
 )
-from retrieval.writer_host.validation import validate_role_output
+from retrieval.writer_host.validation import validate_role_output, validate_target_bundle
 
 
 def _now_run_id() -> str:
@@ -158,6 +158,7 @@ def run(args: Namespace, *, root: Path) -> int:
     role_rows: dict[str, list[dict[str, Any]]] = {role: [] for role in REQUIRED_ROLES}
     invocation_trace: list[dict[str, Any]] = []
     validation_entries: list[dict[str, Any]] = []
+    merge_entries: list[dict[str, Any]] = []
     drafts: list[dict[str, Any]] = []
     evidence_ids_by_target: dict[str, set[str]] = {}
 
@@ -271,6 +272,30 @@ def run(args: Namespace, *, root: Path) -> int:
             )
 
         synth = prior_outputs.get("evidence_synthesizer", {})
+        merge_violations = validate_target_bundle(target_id=target_id, outputs=prior_outputs)
+        merge_hard_violations = [
+            item
+            for item in merge_violations
+            if not str(item).startswith("grounding:metadata:evidence_not_in_synth:")
+        ]
+        merge_warnings = [item for item in merge_violations if item not in merge_hard_violations]
+        merge_entries.append(
+            {
+                "target_id": target_id,
+                "status": "pass" if not merge_hard_violations else "fail",
+                "violations": merge_hard_violations,
+                "warnings": merge_warnings,
+            }
+        )
+        validation_entries.append(
+            {
+                "target_id": target_id,
+                "role": "merge",
+                "attempts": 1,
+                "violations": merge_hard_violations,
+                "warnings": merge_warnings,
+            }
+        )
         drafts.append(
             {
                 "draft_id": f"draft::{target_id}",
@@ -293,6 +318,7 @@ def run(args: Namespace, *, root: Path) -> int:
             if not any(bool(entry.get("violations")) for entry in validation_entries)
             else "fail",
             "target_count": len(target_ids),
+            "entries": merge_entries,
         },
     )
     write_json(

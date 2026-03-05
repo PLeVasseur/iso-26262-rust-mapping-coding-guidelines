@@ -67,5 +67,10 @@
   - `normalization_report.json` canonical_rate: `1.0`
   - `evidence_synthesizer_gate_report.json` status: `pass` (no overreach blocks)
   - `writer_output_auditor_report.json` status: `pass` (blocked_count `0`)
+- Step 11.5 Step 8 parity broad-batch run completed:
+  - run dir: `.cache/sqlite_kb/reports/step11_5_writer_host_broad_20260305T134030Z`
+  - target coverage: row markers `1a` through `1i` plus proof target `RET-RESOLVE-008`
+  - `merge_validation_report.json` status: `pass` (warnings only)
+  - parity matrix: `/Users/pete.levasseur/opencode-project-agents/iso-26262-rust-mapping-coding-guidelines/plans/v17_2_plan/step_11_5_parity_matrix.md`
 - No runtime claims are made from retired writer flow.
 - No Step 11 deliverable depends on retired S0/Phase-A writer execution paths.
