@@ -215,15 +215,19 @@ def main() -> int:
 
     thresholds = dict(THRESHOLDS)
     skew_thresholds = dict(SKEW_THRESHOLDS)
+    advisory_thresholds: dict[str, float] = {}
     policy_path = (root / str(get_corpus_adapter(corpus).config.default_eval_policy_path)).resolve()
     if policy_path.exists():
         policy = load_eval_policy(policy_path)
         loaded_thresholds = policy.get("thresholds")
         loaded_skew = policy.get("skew_thresholds")
+        loaded_advisory = policy.get("advisory_thresholds")
         if isinstance(loaded_thresholds, dict):
             thresholds = loaded_thresholds
         if isinstance(loaded_skew, dict):
             skew_thresholds = {str(key): float(value) for key, value in loaded_skew.items()}
+        if isinstance(loaded_advisory, dict):
+            advisory_thresholds = {str(key): float(value) for key, value in loaded_advisory.items()}
 
     backend_attempt_log_path = (
         (root / args.backend_attempt_log_path).resolve() if args.backend_attempt_log_path else None
@@ -317,6 +321,7 @@ def main() -> int:
             rewrite_rules_path=rewrite_rules_path,
             thresholds=thresholds,
             skew_thresholds=skew_thresholds,
+            advisory_thresholds=advisory_thresholds,
         )
     except (RuntimeError, GuardrailError, OSError) as exc:
         print(f"[eval-rust-reference-retrieval][error] {exc}")

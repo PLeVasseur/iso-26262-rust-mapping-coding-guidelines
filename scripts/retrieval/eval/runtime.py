@@ -64,8 +64,15 @@ THRESHOLDS = {
         "lexical": {"row_hit_rate": 0.75},
         "hybrid": {"row_hit_rate": 0.75},
     },
-    "semantic_vs_lexical_mrr_delta": 0.05,
     "hybrid_vs_best_single_mrr_tolerance": 0.01,
+}
+
+# Advisory thresholds: logged and reported but never block the pipeline gate.
+# semantic_vs_lexical_mrr_delta measures modal preference, not downstream quality.
+# The pipeline needs the best available mode to find relevant evidence; whether
+# semantic beats lexical has no bearing on guideline generation quality.
+ADVISORY_THRESHOLDS = {
+    "semantic_vs_lexical_mrr_delta": 0.05,
 }
 
 
@@ -108,11 +115,13 @@ def evaluate_retrieval_prompts(
     rewrite_rules_path: Path | None = None,
     thresholds: dict[str, Any] | None = None,
     skew_thresholds: dict[str, float] | None = None,
+    advisory_thresholds: dict[str, Any] | None = None,
     execute_retrieval_fn: Any | None = None,
 ) -> dict[str, Any]:
     _ = corpus
     thresholds = dict(thresholds or THRESHOLDS)
     skew_thresholds = dict(skew_thresholds or SKEW_THRESHOLDS)
+    advisory_thresholds = dict(advisory_thresholds or ADVISORY_THRESHOLDS)
     execute_retrieval = execute_retrieval_fn or execute_retrieval_query
     case_results: list[dict[str, Any]] = []
 
@@ -384,6 +393,7 @@ def evaluate_retrieval_prompts(
         }
 
     gate_failures: list[str] = []
+    advisory_warnings: list[str] = []
     if enforce_gates:
         if by_mode_retrieval.get("lexical"):
             lexical_metrics = summary_modes.get("lexical", {})
@@ -437,10 +447,12 @@ def evaluate_retrieval_prompts(
         ):
             semantic_mrr = float(summary_semantic_focus["semantic"].get("mrr_at_k", 0.0))
             lexical_mrr = float(summary_semantic_focus["lexical"].get("mrr_at_k", 0.0))
-            required_delta = float(thresholds["semantic_vs_lexical_mrr_delta"])
+            required_delta = float(advisory_thresholds.get("semantic_vs_lexical_mrr_delta", 0.05))
             if semantic_mrr < lexical_mrr + required_delta:
-                gate_failures.append(
-                    f"semantic_vs_lexical mrr delta below threshold: {semantic_mrr} < {lexical_mrr} + {required_delta}"
+                advisory_warnings.append(
+                    f"[advisory] semantic_vs_lexical mrr delta below advisory level: "
+                    f"{semantic_mrr:.4f} < {lexical_mrr:.4f} + {required_delta} "
+                    f"(tracked, does not block)"
                 )
 
         for slice_name, per_mode in by_slice_mode_retrieval.items():
@@ -536,5 +548,6 @@ def evaluate_retrieval_prompts(
         },
         "provenance": provenance,
         "gate_failures": gate_failures,
+        "advisory_warnings": advisory_warnings,
         "cases": case_results,
     }

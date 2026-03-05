@@ -694,7 +694,7 @@ def run_integration_checkpoint(checkpoint: str, run_dir: Path | None = None) -> 
     if not script.exists():
         return True, f"integration checkpoint script missing; skip {checkpoint}"
 
-    command = ["python3", str(script), "--checkpoint", checkpoint]
+    command = ["uv", "run", "python", str(script), "--checkpoint", checkpoint]
     if run_dir is not None:
         command.extend(["--run-dir", str(run_dir)])
 
