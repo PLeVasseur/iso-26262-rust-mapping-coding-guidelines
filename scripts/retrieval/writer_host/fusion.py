@@ -65,6 +65,8 @@ def fuse_ranked_lists(
                 statement_id,
                 {
                     "statement_id": statement_id,
+                    "raw_statement_id": str(row.get("raw_statement_id", "")).strip(),
+                    "corpus": str(row.get("corpus", "")).strip(),
                     "source_anchor": str(row.get("source_anchor", "")).strip(),
                     "doc_id": str(row.get("doc_id", "")).strip(),
                     "statement_text": str(row.get("statement_text", "")).strip(),
@@ -83,6 +85,10 @@ def fuse_ranked_lists(
             mode_score = mode_score_maps.get(mode, {}).get(statement_id, 0.0)
             entry["mode_scores"][mode] = mode_score
             entry["best_mode_score"] = max(float(entry.get("best_mode_score", 0.0)), mode_score)
+            if not str(entry.get("raw_statement_id", "")).strip():
+                entry["raw_statement_id"] = str(row.get("raw_statement_id", "")).strip()
+            if not str(entry.get("corpus", "")).strip():
+                entry["corpus"] = str(row.get("corpus", "")).strip()
             if not str(entry.get("source_anchor", "")).strip():
                 entry["source_anchor"] = str(row.get("source_anchor", "")).strip()
             if not str(entry.get("doc_id", "")).strip():

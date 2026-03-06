@@ -16,6 +16,19 @@ def _to_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, indent=2, sort_keys=True)
 
 
+def _derive_corpus_placeholder(evidence_rows: list[dict[str, Any]]) -> str:
+    corpora = sorted(
+        {
+            str(row.get("corpus", "")).strip()
+            for row in evidence_rows
+            if isinstance(row, dict) and str(row.get("corpus", "")).strip()
+        }
+    )
+    if not corpora:
+        return ""
+    return corpora[0] if len(corpora) == 1 else ",".join(corpora)
+
+
 def build_role_prompt(
     *,
     role_name: str,
@@ -55,10 +68,11 @@ def build_role_prompt(
         )
 
     template = str(role_contract.get("prompt_template_text", "")).strip()
+    corpus_placeholder = _derive_corpus_placeholder(evidence_rows)
     placeholders = {
         "target_id": target_id,
         "table1_row": table1_row,
-        "corpus": "rust_reference",
+        "corpus": corpus_placeholder,
         "evidence_ids": _to_json(evidence_ids),
         "evidence_snippets": _to_json(snippets),
         "exemplar_ids": _to_json([]),
@@ -78,6 +92,7 @@ def build_role_prompt(
     required_fields: list[str] = []
     if isinstance(required_output_schema, dict):
         required_fields = [str(item) for item in list(required_output_schema.get("required") or [])]
+    evidence_corpora = sorted(corpus_placeholder.split(",")) if corpus_placeholder else []
 
     prompt = (
         f"{rendered}\n\n"
@@ -85,6 +100,7 @@ def build_role_prompt(
         f"Role: {role_name}\n"
         f"Prompt ID: {prompt_id}\n"
         f"Query text: {query_text}\n"
+        f"Evidence corpora: {json.dumps(evidence_corpora)}\n"
         f"Required fields: {json.dumps(required_fields)}\n"
         f"Available evidence IDs: {json.dumps(evidence_ids)}\n"
         f"Evidence snippets: {json.dumps(snippets)}\n"

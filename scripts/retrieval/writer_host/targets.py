@@ -24,6 +24,29 @@ def load_prompts(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def load_targets_manifest(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    targets = payload.get("targets") if isinstance(payload, dict) else []
+    if not isinstance(targets, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for row in targets:
+        if not isinstance(row, dict):
+            continue
+        prompt_id = str(row.get("prompt_id", "")).strip()
+        query_text = str(row.get("query_text", "")).strip()
+        if not prompt_id or not query_text:
+            continue
+        rows.append(
+            {
+                "prompt_id": prompt_id,
+                "query_text": query_text,
+                "expected_row_markers": list(row.get("expected_row_markers") or []),
+            }
+        )
+    return rows
+
+
 def _pick_broad_batch(prompts: list[dict[str, Any]]) -> list[str]:
     by_marker: dict[str, str] = {}
     for row in prompts:

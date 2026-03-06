@@ -36,7 +36,6 @@ from retrieval.services import (
     validate_audit_service,
     validate_service,
     verify_service,
-    writer_campaign_service,
     writer_conformance_service,
     writer_evidence_service,
     writer_host_service,
@@ -52,14 +51,60 @@ from retrieval.services.provenance_guard import enforce_provenance_guard
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
 
+RETRIEVAL_COMMANDS = {
+    "inspect",
+    "query",
+    "eval",
+    "eval-report",
+    "export-rst",
+    "build",
+    "materialize",
+    "smoke",
+    "capture",
+    "verify",
+    "validate",
+    "migrate",
+    "validate-audit",
+    "writer-host-run",
+    "writer-evidence",
+}
+ARTIFACT_COMMANDS = {
+    "writer-quality-gate",
+    "writer-review-packet",
+    "writer-conformance",
+    "writer-publish",
+}
 
-def _add_common(parser: argparse.ArgumentParser) -> None:
+
+def _add_query_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--corpus", choices=list_supported_corpora(), required=True)
     parser.add_argument(
         "--profile-path",
         default="",
         help="Optional retrieval profile path override",
     )
+    parser.add_argument(
+        "extra_args",
+        nargs=argparse.REMAINDER,
+        help="Additional arguments forwarded to the selected subcommand",
+    )
+
+
+def _add_multi_query_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--corpora", required=True)
+    parser.add_argument(
+        "--profile-path",
+        default="",
+        help="Optional retrieval profile path override",
+    )
+    parser.add_argument(
+        "extra_args",
+        nargs=argparse.REMAINDER,
+        help="Additional arguments forwarded to the selected subcommand",
+    )
+
+
+def _add_artifact_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "extra_args",
         nargs=argparse.REMAINDER,
@@ -165,10 +210,10 @@ def parse_args() -> argparse.Namespace:
         "validate-audit",
     ):
         subparser = subparsers.add_parser(name)
-        _add_common(subparser)
+        _add_query_common(subparser)
 
     writer_host = subparsers.add_parser("writer-host-run")
-    _add_common(writer_host)
+    _add_query_common(writer_host)
     writer_host.add_argument("--targets", required=True)
     writer_host.add_argument("--run-id", default="")
     writer_host.add_argument("--report-root", default="")
@@ -189,7 +234,6 @@ def parse_args() -> argparse.Namespace:
     writer_host.add_argument("--dry-run", action="store_true")
 
     writer_targets = subparsers.add_parser("writer-targets")
-    _add_common(writer_targets)
     writer_targets.add_argument("--profile", choices=("fast", "full"), default="fast")
     writer_targets.add_argument("--targets", default="")
     writer_targets.add_argument(
@@ -199,28 +243,19 @@ def parse_args() -> argparse.Namespace:
     writer_targets.add_argument("--output", default="")
 
     writer_run = subparsers.add_parser("writer-run")
-    _add_common(writer_run)
-    writer_run.add_argument("--targets", default="")
+    _add_artifact_common(writer_run)
     writer_run.add_argument("--run-id", default="")
     writer_run.add_argument("--report-root", default="")
-    writer_run.add_argument("--evidence-manifest", default="")
+    writer_run.add_argument("--evidence-manifest", required=True)
     writer_run.add_argument("--contract-path", default="config/s0/writer_prompt_contracts.yaml")
-    writer_run.add_argument(
-        "--query-testset-path",
-        default="data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
-    )
-    writer_run.add_argument(
-        "--query-mode", choices=("lexical", "semantic", "hybrid"), default="lexical"
-    )
-    writer_run.add_argument("--top-k", type=int, default=20)
     writer_run.add_argument("--max-retries", type=int, default=2)
     writer_run.add_argument("--model", default="")
     writer_run.add_argument("--agent", default="")
     writer_run.add_argument("--dry-run", action="store_true")
 
     writer_evidence = subparsers.add_parser("writer-evidence")
-    _add_common(writer_evidence)
-    writer_evidence.add_argument("--targets", required=True)
+    _add_multi_query_common(writer_evidence)
+    writer_evidence.add_argument("--targets-manifest", required=True)
     writer_evidence.add_argument("--run-id", default="")
     writer_evidence.add_argument("--report-root", default="")
     writer_evidence.add_argument("--output", default="")
@@ -235,33 +270,18 @@ def parse_args() -> argparse.Namespace:
         default="data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
     )
 
-    writer_campaign = subparsers.add_parser("writer-campaign")
-    writer_campaign.add_argument("--corpora", default="rust_reference,core_docs")
-    writer_campaign.add_argument("--profile-path", default="")
-    writer_campaign.add_argument("--targets-manifest", required=True)
-    writer_campaign.add_argument("--run-id", default="")
-    writer_campaign.add_argument("--report-root", default="")
-    writer_campaign.add_argument("--output", default="")
-    writer_campaign.add_argument("--modes", default="lexical,semantic,hybrid")
-    writer_campaign.add_argument("--top-k", type=int, default=20)
-    writer_campaign.add_argument("--top-n-per-corpus", type=int, default=6)
-    writer_campaign.add_argument("--top-n-total", type=int, default=12)
-    writer_campaign.add_argument("--rrf-k", type=int, default=60)
-    writer_campaign.add_argument("--rank-window", type=int, default=100)
-    writer_campaign.add_argument("--allow-degraded", action="store_true")
-
     writer_quality_gate = subparsers.add_parser("writer-quality-gate")
-    _add_common(writer_quality_gate)
+    _add_artifact_common(writer_quality_gate)
     writer_quality_gate.add_argument("--run-dir", required=True)
     writer_quality_gate.add_argument("--output", default="")
 
     writer_review_packet = subparsers.add_parser("writer-review-packet")
-    _add_common(writer_review_packet)
+    _add_artifact_common(writer_review_packet)
     writer_review_packet.add_argument("--run-dir", required=True)
     writer_review_packet.add_argument("--output", default="")
 
     writer_publish = subparsers.add_parser("writer-publish")
-    _add_common(writer_publish)
+    _add_artifact_common(writer_publish)
     writer_publish.add_argument(
         "--mode", choices=("publishable", "exploratory"), default="publishable"
     )
@@ -270,7 +290,7 @@ def parse_args() -> argparse.Namespace:
     writer_publish.add_argument("--output", default="")
 
     writer_conformance = subparsers.add_parser("writer-conformance")
-    _add_common(writer_conformance)
+    _add_artifact_common(writer_conformance)
     writer_conformance.add_argument("--run-dir", required=True)
     writer_conformance.add_argument(
         "--mode", choices=("publishable", "exploratory"), default="publishable"
@@ -384,8 +404,44 @@ def main() -> int:
             return phase_a_retired.run_enforce_calibration_quality(args, root=root)
         if args.subcommand == "pack-reviewer-packet":
             return phase_a_retired.run_pack_reviewer_packet(args, root=root)
-        if args.subcommand == "writer-campaign":
-            return writer_campaign_service.run(args, root=root)
+        if args.subcommand == "writer-run":
+            return writer_run_service.run(args, root=root)
+        if args.subcommand == "writer-quality-gate":
+            return writer_quality_gate_service.run(args, root=root)
+        if args.subcommand == "writer-review-packet":
+            return writer_review_packet_service.run(args, root=root)
+        if args.subcommand == "writer-publish":
+            return writer_publish_service.run(args, root=root)
+        if args.subcommand == "writer-conformance":
+            return writer_conformance_service.run(args, root=root)
+        if args.subcommand == "writer-targets":
+            return writer_targets_service.run(args, root=root)
+        if args.subcommand == "writer-evidence":
+            corpora = [value.strip() for value in str(args.corpora).split(",") if value.strip()]
+            if not corpora:
+                raise RuntimeError("writer-evidence requires at least one corpus")
+            for corpus in corpora:
+                defaults = load_corpus_runtime_defaults(root=root, corpus=corpus)
+                if not bool(defaults.supports_query):
+                    return emit_unsupported(
+                        corpus=defaults.corpus,
+                        operation=str(args.subcommand),
+                        reason=f"corpus configuration disables {args.subcommand}",
+                    )
+                enforce_provenance_guard(
+                    root=root,
+                    operation=str(args.subcommand),
+                    corpus=defaults.corpus,
+                    default_db_path=defaults.db_path,
+                    default_profile_name=defaults.profile_name,
+                    default_eval_policy_id=defaults.eval_policy_path.stem,
+                    default_ingest_strategy=defaults.ingest_strategy,
+                    chunk_target_min_tokens=defaults.chunk_target_min_tokens,
+                    chunk_target_max_tokens=defaults.chunk_target_max_tokens,
+                    chunk_overlap_percent=defaults.chunk_overlap_percent,
+                    extra_args=list(args.extra_args or []),
+                )
+            return writer_evidence_service.run(args, root=root)
 
         defaults = load_corpus_runtime_defaults(root=root, corpus=str(args.corpus))
         support_map = {
@@ -403,13 +459,6 @@ def main() -> int:
             "migrate": defaults.supports_migrate,
             "validate-audit": defaults.supports_eval,
             "writer-host-run": defaults.supports_query,
-            "writer-targets": defaults.supports_query,
-            "writer-evidence": defaults.supports_query,
-            "writer-run": defaults.supports_query,
-            "writer-quality-gate": defaults.supports_query,
-            "writer-review-packet": defaults.supports_query,
-            "writer-conformance": defaults.supports_query,
-            "writer-publish": defaults.supports_query,
         }
         if not bool(support_map.get(str(args.subcommand), True)):
             return emit_unsupported(
@@ -460,20 +509,6 @@ def main() -> int:
             return validate_audit_service.run(args, root=root)
         if args.subcommand == "writer-host-run":
             return writer_host_service.run(args, root=root)
-        if args.subcommand == "writer-targets":
-            return writer_targets_service.run(args, root=root)
-        if args.subcommand == "writer-run":
-            return writer_run_service.run(args, root=root)
-        if args.subcommand == "writer-evidence":
-            return writer_evidence_service.run(args, root=root)
-        if args.subcommand == "writer-quality-gate":
-            return writer_quality_gate_service.run(args, root=root)
-        if args.subcommand == "writer-review-packet":
-            return writer_review_packet_service.run(args, root=root)
-        if args.subcommand == "writer-publish":
-            return writer_publish_service.run(args, root=root)
-        if args.subcommand == "writer-conformance":
-            return writer_conformance_service.run(args, root=root)
     except Exception as exc:  # pragma: no cover - defensive CLI boundary
         print(f"[sqlite_kb][error] {exc}")
         return EXIT_RUNTIME_FAIL

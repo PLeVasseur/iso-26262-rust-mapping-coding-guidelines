@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import sys
 import unittest
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -10,10 +12,18 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-import sqlite_kb  # noqa: E402
+import sqlite_kb as _sqlite_kb  # noqa: E402
+
+sqlite_kb = cast(Any, _sqlite_kb)
 
 
 class SqliteKbCliTests(unittest.TestCase):
+    def _parse_fails(self, argv: list[str]) -> None:
+        with patch.object(sys, "argv", argv):
+            with self.assertRaises(SystemExit) as exc:
+                sqlite_kb.parse_args()
+        self.assertEqual(exc.exception.code, 2)
+
     def test_import_bootstrap_adds_repo_root(self) -> None:
         self.assertIn(str(ROOT), sys.path)
 
@@ -122,8 +132,6 @@ class SqliteKbCliTests(unittest.TestCase):
             [
                 "sqlite_kb.py",
                 "writer-targets",
-                "--corpus",
-                "rust_reference",
                 "--profile",
                 "fast",
             ],
@@ -139,8 +147,6 @@ class SqliteKbCliTests(unittest.TestCase):
             [
                 "sqlite_kb.py",
                 "writer-quality-gate",
-                "--corpus",
-                "rust_reference",
                 "--run-dir",
                 ".cache/sqlite_kb/reports/demo",
             ],
@@ -156,8 +162,6 @@ class SqliteKbCliTests(unittest.TestCase):
             [
                 "sqlite_kb.py",
                 "writer-conformance",
-                "--corpus",
-                "rust_reference",
                 "--run-dir",
                 ".cache/sqlite_kb/reports/demo",
             ],
@@ -173,30 +177,16 @@ class SqliteKbCliTests(unittest.TestCase):
             [
                 "sqlite_kb.py",
                 "writer-evidence",
-                "--corpus",
-                "rust_reference",
-                "--targets",
-                "RET-ISSUE-001",
-            ],
-        ):
-            args = sqlite_kb.parse_args()
-        self.assertEqual(args.subcommand, "writer-evidence")
-        self.assertEqual(args.modes, "lexical,semantic,hybrid")
-
-    def test_parse_args_for_writer_campaign(self) -> None:
-        with patch.object(
-            sys,
-            "argv",
-            [
-                "sqlite_kb.py",
-                "writer-campaign",
+                "--corpora",
+                "rust_reference,core_docs",
                 "--targets-manifest",
                 ".cache/sqlite_kb/reports/demo/targets.json",
             ],
         ):
             args = sqlite_kb.parse_args()
-        self.assertEqual(args.subcommand, "writer-campaign")
+        self.assertEqual(args.subcommand, "writer-evidence")
         self.assertEqual(args.corpora, "rust_reference,core_docs")
+        self.assertEqual(args.targets_manifest, ".cache/sqlite_kb/reports/demo/targets.json")
 
     def test_parse_args_for_writer_run_with_manifest(self) -> None:
         with patch.object(
@@ -205,8 +195,6 @@ class SqliteKbCliTests(unittest.TestCase):
             [
                 "sqlite_kb.py",
                 "writer-run",
-                "--corpus",
-                "rust_reference",
                 "--evidence-manifest",
                 ".cache/sqlite_kb/reports/demo/manifest.json",
             ],
@@ -222,8 +210,6 @@ class SqliteKbCliTests(unittest.TestCase):
             [
                 "sqlite_kb.py",
                 "writer-publish",
-                "--corpus",
-                "rust_reference",
                 "--run-dir",
                 ".cache/sqlite_kb/reports/demo",
             ],
@@ -231,6 +217,202 @@ class SqliteKbCliTests(unittest.TestCase):
             args = sqlite_kb.parse_args()
         self.assertEqual(args.subcommand, "writer-publish")
         self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
+
+    def test_parse_args_for_writer_review_packet(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-review-packet",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-review-packet")
+        self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
+
+    def test_parse_args_rejects_corpus_for_writer_quality_gate(self) -> None:
+        self._parse_fails(
+            [
+                "sqlite_kb.py",
+                "writer-quality-gate",
+                "--corpus",
+                "rust_reference",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ]
+        )
+
+    def test_parse_args_rejects_corpus_for_writer_review_packet(self) -> None:
+        self._parse_fails(
+            [
+                "sqlite_kb.py",
+                "writer-review-packet",
+                "--corpus",
+                "rust_reference",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ]
+        )
+
+    def test_parse_args_rejects_corpus_for_writer_conformance(self) -> None:
+        self._parse_fails(
+            [
+                "sqlite_kb.py",
+                "writer-conformance",
+                "--corpus",
+                "rust_reference",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ]
+        )
+
+    def test_parse_args_rejects_corpus_for_writer_publish(self) -> None:
+        self._parse_fails(
+            [
+                "sqlite_kb.py",
+                "writer-publish",
+                "--corpus",
+                "rust_reference",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ]
+        )
+
+    def test_parse_args_rejects_corpus_for_writer_targets(self) -> None:
+        self._parse_fails(
+            [
+                "sqlite_kb.py",
+                "writer-targets",
+                "--corpus",
+                "rust_reference",
+                "--profile",
+                "fast",
+            ]
+        )
+
+    def test_parse_args_rejects_corpus_for_writer_run(self) -> None:
+        self._parse_fails(
+            [
+                "sqlite_kb.py",
+                "writer-run",
+                "--corpus",
+                "rust_reference",
+                "--evidence-manifest",
+                ".cache/sqlite_kb/reports/demo/manifest.json",
+            ]
+        )
+
+    def test_parse_args_rejects_writer_campaign(self) -> None:
+        self._parse_fails(
+            [
+                "sqlite_kb.py",
+                "writer-campaign",
+                "--targets-manifest",
+                ".cache/sqlite_kb/reports/demo/targets.json",
+            ]
+        )
+
+    def test_artifact_commands_do_not_load_corpus_defaults(self) -> None:
+        args = argparse.Namespace(
+            subcommand="writer-quality-gate",
+            run_dir=".cache/sqlite_kb/reports/demo",
+            output="",
+            extra_args=[],
+        )
+        with (
+            patch.object(sqlite_kb, "parse_args", return_value=args),
+            patch.object(
+                sqlite_kb.writer_quality_gate_service, "run", return_value=17
+            ) as service_run,
+            patch.object(sqlite_kb, "load_corpus_runtime_defaults") as load_defaults,
+            patch.object(sqlite_kb, "enforce_provenance_guard") as provenance_guard,
+        ):
+            status = sqlite_kb.main()
+        self.assertEqual(status, 17)
+        service_run.assert_called_once()
+        load_defaults.assert_not_called()
+        provenance_guard.assert_not_called()
+
+    def test_writer_run_does_not_load_corpus_defaults(self) -> None:
+        args = argparse.Namespace(
+            subcommand="writer-run",
+            evidence_manifest=".cache/sqlite_kb/reports/demo/manifest.json",
+            run_id="",
+            report_root="",
+            contract_path="config/s0/writer_prompt_contracts.yaml",
+            max_retries=1,
+            model="",
+            agent="",
+            dry_run=True,
+            extra_args=[],
+        )
+        with (
+            patch.object(sqlite_kb, "parse_args", return_value=args),
+            patch.object(sqlite_kb.writer_run_service, "run", return_value=23) as service_run,
+            patch.object(sqlite_kb, "load_corpus_runtime_defaults") as load_defaults,
+            patch.object(sqlite_kb, "enforce_provenance_guard") as provenance_guard,
+        ):
+            status = sqlite_kb.main()
+        self.assertEqual(status, 23)
+        service_run.assert_called_once()
+        load_defaults.assert_not_called()
+        provenance_guard.assert_not_called()
+
+    def test_writer_evidence_checks_each_corpus_before_dispatch(self) -> None:
+        defaults = argparse.Namespace(
+            corpus="rust_reference",
+            db_path=Path("/tmp/rust_reference.sqlite"),
+            profile_name="default",
+            eval_policy_path=Path("/tmp/eval_policy.yaml"),
+            ingest_strategy="rust_md_v1",
+            chunk_target_min_tokens=150,
+            chunk_target_max_tokens=500,
+            chunk_overlap_percent=0.0,
+            supports_query=True,
+        )
+        core_defaults = argparse.Namespace(
+            corpus="core_docs",
+            db_path=Path("/tmp/core_docs.sqlite"),
+            profile_name="default",
+            eval_policy_path=Path("/tmp/eval_policy.yaml"),
+            ingest_strategy="rust_md_v1",
+            chunk_target_min_tokens=150,
+            chunk_target_max_tokens=500,
+            chunk_overlap_percent=0.0,
+            supports_query=True,
+        )
+        args = argparse.Namespace(
+            subcommand="writer-evidence",
+            corpora="rust_reference,core_docs",
+            profile_path="",
+            targets_manifest=".cache/sqlite_kb/reports/demo/targets.json",
+            run_id="",
+            report_root="",
+            output="",
+            modes="lexical,semantic,hybrid",
+            top_k=20,
+            top_n=12,
+            rrf_k=60,
+            rank_window=100,
+            allow_degraded=False,
+            extra_args=[],
+        )
+        with (
+            patch.object(sqlite_kb, "parse_args", return_value=args),
+            patch.object(
+                sqlite_kb, "load_corpus_runtime_defaults", side_effect=[defaults, core_defaults]
+            ) as load_defaults,
+            patch.object(sqlite_kb, "enforce_provenance_guard") as provenance_guard,
+            patch.object(sqlite_kb.writer_evidence_service, "run", return_value=0) as service_run,
+        ):
+            status = sqlite_kb.main()
+        self.assertEqual(status, 0)
+        self.assertEqual(load_defaults.call_count, 2)
+        self.assertEqual(provenance_guard.call_count, 2)
+        service_run.assert_called_once()
 
 
 if __name__ == "__main__":
