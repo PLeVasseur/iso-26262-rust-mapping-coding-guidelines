@@ -68,6 +68,7 @@ def ingest_records(
                     "status": record.get("status", "draft"),
                     "release": record.get("release", "1.85.1"),
                     "fls_id": record.get("fls_id", ""),
+                    "fls_resolution": dict(record.get("fls_resolution") or {}),
                     "decidability": record.get("decidability", "undecidable"),
                     "scope": record.get("scope", "module"),
                     "tags": list(record.get("tags") or []),
@@ -110,7 +111,11 @@ def ingest_records(
                     continue
                 block_id = f"{guideline_id}:{block_type}:{order_index}"
                 connection.execute(
-                    "INSERT OR REPLACE INTO guideline_blocks(block_id, guideline_id, block_type, order_index, content) VALUES(?, ?, ?, ?, ?)",
+                    (
+                        "INSERT OR REPLACE INTO guideline_blocks("
+                        "block_id, guideline_id, block_type, order_index, content"
+                        ") VALUES(?, ?, ?, ?, ?)"
+                    ),
                     (block_id, guideline_id, block_type, order_index, content),
                 )
 
@@ -132,11 +137,19 @@ def ingest_records(
                     sort_keys=False,
                 )
                 connection.execute(
-                    "INSERT OR REPLACE INTO guideline_bibliography(bib_key, content, source_file_path) VALUES(?, ?, ?)",
+                    (
+                        "INSERT OR REPLACE INTO guideline_bibliography("
+                        "bib_key, content, source_file_path"
+                        ") VALUES(?, ?, ?)"
+                    ),
                     (citation_key, content, f"writer/{source_run_id}"),
                 )
                 connection.execute(
-                    "INSERT OR REPLACE INTO guideline_bib_links(guideline_id, bib_key) VALUES(?, ?)",
+                    (
+                        "INSERT OR REPLACE INTO guideline_bib_links("
+                        "guideline_id, bib_key"
+                        ") VALUES(?, ?)"
+                    ),
                     (guideline_id, citation_key),
                 )
 

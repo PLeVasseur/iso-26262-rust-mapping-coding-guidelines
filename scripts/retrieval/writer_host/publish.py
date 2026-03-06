@@ -45,6 +45,7 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
         "status": mapping["status"],
         "release": mapping["release"],
         "fls_id": mapping["fls_id"],
+        "fls_resolution": dict(mapping.get("fls_resolution") or {}),
         "decidability": mapping["decidability"],
         "scope": mapping["scope"],
         "tags": list(mapping["tags"]),

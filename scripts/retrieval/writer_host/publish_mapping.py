@@ -29,13 +29,17 @@ def _normalized_tags(tags: list[str]) -> list[str]:
     return out
 
 
-def _resolve_fls_id(*, title: str, tags: list[str]) -> str:
+def _resolve_fls_id(*, title: str, tags: list[str]) -> tuple[str, dict[str, Any]]:
     terms = [token for token in (title.split() + tags) if token]
-    paragraph = resolve_fls_for_construct(terms)
+    paragraph = resolve_fls_for_construct(terms, expected_domains=tags)
     fls_id = str(paragraph.get("paragraph_id", "")).strip()
+    decision = dict(paragraph.get("decision") or {})
     if not fls_id.startswith("fls_") or fls_id == "fls_UNRESOLVED" or not validate_fls_id(fls_id):
-        raise RuntimeError(f"failed to resolve valid fls id for title='{title}'")
-    return fls_id
+        reason = str(paragraph.get("unresolved_reason", "")).strip() or str(
+            decision.get("reason_code", "UNRESOLVED")
+        )
+        raise RuntimeError(f"failed to resolve valid fls id for title='{title}': {reason}")
+    return fls_id, decision
 
 
 def map_publish_record(row: dict[str, Any]) -> dict[str, Any]:
@@ -52,7 +56,7 @@ def map_publish_record(row: dict[str, Any]) -> dict[str, Any]:
     filename = f"{guideline_id}.rst"
     fls_candidate = metadata.get("fls_candidate") if isinstance(metadata, dict) else {}
     title = str((fls_candidate or {}).get("statement", "")).strip() or f"Guideline {target_id}"
-    fls_id = _resolve_fls_id(title=title, tags=normalized_tags)
+    fls_id, fls_resolution = _resolve_fls_id(title=title, tags=normalized_tags)
     category_raw = str((fls_candidate or {}).get("category", "")).strip().lower()
     category = "required" if "required" in category_raw or "safety" in category_raw else "advisory"
     return {
@@ -65,6 +69,7 @@ def map_publish_record(row: dict[str, Any]) -> dict[str, Any]:
         "status": "draft",
         "release": "1.85.1",
         "fls_id": fls_id,
+        "fls_resolution": fls_resolution,
         "decidability": "undecidable",
         "scope": "module",
         "tags": normalized_tags,
