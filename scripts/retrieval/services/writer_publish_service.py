@@ -3,14 +3,16 @@ from __future__ import annotations
 from argparse import Namespace
 from pathlib import Path
 
-from retrieval.writer_host.publish import run_publish, write_publish_report
+from retrieval.writer_host.publish import (
+    namespace_from_args,
+    run_publish_from_run,
+    write_publish_report,
+)
 
 
 def run(args: Namespace, *, root: Path) -> int:
-    mode = str(getattr(args, "mode", "publishable") or "publishable")
-    profile = str(getattr(args, "profile", "fast") or "fast")
-    dry_run = bool(getattr(args, "dry_run", False))
-    report = run_publish(root=root, mode=mode, profile=profile, dry_run=dry_run)
+    run_dir, mode, dry_run = namespace_from_args(args, root=root)
+    report = run_publish_from_run(root=root, run_dir=run_dir, mode=mode, dry_run=dry_run)
     output_raw = str(getattr(args, "output", "") or "").strip()
     if output_raw:
         output_path = Path(output_raw).resolve()

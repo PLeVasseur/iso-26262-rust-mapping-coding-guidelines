@@ -91,8 +91,9 @@ class ExportRstOperationTests(unittest.TestCase):
             index_path = output_root / "expressions" / "index.rst"
             self.assertTrue(index_path.exists())
             index_text = index_path.read_text(encoding="utf-8")
-            self.assertIn(".. BEGIN MANAGED GUIDELINE SIDECARS", index_text)
-            self.assertIn("gui_ABC123", index_text)
+            self.assertIn(".. toctree::", index_text)
+            self.assertIn("gui_*", index_text)
+            self.assertNotIn("MANAGED GUIDELINE SIDECARS", index_text)
 
 
 if __name__ == "__main__":

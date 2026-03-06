@@ -42,24 +42,24 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.corpus, "core_docs")
         self.assertIn("--top-k", args.extra_args)
 
-    def test_parse_args_for_guidelines_repo_autopilot(self) -> None:
+    def test_parse_args_for_coding_guidelines_publish_from_run(self) -> None:
         with patch.object(
             sys,
             "argv",
             [
                 "sqlite_kb.py",
-                "guidelines-repo",
-                "autopilot",
-                "--profile",
-                "fast",
+                "coding-guidelines",
+                "publish-from-run",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
                 "--mode",
                 "publishable",
             ],
         ):
             args = sqlite_kb.parse_args()
-        self.assertEqual(args.command_family, "guidelines-repo")
-        self.assertEqual(args.guidelines_subcommand, "autopilot")
-        self.assertEqual(args.profile, "fast")
+        self.assertEqual(args.command_family, "coding-guidelines")
+        self.assertEqual(args.coding_guidelines_subcommand, "publish-from-run")
+        self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
         self.assertEqual(args.mode, "publishable")
 
     def test_parse_args_for_guidelines_repo_doctor(self) -> None:
@@ -149,6 +149,23 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.subcommand, "writer-quality-gate")
         self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
 
+    def test_parse_args_for_writer_conformance(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-conformance",
+                "--corpus",
+                "rust_reference",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-conformance")
+        self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
+
     def test_parse_args_for_writer_evidence(self) -> None:
         with patch.object(
             sys,
@@ -182,6 +199,23 @@ class SqliteKbCliTests(unittest.TestCase):
             args = sqlite_kb.parse_args()
         self.assertEqual(args.subcommand, "writer-run")
         self.assertEqual(args.evidence_manifest, ".cache/sqlite_kb/reports/demo/manifest.json")
+
+    def test_parse_args_for_writer_publish(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-publish",
+                "--corpus",
+                "rust_reference",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-publish")
+        self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
 
 
 if __name__ == "__main__":

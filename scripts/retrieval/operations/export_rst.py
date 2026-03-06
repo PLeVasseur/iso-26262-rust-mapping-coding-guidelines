@@ -11,12 +11,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from retrieval.guidelines.build_runner import run_guidelines_build
+from retrieval.operations.chapter_index_policy import ensure_glob_toctree
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
-
-MANAGED_BEGIN = ".. BEGIN MANAGED GUIDELINE SIDECARS"
-MANAGED_END = ".. END MANAGED GUIDELINE SIDECARS"
 
 
 def _utc_now() -> str:
@@ -79,66 +77,10 @@ def _render_guideline(
     return "\n".join(payload).strip() + "\n"
 
 
-def _managed_block(entries: list[str]) -> list[str]:
-    lines = [
-        MANAGED_BEGIN,
-        ".. toctree::",
-        "   :maxdepth: 1",
-        "",
-    ]
-    for entry in entries:
-        lines.append(f"   {entry}")
-    lines.extend(["", MANAGED_END])
-    return lines
-
-
-def _extract_managed_entries(existing_lines: list[str]) -> tuple[list[str], int, int]:
-    try:
-        start = existing_lines.index(MANAGED_BEGIN)
-        end = existing_lines.index(MANAGED_END)
-    except ValueError:
-        return [], -1, -1
-    entries: list[str] = []
-    for line in existing_lines[start + 1 : end]:
-        stripped = line.strip()
-        if not stripped or stripped.startswith(".. toctree::") or stripped.startswith(":"):
-            continue
-        if stripped.startswith(".."):
-            continue
-        entries.append(stripped)
-    return entries, start, end
-
-
-def _sync_chapter_index(index_path: Path, entries: list[str]) -> tuple[list[str], bool]:
-    existing_lines = (
-        index_path.read_text(encoding="utf-8").splitlines() if index_path.exists() else []
-    )
-    old_entries, start, end = _extract_managed_entries(existing_lines)
-    existing_references: set[str] = set()
-    for idx, line in enumerate(existing_lines):
-        if start >= 0 and end >= 0 and start <= idx <= end:
-            continue
-        stripped = line.strip()
-        if not stripped or stripped.startswith("..") or stripped.startswith(":"):
-            continue
-        existing_references.add(stripped)
-    managed_entries = [entry for entry in entries if entry not in existing_references]
-    managed_lines = _managed_block(managed_entries)
-    if start >= 0 and end >= 0 and start < end:
-        new_lines = existing_lines[:start] + managed_lines + existing_lines[end + 1 :]
-    else:
-        if existing_lines and existing_lines[-1].strip() != "":
-            existing_lines.append("")
-        new_lines = existing_lines + managed_lines
-    index_path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
-    return old_entries, True
-
-
 def export_guidelines(*, db_path: Path, output_root: Path) -> dict[str, object]:
     output_root.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
     written_files: list[Path] = []
-    chapter_entries: dict[str, list[str]] = {}
     try:
         rows = connection.execute(
             """
@@ -186,16 +128,15 @@ def export_guidelines(*, db_path: Path, output_root: Path) -> dict[str, object]:
             if not path.exists():
                 path.write_text(_render_guideline(title, blocks, bibliography), encoding="utf-8")
             written_files.append(path)
-            stem = Path(filename).stem
-            chapter_entries.setdefault(chapter, []).append(stem)
     finally:
         connection.close()
 
-    for chapter, stems in sorted(chapter_entries.items()):
-        chapter_root = output_root / chapter
+    chapter_roots = sorted(path for path in output_root.iterdir() if path.is_dir())
+    for chapter_root in chapter_roots:
         index_path = chapter_root / "index.rst"
-        _sync_chapter_index(index_path, sorted(set(stems)))
-        written_files.append(index_path)
+        changed = ensure_glob_toctree(index_path)
+        if changed or index_path.exists():
+            written_files.append(index_path)
 
     return {
         "file_count": len(written_files),

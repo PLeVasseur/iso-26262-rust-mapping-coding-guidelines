@@ -41,7 +41,9 @@ from retrieval.services import (
     writer_review_packet_service,
     writer_run_service,
     writer_host_service,
+    writer_conformance_service,
     writer_targets_service,
+    coding_guidelines_service,
 )
 from retrieval.services.capability import emit_unsupported
 from retrieval.services.provenance_guard import enforce_provenance_guard
@@ -65,6 +67,49 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    if len(sys.argv) > 1 and sys.argv[1] == "coding-guidelines":
+        parser = argparse.ArgumentParser(description="Coding guidelines operations")
+        parser.add_argument("command_family", choices=("coding-guidelines",))
+        subparsers = parser.add_subparsers(dest="coding_guidelines_subcommand", required=True)
+
+        doctor = subparsers.add_parser("doctor")
+        doctor.add_argument("--mode", choices=("publishable", "exploratory"), default="publishable")
+
+        ensure_repo = subparsers.add_parser("ensure-repo")
+        ensure_repo.add_argument(
+            "--mode", choices=("publishable", "exploratory"), default="publishable"
+        )
+        ensure_repo.add_argument("--allow-main", action="store_true")
+
+        ingest = subparsers.add_parser("ingest-from-run")
+        ingest.add_argument("--run-dir", required=True)
+        ingest.add_argument("--mode", choices=("publishable", "exploratory"), default="publishable")
+        ingest.add_argument("--output-db", default="")
+
+        export_rst = subparsers.add_parser("export-rst")
+        export_rst.add_argument("--db-path", required=True)
+
+        conformance = subparsers.add_parser("conformance")
+        conformance.add_argument("--run-dir", required=True)
+        conformance.add_argument(
+            "--mode", choices=("publishable", "exploratory"), default="publishable"
+        )
+
+        publish = subparsers.add_parser("publish-from-run")
+        publish.add_argument("--run-dir", required=True)
+        publish.add_argument(
+            "--mode", choices=("publishable", "exploratory"), default="publishable"
+        )
+        publish.add_argument("--dry-run", action="store_true")
+        publish.add_argument("--output", default="")
+
+        bump_pin = subparsers.add_parser("bump-pin")
+        bump_pin.add_argument("--revision", required=True)
+
+        reorg = subparsers.add_parser("reorg-path-mapping")
+        reorg.add_argument("--mapping-file", default="")
+        return parser.parse_args()
+
     if len(sys.argv) > 1 and sys.argv[1] == "guidelines-repo":
         parser = argparse.ArgumentParser(description="Guidelines repo operations")
         parser.add_argument("command_family", choices=("guidelines-repo",))
@@ -98,14 +143,6 @@ def parse_args() -> argparse.Namespace:
         reorg = subparsers.add_parser("reorg-path-mapping")
         reorg.add_argument("--mapping-file", default="")
 
-        autopilot = subparsers.add_parser("autopilot")
-        autopilot.add_argument("--profile", choices=("fast", "full"), required=True)
-        autopilot.add_argument(
-            "--mode",
-            choices=("publishable", "exploratory"),
-            default="publishable",
-        )
-        autopilot.add_argument("--allow-main", action="store_true")
         return parser.parse_args()
 
     parser = argparse.ArgumentParser(description="Unified sqlite_kb multi-corpus command")
@@ -212,9 +249,16 @@ def parse_args() -> argparse.Namespace:
     writer_publish.add_argument(
         "--mode", choices=("publishable", "exploratory"), default="publishable"
     )
-    writer_publish.add_argument("--profile", choices=("fast", "full"), default="fast")
+    writer_publish.add_argument("--run-dir", required=True)
     writer_publish.add_argument("--dry-run", action="store_true")
     writer_publish.add_argument("--output", default="")
+
+    writer_conformance = subparsers.add_parser("writer-conformance")
+    _add_common(writer_conformance)
+    writer_conformance.add_argument("--run-dir", required=True)
+    writer_conformance.add_argument(
+        "--mode", choices=("publishable", "exploratory"), default="publishable"
+    )
 
     scaffold = subparsers.add_parser("scaffold-s0-config")
     scaffold.add_argument("--corpus-set", choices=("s0",), default="s0")
@@ -276,6 +320,27 @@ def main() -> int:
     args.extra_args = extras
 
     try:
+        if getattr(args, "command_family", "") == "coding-guidelines":
+            if str(args.coding_guidelines_subcommand) == "doctor":
+                return coding_guidelines_service.run_doctor(args, root=root)
+            if str(args.coding_guidelines_subcommand) == "ensure-repo":
+                return coding_guidelines_service.run_ensure_repo(args, root=root)
+            if str(args.coding_guidelines_subcommand) == "ingest-from-run":
+                return coding_guidelines_service.run_ingest_from_run(args, root=root)
+            if str(args.coding_guidelines_subcommand) == "export-rst":
+                return coding_guidelines_service.run_export_rst(args, root=root)
+            if str(args.coding_guidelines_subcommand) == "conformance":
+                return coding_guidelines_service.run_conformance(args, root=root)
+            if str(args.coding_guidelines_subcommand) == "publish-from-run":
+                return coding_guidelines_service.run_publish_from_run(args, root=root)
+            if str(args.coding_guidelines_subcommand) == "bump-pin":
+                return coding_guidelines_service.run_bump_pin(args, root=root)
+            if str(args.coding_guidelines_subcommand) == "reorg-path-mapping":
+                return coding_guidelines_service.run_reorg_path_mapping(args, root=root)
+            raise RuntimeError(
+                f"Unsupported coding-guidelines operation: {args.coding_guidelines_subcommand}"
+            )
+
         if getattr(args, "command_family", "") == "guidelines-repo":
             if str(args.guidelines_subcommand) == "doctor":
                 return guidelines_repo_service.run_doctor(args, root=root)
@@ -287,8 +352,6 @@ def main() -> int:
                 return guidelines_repo_service.run_bump_pin(args, root=root)
             if str(args.guidelines_subcommand) == "reorg-path-mapping":
                 return guidelines_repo_service.run_reorg_path_mapping(args, root=root)
-            if str(args.guidelines_subcommand) == "autopilot":
-                return guidelines_repo_service.run_autopilot(args, root=root)
             raise RuntimeError(
                 f"Unsupported guidelines-repo operation: {args.guidelines_subcommand}"
             )
@@ -327,6 +390,7 @@ def main() -> int:
             "writer-run": defaults.supports_query,
             "writer-quality-gate": defaults.supports_query,
             "writer-review-packet": defaults.supports_query,
+            "writer-conformance": defaults.supports_query,
             "writer-publish": defaults.supports_query,
         }
         if not bool(support_map.get(str(args.subcommand), True)):
@@ -390,6 +454,8 @@ def main() -> int:
             return writer_review_packet_service.run(args, root=root)
         if args.subcommand == "writer-publish":
             return writer_publish_service.run(args, root=root)
+        if args.subcommand == "writer-conformance":
+            return writer_conformance_service.run(args, root=root)
     except Exception as exc:  # pragma: no cover - defensive CLI boundary
         print(f"[sqlite_kb][error] {exc}")
         return EXIT_RUNTIME_FAIL
