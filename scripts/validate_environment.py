@@ -10,6 +10,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from opencode_model_registry import configured_default_model, ensure_model_available
+
 
 def check(name: str, cmd: list[str]) -> bool:
     try:
@@ -95,6 +97,19 @@ def main() -> None:
             ok = False
     else:
         print("  [FAIL] OpenCode version pin: .opencode-version-pin not found")
+        ok = False
+
+    opencode_config = Path("opencode.json")
+    if opencode_config.exists():
+        try:
+            model = configured_default_model(opencode_config)
+            ensure_model_available(model)
+            print(f"  [OK]   OpenCode model: {model}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [FAIL] OpenCode model: {exc}")
+            ok = False
+    else:
+        print("  [FAIL] OpenCode config: opencode.json not found")
         ok = False
 
     ok &= check("Semantic backend", ["python3", "scripts/sqlite_check_semantic_backend.py"])
