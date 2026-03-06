@@ -69,6 +69,7 @@ def ingest_records(
                     "release": record.get("release", "1.85.1"),
                     "fls_id": record.get("fls_id", ""),
                     "fls_resolution": dict(record.get("fls_resolution") or {}),
+                    "fls_resolution_report": str(record.get("fls_resolution_report", "")),
                     "decidability": record.get("decidability", "undecidable"),
                     "scope": record.get("scope", "module"),
                     "tags": list(record.get("tags") or []),

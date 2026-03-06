@@ -46,6 +46,7 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
         "release": mapping["release"],
         "fls_id": mapping["fls_id"],
         "fls_resolution": dict(mapping.get("fls_resolution") or {}),
+        "fls_resolution_report": str(mapping.get("fls_resolution_report") or ""),
         "decidability": mapping["decidability"],
         "scope": mapping["scope"],
         "tags": list(mapping["tags"]),
@@ -93,11 +94,18 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
     }
 
 
-def run_ingest_from_run(*, root: Path, run_dir: Path, mode: str, output_db: Path) -> dict[str, Any]:
+def run_ingest_from_run(
+    *,
+    root: Path,
+    run_dir: Path,
+    mode: str,
+    output_db: Path,
+    resolution_report_root: Path | None = None,
+) -> dict[str, Any]:
     payload = load_publish_payload(run_dir=run_dir, publishable=(mode == "publishable"))
     mapped_rows: list[dict[str, Any]] = []
     for row in payload["draft_rows"]:
-        mapping = map_publish_record(row)
+        mapping = map_publish_record(row, resolution_report_root=resolution_report_root)
         mapped_rows.append(_build_record(row, mapping))
     summary = ingest_records(
         db_path=output_db,
@@ -176,7 +184,13 @@ def run_publish_from_run(*, root: Path, run_dir: Path, mode: str, dry_run: bool)
     worktree_root = Path(str(worktree_info["worktree"])).resolve()
     branch = str(worktree_info["branch"])
     try:
-        ingest = run_ingest_from_run(root=root, run_dir=run_dir, mode=mode, output_db=db_path)
+        ingest = run_ingest_from_run(
+            root=root,
+            run_dir=run_dir,
+            mode=mode,
+            output_db=db_path,
+            resolution_report_root=publish_root / "fls_resolution",
+        )
         (publish_root / "annotation_policy_metrics.json").write_text(
             json.dumps(ingest.get("annotation_policy_metrics", {}), indent=2, sort_keys=False)
             + "\n",
