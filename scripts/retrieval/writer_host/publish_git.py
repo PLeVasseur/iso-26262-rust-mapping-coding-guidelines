@@ -16,7 +16,7 @@ def _run(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def create_worktree(*, repo_root: Path, cache_root: Path) -> dict[str, str]:
-    slug = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    slug = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     branch = f"writer-publish-{slug}"
     worktree = (cache_root / f"worktree_{slug}").resolve()
     worktree.parent.mkdir(parents=True, exist_ok=True)

@@ -4,8 +4,10 @@ from argparse import Namespace
 from pathlib import Path
 
 from retrieval.services import guidelines_repo_service
+from retrieval.writer_host.packet import build_publish_reviewer_packet
 from retrieval.writer_host.publish import (
     _load_guidelines_repo_root,
+    default_publish_report_path,
     namespace_from_args,
     run_conformance_command,
     run_export_rst as run_export_rst_stage,
@@ -32,7 +34,7 @@ def run_reorg_path_mapping(args: Namespace, *, root: Path) -> int:
 
 
 def run_ingest_from_run(args: Namespace, *, root: Path) -> int:
-    run_dir, mode, _ = namespace_from_args(args, root=root)
+    run_dir, mode, _, _ = namespace_from_args(args, root=root)
     output_db_raw = str(getattr(args, "output_db", "") or "").strip()
     if output_db_raw:
         output_db = Path(output_db_raw).resolve()
@@ -63,21 +65,45 @@ def run_export_rst(args: Namespace, *, root: Path) -> int:
 
 
 def run_conformance(args: Namespace, *, root: Path) -> int:
-    run_dir, mode, _ = namespace_from_args(args, root=root)
+    run_dir, mode, _, _ = namespace_from_args(args, root=root)
     report = run_conformance_command(root=root, run_dir=run_dir, mode=mode)
     print(report["report_path"])
     return 0 if str(report.get("status", "")) == "pass" else 2
 
 
 def run_publish_from_run(args: Namespace, *, root: Path) -> int:
-    run_dir, mode, dry_run = namespace_from_args(args, root=root)
-    report = run_publish_stage(root=root, run_dir=run_dir, mode=mode, dry_run=dry_run)
+    run_dir, mode, dry_run, keep_worktree = namespace_from_args(args, root=root)
+    report = run_publish_stage(
+        root=root,
+        run_dir=run_dir,
+        mode=mode,
+        dry_run=dry_run,
+        keep_worktree=keep_worktree,
+    )
     output_raw = str(getattr(args, "output", "") or "").strip()
     output_path = (
         Path(output_raw).resolve()
         if output_raw
-        else root / ".cache" / "sqlite_kb" / "reports" / "writer_publish_report.json"
+        else default_publish_report_path(root=root, run_dir=run_dir)
     )
-    write_publish_report(output_path, report)
+    default_output_path = default_publish_report_path(root=root, run_dir=run_dir)
+    write_publish_report(default_output_path, report)
+    if output_path != default_output_path:
+        write_publish_report(output_path, report)
+    if str(report.get("publish_root", "")).strip():
+        packet_path = Path(str(report.get("publish_root"))) / "writer_publish_review_packet.zip"
+        manifest = build_publish_reviewer_packet(
+            publish_root=Path(str(report.get("publish_root"))),
+            output_zip=packet_path,
+            source_run_dir=run_dir,
+        )
+        report["review_packet"] = {
+            "path": str(packet_path),
+            "manifest_path": str(packet_path.with_suffix(".manifest.json")),
+            "artifact_count": int(manifest.get("artifact_count", 0)),
+        }
+        write_publish_report(default_output_path, report)
+        if output_path != default_output_path:
+            write_publish_report(output_path, report)
     print(output_path)
-    return 0 if str(report.get("status", "")) in {"pass", "dry_run"} else 2
+    return 0 if str(report.get("status", "")) in {"pass", "dry_run", "no_changes"} else 2

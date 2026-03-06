@@ -287,6 +287,7 @@ def parse_args() -> argparse.Namespace:
     )
     writer_publish.add_argument("--run-dir", required=True)
     writer_publish.add_argument("--dry-run", action="store_true")
+    writer_publish.add_argument("--keep-worktree", action="store_true")
     writer_publish.add_argument("--output", default="")
 
     writer_conformance = subparsers.add_parser("writer-conformance")

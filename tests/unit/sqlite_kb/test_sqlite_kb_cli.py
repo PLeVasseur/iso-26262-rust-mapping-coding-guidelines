@@ -217,6 +217,23 @@ class SqliteKbCliTests(unittest.TestCase):
             args = sqlite_kb.parse_args()
         self.assertEqual(args.subcommand, "writer-publish")
         self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
+        self.assertFalse(args.keep_worktree)
+
+    def test_parse_args_for_writer_publish_keep_worktree(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-publish",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+                "--keep-worktree",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-publish")
+        self.assertTrue(args.keep_worktree)
 
     def test_parse_args_for_writer_review_packet(self) -> None:
         with patch.object(

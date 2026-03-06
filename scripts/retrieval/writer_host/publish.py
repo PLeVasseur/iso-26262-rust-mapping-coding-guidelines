@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
@@ -94,6 +95,68 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
     }
 
 
+def publish_root_for_run(*, root: Path, run_dir: Path) -> Path:
+    return root / ".cache" / "sqlite_kb" / "reports" / "writer_publish" / run_dir.name
+
+
+def default_publish_report_path(*, root: Path, run_dir: Path) -> Path:
+    return publish_root_for_run(root=root, run_dir=run_dir) / "writer_publish_report.json"
+
+
+def _copy_export_snapshot(*, source_root: Path, snapshot_root: Path) -> dict[str, Any]:
+    if snapshot_root.exists():
+        shutil.rmtree(snapshot_root)
+    shutil.copytree(source_root, snapshot_root)
+    files = sorted(path for path in snapshot_root.rglob("*") if path.is_file())
+    return {
+        "path": str(snapshot_root),
+        "file_count": len(files),
+        "files": [str(path) for path in files],
+    }
+
+
+def _cleanup_report(*, requested: bool, performed: bool, reason: str) -> dict[str, Any]:
+    return {
+        "requested": requested,
+        "performed": performed,
+        "reason": reason,
+    }
+
+
+def _base_publish_report(
+    *,
+    root: Path,
+    run_dir: Path,
+    mode: str,
+    dry_run: bool,
+    keep_worktree: bool,
+) -> dict[str, Any]:
+    publish_root = publish_root_for_run(root=root, run_dir=run_dir)
+    return {
+        "status": "fail",
+        "mode": mode,
+        "run_dir": str(run_dir),
+        "repo_root": "",
+        "publish_root": str(publish_root),
+        "db_path": str(publish_root / "writer_publish.sqlite"),
+        "dry_run": dry_run,
+        "keep_worktree": keep_worktree,
+        "worktree": "",
+        "branch": "",
+        "failure_code": "",
+        "failure_message": "",
+        "ingest": {},
+        "export": {},
+        "export_snapshot": {},
+        "conformance": {},
+        "commit": {"committed": False},
+        "push": {"pushed": False},
+        "cleanup": _cleanup_report(
+            requested=not keep_worktree, performed=False, reason="not_started"
+        ),
+    }
+
+
 def run_ingest_from_run(
     *,
     root: Path,
@@ -165,78 +228,130 @@ def run_export_rst(*, root: Path, db_path: Path, guidelines_repo_root: Path) -> 
     }
 
 
-def run_publish_from_run(*, root: Path, run_dir: Path, mode: str, dry_run: bool) -> dict[str, Any]:
+def run_publish_from_run(
+    *,
+    root: Path,
+    run_dir: Path,
+    mode: str,
+    dry_run: bool,
+    keep_worktree: bool = False,
+) -> dict[str, Any]:
     repo_root = _load_guidelines_repo_root(root)
-    publish_root = root / ".cache" / "sqlite_kb" / "reports" / "writer_publish" / run_dir.name
+    publish_root = publish_root_for_run(root=root, run_dir=run_dir)
     publish_root.mkdir(parents=True, exist_ok=True)
     db_path = publish_root / "writer_publish.sqlite"
+    report = _base_publish_report(
+        root=root,
+        run_dir=run_dir,
+        mode=mode,
+        dry_run=dry_run,
+        keep_worktree=keep_worktree,
+    )
+    report["repo_root"] = str(repo_root)
 
     if dry_run:
-        return {
-            "status": "dry_run",
-            "mode": mode,
-            "run_dir": str(run_dir),
-            "repo_root": str(repo_root),
-            "db_path": str(db_path),
-        }
+        report["status"] = "dry_run"
+        report["cleanup"] = _cleanup_report(
+            requested=not keep_worktree,
+            performed=False,
+            reason="dry_run_no_worktree",
+        )
+        return report
 
     worktree_info = create_worktree(repo_root=repo_root, cache_root=publish_root)
     worktree_root = Path(str(worktree_info["worktree"])).resolve()
     branch = str(worktree_info["branch"])
+    report["worktree"] = str(worktree_root)
+    report["branch"] = branch
+    cleanup_performed = False
+    cleanup_reason = "preserved_for_review"
     try:
-        ingest = run_ingest_from_run(
-            root=root,
-            run_dir=run_dir,
-            mode=mode,
-            output_db=db_path,
-            resolution_report_root=publish_root / "fls_resolution",
-        )
-        (publish_root / "annotation_policy_metrics.json").write_text(
-            json.dumps(ingest.get("annotation_policy_metrics", {}), indent=2, sort_keys=False)
-            + "\n",
-            encoding="utf-8",
-        )
-        export = run_export_rst(root=root, db_path=db_path, guidelines_repo_root=worktree_root)
+        try:
+            ingest = run_ingest_from_run(
+                root=root,
+                run_dir=run_dir,
+                mode=mode,
+                output_db=db_path,
+                resolution_report_root=publish_root / "fls_resolution",
+            )
+            report["ingest"] = ingest
+            (publish_root / "annotation_policy_metrics.json").write_text(
+                json.dumps(ingest.get("annotation_policy_metrics", {}), indent=2, sort_keys=False)
+                + "\n",
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            report["failure_code"] = "INGEST_FAILED"
+            report["failure_message"] = str(exc)
+            return report
+
+        try:
+            export = run_export_rst(root=root, db_path=db_path, guidelines_repo_root=worktree_root)
+            report["export"] = export
+            snapshot = _copy_export_snapshot(
+                source_root=worktree_root / "src" / "coding-guidelines",
+                snapshot_root=publish_root / "exported_guidelines",
+            )
+            report["export_snapshot"] = snapshot
+        except Exception as exc:
+            report["failure_code"] = "EXPORT_FAILED"
+            report["failure_message"] = str(exc)
+            return report
+
         conformance = run_conformance(
             repo_root=worktree_root,
             report_dir=publish_root,
         )
+        report["conformance"] = conformance
         if mode == "publishable" and str(conformance.get("status", "")) != "pass":
-            return {
-                "status": "fail",
-                "mode": mode,
-                "run_dir": str(run_dir),
-                "repo_root": str(repo_root),
-                "worktree": str(worktree_root),
-                "branch": branch,
-                "ingest": ingest,
-                "export": export,
-                "conformance": conformance,
-                "failure_code": "CONFORMANCE_FAILED",
-                "commit": {"committed": False},
-            }
+            report["failure_code"] = "CONFORMANCE_FAILED"
+            report["failure_message"] = "publishable mode requires passing conformance"
+            return report
 
         commit_message = f"feat(guidelines): publish writer run {run_dir.name}"
-        commit = finalize_commit(worktree_root=worktree_root, message=commit_message)
-        push = {"pushed": False, "branch": branch}
-        if bool(commit.get("committed", False)):
-            push = push_branch(worktree_root=worktree_root, branch=branch)
+        try:
+            commit = finalize_commit(worktree_root=worktree_root, message=commit_message)
+        except Exception as exc:
+            report["failure_code"] = "COMMIT_FAILED"
+            report["failure_message"] = str(exc)
+            return report
+        report["commit"] = commit
+        if not bool(commit.get("committed", False)):
+            report["status"] = "no_changes"
+            report["failure_code"] = "NO_CHANGES"
+            report["failure_message"] = "export completed but produced no git diff"
+            return report
 
-        return {
-            "status": "pass",
-            "mode": mode,
-            "run_dir": str(run_dir),
-            "repo_root": str(repo_root),
-            "worktree": str(worktree_root),
-            "branch": branch,
-            "ingest": ingest,
-            "export": export,
-            "conformance": conformance,
-            "commit": commit,
-            "push": push,
-        }
+        try:
+            push = push_branch(worktree_root=worktree_root, branch=branch)
+        except Exception as exc:
+            report["failure_code"] = "PUSH_FAILED"
+            report["failure_message"] = str(exc)
+            return report
+        report["push"] = push
+        report["status"] = "pass"
+        report["failure_code"] = ""
+        report["failure_message"] = ""
+        if not keep_worktree:
+            remove_worktree(repo_root=repo_root, worktree_root=worktree_root)
+            cleanup_performed = True
+            cleanup_reason = "success_cleanup"
+        else:
+            cleanup_reason = "kept_by_request"
+        return report
     finally:
-        remove_worktree(repo_root=repo_root, worktree_root=worktree_root)
+        if not cleanup_performed:
+            if keep_worktree:
+                cleanup_reason = "kept_by_request"
+            elif report.get("status") != "pass":
+                cleanup_reason = "preserved_after_non_pass"
+            else:
+                cleanup_reason = "already_removed"
+        report["cleanup"] = _cleanup_report(
+            requested=not keep_worktree,
+            performed=cleanup_performed,
+            reason=cleanup_reason,
+        )
 
 
 def write_publish_report(path: Path, report: dict[str, Any]) -> None:
@@ -259,7 +374,7 @@ def run_conformance_command(*, root: Path, run_dir: Path, mode: str) -> dict[str
     }
 
 
-def namespace_from_args(args: Namespace, *, root: Path) -> tuple[Path, str, bool]:
+def namespace_from_args(args: Namespace, *, root: Path) -> tuple[Path, str, bool, bool]:
     run_dir_raw = str(getattr(args, "run_dir", "") or "").strip()
     if not run_dir_raw:
         raise RuntimeError("--run-dir is required")
@@ -268,5 +383,6 @@ def namespace_from_args(args: Namespace, *, root: Path) -> tuple[Path, str, bool
         raise RuntimeError(f"run_dir does not exist: {run_dir}")
     mode = str(getattr(args, "mode", "publishable") or "publishable")
     dry_run = bool(getattr(args, "dry_run", False))
+    keep_worktree = bool(getattr(args, "keep_worktree", False))
     _ = root
-    return run_dir, mode, dry_run
+    return run_dir, mode, dry_run, keep_worktree
