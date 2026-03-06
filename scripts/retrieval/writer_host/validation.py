@@ -12,12 +12,39 @@ def _has_unsafe(code: Any) -> bool:
     return bool(_UNSAFE_RE.search(str(code or "")))
 
 
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def canonicalize_metadata_citation_map(
+    citation_map_raw: Any, *, synth_evidence_ids: set[str]
+) -> tuple[dict[str, str], bool]:
+    if not isinstance(citation_map_raw, dict):
+        return {}, False
+
+    cleaned = {
+        _clean_text(key): _clean_text(value)
+        for key, value in citation_map_raw.items()
+        if _clean_text(key)
+    }
+    if not cleaned:
+        return {}, False
+
+    key_hits = sum(1 for key in cleaned if key in synth_evidence_ids)
+    value_hits = sum(1 for value in cleaned.values() if value in synth_evidence_ids)
+    should_invert = key_hits > 0 and value_hits == 0
+    if should_invert:
+        return {value: key for key, value in cleaned.items() if value}, True
+    return cleaned, False
+
+
 def validate_role_output(
     *,
     role_name: str,
     output: dict[str, Any],
     role_contract: dict[str, Any],
     evidence_ids: set[str],
+    expected_prompt_id: str | None = None,
 ) -> list[str]:
     violations: list[str] = []
     required_output_schema = role_contract.get("required_output_schema")
@@ -39,9 +66,17 @@ def validate_role_output(
         prompt_id = str(output.get("prompt_id", "")).strip()
         if not prompt_id:
             violations.append("missing_prompt_id")
+        expected_prompt = _clean_text(expected_prompt_id)
+        if expected_prompt and prompt_id and prompt_id != expected_prompt:
+            violations.append("prompt_id_mismatch")
+        for field_name in ("hazard", "mechanism", "mitigation"):
+            if not _clean_text(output.get(field_name, "")):
+                violations.append(f"{field_name}_empty")
         construct_scope = output.get("construct_scope")
         if not isinstance(construct_scope, list):
             violations.append("construct_scope_not_list")
+        elif not any(_clean_text(item) for item in construct_scope):
+            violations.append("construct_scope_empty")
         claim_map = output.get("claim_to_evidence_map")
         if not isinstance(claim_map, list):
             violations.append("claim_to_evidence_map_not_list")
@@ -86,6 +121,16 @@ def validate_role_output(
                     violations.append(f"{citation_field}_blank:{idx}")
 
     if role_name == "example_author":
+        if (
+            "non_compliant_miri_skip_justification" not in output
+            and "non_compliant_miri_justification" in output
+        ):
+            violations.append("non_compliant_miri_skip_justification_alias_used")
+        if (
+            "compliant_miri_skip_justification" not in output
+            and "compliant_miri_justification" in output
+        ):
+            violations.append("compliant_miri_skip_justification_alias_used")
         allowed = {"check", "expect_ub", "skip"}
         non_compliant_intent = str(output.get("non_compliant_miri_intent", "")).strip().lower()
         compliant_intent = str(output.get("compliant_miri_intent", "")).strip().lower()
@@ -124,14 +169,11 @@ def validate_target_bundle(
     synth_evidence_ids = {
         str(value).strip() for value in list(synth.get("evidence_ids") or []) if str(value).strip()
     }
-    citation_map_raw = metadata.get("citation_key_map")
-    citation_map: dict[str, str] = {}
-    if isinstance(citation_map_raw, dict):
-        citation_map = {
-            str(key).strip(): str(value).strip()
-            for key, value in citation_map_raw.items()
-            if str(key).strip()
-        }
+    citation_map, citation_map_inverted = canonicalize_metadata_citation_map(
+        metadata.get("citation_key_map"), synth_evidence_ids=synth_evidence_ids
+    )
+    if citation_map_inverted:
+        violations.append("cross_role:metadata:citation_key_map_reversed")
 
     for role_name, field_name in (
         ("amplification_author", "amplification_citation_keys"),
@@ -151,6 +193,8 @@ def validate_target_bundle(
                 violations.append(f"cross_role:{role_name}:empty_citation_key")
                 continue
             if key_text in citation_map:
+                continue
+            if key_text in set(citation_map.values()):
                 continue
             if key_text in synth_evidence_ids:
                 continue

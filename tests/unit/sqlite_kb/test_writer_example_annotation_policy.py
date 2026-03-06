@@ -60,3 +60,46 @@ def test_skip_requires_justification() -> None:
         evidence_ids=set(),
     )
     assert "non_compliant_miri_skip_requires_justification" in violations
+
+
+def test_skip_with_canonical_justification_passes() -> None:
+    output = {
+        "target_id": "RET-ISSUE-001",
+        "non_compliant_narrative": "n",
+        "non_compliant_code": "unsafe { core::ptr::read_volatile(&0u8); }",
+        "compliant_narrative": "n",
+        "compliant_code": "fn ok() {}",
+        "example_citation_keys": ["CIT-1"],
+        "non_compliant_miri_intent": "skip",
+        "compliant_miri_intent": "check",
+        "non_compliant_miri_skip_justification": "requires target-specific environment",
+    }
+    violations = validate_role_output(
+        role_name="example_author",
+        output=output,
+        role_contract=_contract(),
+        evidence_ids=set(),
+    )
+    assert "non_compliant_miri_skip_requires_justification" not in violations
+
+
+def test_alias_only_skip_justification_is_rejected_by_validator() -> None:
+    output = {
+        "target_id": "RET-ISSUE-001",
+        "non_compliant_narrative": "n",
+        "non_compliant_code": "unsafe { core::ptr::read_volatile(&0u8); }",
+        "compliant_narrative": "n",
+        "compliant_code": "fn ok() {}",
+        "example_citation_keys": ["CIT-1"],
+        "non_compliant_miri_intent": "skip",
+        "compliant_miri_intent": "check",
+        "non_compliant_miri_justification": "old alias",
+    }
+    violations = validate_role_output(
+        role_name="example_author",
+        output=output,
+        role_contract=_contract(),
+        evidence_ids=set(),
+    )
+    assert "non_compliant_miri_skip_justification_alias_used" in violations
+    assert "non_compliant_miri_skip_requires_justification" in violations

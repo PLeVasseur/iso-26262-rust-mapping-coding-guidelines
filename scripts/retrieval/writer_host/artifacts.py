@@ -62,6 +62,7 @@ def write_normalization_report(path: Path, *, run_id: str, rows: list[dict[str, 
             {
                 "target_id": str(output.get("target_id", "")),
                 "prompt_id": prompt_id,
+                "uses_example_prompt_id": prompt_id == "EXAMPLE-001",
                 "construct_scope_is_list": isinstance(construct_scope, list),
                 "claim_map_is_list": isinstance(claim_map, list),
                 "claim_id_format_ok": claim_id_ok,
@@ -98,6 +99,17 @@ def write_evidence_gate_report(
         target_id = str(output.get("target_id", "")).strip()
         known = evidence_id_by_target.get(target_id, set())
         issues: list[str] = []
+        prompt_id = str(output.get("prompt_id", "")).strip()
+        if prompt_id == "EXAMPLE-001":
+            issues.append("prompt_example_contamination")
+        for field_name in ("hazard", "mechanism", "mitigation"):
+            if not str(output.get(field_name, "")).strip():
+                issues.append(f"{field_name}_empty")
+        construct_scope = output.get("construct_scope")
+        if not isinstance(construct_scope, list):
+            issues.append("construct_scope_missing")
+        elif not any(str(item).strip() for item in construct_scope):
+            issues.append("construct_scope_empty")
         claim_map = output.get("claim_to_evidence_map")
         if not isinstance(claim_map, list):
             issues.append("claim_map_missing")
@@ -124,7 +136,7 @@ def write_evidence_gate_report(
         results.append(
             {
                 "target_id": target_id,
-                "prompt_id": str(output.get("prompt_id", "")),
+                "prompt_id": prompt_id,
                 "status": "pass" if not issues else "fail",
                 "issues": issues,
             }

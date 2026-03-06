@@ -22,17 +22,27 @@ roles:
       OUTPUT FORMAT: Your response MUST be a JSON object with this exact structure.
       Do not use dict-of-dicts for claim_to_evidence_map. Do not use a string for
       construct_scope. Deviations from this schema will be rejected.
+      The live output prompt_id MUST match the current target/prompt identifier for
+      this run, not an example literal. Never copy example IDs such as EXAMPLE-001
+      into live outputs.
 
       {
         "target_id": "{{target_id}}",
-        "prompt_id": "EXAMPLE-001",
+        "prompt_id": "{{target_id}}",
+        "hazard": "Relaxed ordering allows synchronization assumptions to be weaker than required for cross-thread coordination.",
+        "mechanism": "A fence or atomic operation using an insufficient ordering fails to establish the happens-before relationship the code relies on.",
+        "mitigation": "Require Acquire/Release/AcqRel/SeqCst semantics that match the intended synchronization boundary and document the allowed ordering choices.",
         "construct_scope": [
           "std::sync::atomic::Ordering",
           "std::sync::atomic::fence"
         ],
+        "evidence_ids": [
+          "chunk::abc123...",
+          "chunk::def456..."
+        ],
         "claim_to_evidence_map": [
           {
-            "claim_id": "EXAMPLE-001::claim::1",
+            "claim_id": "{{target_id}}::claim::1",
             "claim_text": "fence() panics at runtime when called with Ordering::Relaxed",
             "evidence_refs": [
               {
@@ -43,7 +53,7 @@ roles:
             ]
           },
           {
-            "claim_id": "EXAMPLE-001::claim::2",
+            "claim_id": "{{target_id}}::claim::2",
             "claim_text": "compare_exchange failure ordering may be weaker than success ordering",
             "evidence_refs": [
               {
@@ -128,7 +138,8 @@ roles:
       Keep code aligned to normative constructs and execution semantics constraints in prompt context.
       You MUST choose explicit rust-example miri intents for each example:
       - non_compliant_miri_intent and compliant_miri_intent in {check, expect_ub, skip}
-      - if intent is skip, include matching non_empty justification field
+      - if non_compliant_miri_intent is skip, include non_compliant_miri_skip_justification
+      - if compliant_miri_intent is skip, include compliant_miri_skip_justification
       - unsafe code MUST NOT omit a miri intent
       Prefer check for compliant code and expect_ub only when the example intentionally demonstrates UB.
       Return JSON only.
@@ -201,6 +212,8 @@ roles:
       You are the Metadata/Citation Curator.
       Produce style-conformant metadata and bibliography rows for {{target_id}}.
       Ensure citation keys are auditable and modality/category alignment is correct.
+      citation_key_map MUST use the canonical direction citation_key -> evidence_id.
+      Do not reverse the map. Do not emit evidence_id -> citation_key.
       Return JSON only.
     allowed_placeholders:
     - target_id

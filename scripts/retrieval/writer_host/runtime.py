@@ -7,9 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from retrieval.services import query_service
+from opencode_model_registry import configured_default_model, ensure_model_available
 from retrieval.writer_host.artifacts import (
     write_evidence_gate_report,
     write_json,
@@ -26,78 +24,15 @@ from retrieval.writer_host.roles import (
     extract_claim_map,
     extract_construct_terms,
 )
-from retrieval.writer_host.validation import validate_role_output, validate_target_bundle
+from retrieval.writer_host.validation import (
+    canonicalize_metadata_citation_map,
+    validate_role_output,
+    validate_target_bundle,
+)
 
 
 def _now_run_id() -> str:
     return f"writer_host_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
-
-
-def _load_prompt_catalog(path: Path) -> dict[str, dict[str, Any]]:
-    with path.open("r", encoding="utf-8") as handle:
-        payload = yaml.safe_load(handle) or {}
-    prompts = payload.get("prompts") if isinstance(payload, dict) else None
-    result: dict[str, dict[str, Any]] = {}
-    if isinstance(prompts, list):
-        for row in prompts:
-            if not isinstance(row, dict):
-                continue
-            prompt_id = str(row.get("prompt_id", "")).strip()
-            if prompt_id:
-                result[prompt_id] = row
-    return result
-
-
-def _parse_targets(raw: str) -> list[str]:
-    values = [piece.strip() for piece in str(raw).split(",")]
-    return [value for value in values if value]
-
-
-def _slug(value: str) -> str:
-    return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
-
-
-def _query_target(
-    *,
-    root: Path,
-    corpus: str,
-    profile_path: str,
-    prompt_id: str,
-    query_text: str,
-    mode: str,
-    top_k: int,
-    save_response_dir: Path,
-) -> dict[str, Any]:
-    before = set(save_response_dir.glob("*.json"))
-    args = Namespace(
-        corpus=corpus,
-        profile_path=profile_path,
-        extra_args=[
-            "--mode",
-            mode,
-            "--prompt-id",
-            prompt_id,
-            "--query-text",
-            query_text,
-            "--top-k",
-            str(top_k),
-            "--include-score-breakdown",
-            "--save-response-dir",
-            str(save_response_dir),
-        ],
-    )
-    code = query_service.run(args, root=root)
-    if int(code) != 0:
-        raise RuntimeError(f"query failed for {prompt_id}: exit={code}")
-    after = set(save_response_dir.glob("*.json"))
-    created = sorted(after - before, key=lambda p: p.stat().st_mtime)
-    if not created:
-        pattern = f"*{_slug(prompt_id)}*"
-        created = sorted(save_response_dir.glob(pattern), key=lambda p: p.stat().st_mtime)
-    if not created:
-        raise RuntimeError(f"query output missing for {prompt_id}")
-    latest = created[-1]
-    return json.loads(latest.read_text(encoding="utf-8"))
 
 
 def _manifest_evidence_rows(target_row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -114,6 +49,8 @@ def _manifest_evidence_rows(target_row: dict[str, Any]) -> list[dict[str, Any]]:
         rows.append(
             {
                 "statement_id": statement_id,
+                "raw_statement_id": str(item.get("raw_statement_id", "")).strip(),
+                "corpus": str(item.get("corpus", "")).strip(),
                 "source_anchor": str(item.get("source_anchor", "")).strip(),
                 "final_score": float(item.get("score", 0.0) or 0.0),
                 "statement_text": str(item.get("statement_text", "")).strip(),
@@ -125,16 +62,20 @@ def _manifest_evidence_rows(target_row: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _normalize_synth_output(
     output: dict[str, Any], *, target_id: str
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[dict[str, Any], list[str]]:
     if not isinstance(output, dict):
-        return output, False
-    changed = False
+        return output, []
     normalized = dict(output)
+    changes: list[str] = []
     prompt_id = str(normalized.get("prompt_id", "")).strip()
     if not prompt_id:
         normalized["prompt_id"] = target_id
         prompt_id = target_id
-        changed = True
+        changes.append("prompt_id_missing_filled")
+    elif prompt_id != target_id:
+        normalized["prompt_id"] = target_id
+        prompt_id = target_id
+        changes.append("prompt_id_mismatch_rewritten")
     claim_map = normalized.get("claim_to_evidence_map")
     if isinstance(claim_map, list):
         rewritten: list[Any] = []
@@ -146,10 +87,115 @@ def _normalize_synth_output(
             expected = f"{prompt_id}::claim::{index}"
             if str(entry.get("claim_id", "")).strip() != expected:
                 entry["claim_id"] = expected
-                changed = True
+                if "claim_ids_rewritten" not in changes:
+                    changes.append("claim_ids_rewritten")
             rewritten.append(entry)
         normalized["claim_to_evidence_map"] = rewritten
-    return normalized, changed
+    return normalized, changes
+
+
+def _normalize_example_output(output: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    if not isinstance(output, dict):
+        return output, []
+    normalized = dict(output)
+    changes: list[str] = []
+    alias_pairs = (
+        ("non_compliant_miri_justification", "non_compliant_miri_skip_justification"),
+        ("compliant_miri_justification", "compliant_miri_skip_justification"),
+    )
+    for alias_key, canonical_key in alias_pairs:
+        alias_value = str(normalized.get(alias_key, "")).strip()
+        canonical_value = str(normalized.get(canonical_key, "")).strip()
+        if alias_value and not canonical_value:
+            normalized[canonical_key] = alias_value
+            changes.append(f"{canonical_key}_aliased")
+    return normalized, changes
+
+
+def _normalize_author_citation_keys(
+    output: dict[str, Any], *, role_name: str, synth_evidence_ids: set[str]
+) -> tuple[dict[str, Any], list[str]]:
+    if not isinstance(output, dict):
+        return output, []
+    field_name = {
+        "amplification_author": "amplification_citation_keys",
+        "example_author": "example_citation_keys",
+        "rationale_author": "rationale_citation_keys",
+    }.get(role_name)
+    if not field_name:
+        return output, []
+
+    citation_keys = output.get(field_name)
+    if not isinstance(citation_keys, list):
+        return output, []
+
+    normalized = dict(output)
+    rewritten: list[Any] = []
+    changes: list[str] = []
+    for raw_key in citation_keys:
+        key_text = str(raw_key).strip()
+        replacement = key_text
+        if key_text and key_text not in synth_evidence_ids:
+            candidates = []
+            for evidence_id in synth_evidence_ids:
+                if len(evidence_id) != len(key_text):
+                    continue
+                if evidence_id.split("::", 1)[0] != key_text.split("::", 1)[0]:
+                    continue
+                distance = sum(1 for left, right in zip(evidence_id, key_text) if left != right)
+                if distance == 1:
+                    candidates.append(evidence_id)
+            if len(candidates) == 1:
+                replacement = candidates[0]
+                changes.append(f"{field_name}_evidence_id_typo_corrected")
+        rewritten.append(replacement)
+    normalized[field_name] = rewritten
+    return normalized, changes
+
+
+def _normalize_metadata_output(
+    output: dict[str, Any], *, synth_evidence_ids: set[str]
+) -> tuple[dict[str, Any], list[str]]:
+    if not isinstance(output, dict):
+        return output, []
+    normalized = dict(output)
+    citation_map, inverted = canonicalize_metadata_citation_map(
+        normalized.get("citation_key_map"), synth_evidence_ids=synth_evidence_ids
+    )
+    changes: list[str] = []
+    if citation_map:
+        normalized["citation_key_map"] = citation_map
+    if inverted:
+        changes.append("citation_key_map_reversed_inverted")
+    return normalized, changes
+
+
+def _write_progress(
+    *,
+    path: Path,
+    run_id: str,
+    target_ids: list[str],
+    completed_targets: list[str],
+    current_target: str,
+    current_role: str,
+    completed_roles: int,
+    total_roles: int,
+    status: str,
+) -> None:
+    write_json(
+        path,
+        {
+            "run_id": run_id,
+            "status": status,
+            "target_count": len(target_ids),
+            "completed_target_count": len(completed_targets),
+            "completed_targets": completed_targets,
+            "current_target": current_target,
+            "current_role": current_role,
+            "completed_roles": completed_roles,
+            "total_roles": total_roles,
+        },
+    )
 
 
 def run(args: Namespace, *, root: Path) -> int:
@@ -159,10 +205,8 @@ def run(args: Namespace, *, root: Path) -> int:
         Path(report_root) if report_root else root / ".cache" / "sqlite_kb" / "reports" / run_id
     ).resolve()
     writer_root = run_dir / "writer_subagent_outputs"
-    evidence_dir = run_dir / "evidence_bundle"
     run_dir.mkdir(parents=True, exist_ok=True)
     writer_root.mkdir(parents=True, exist_ok=True)
-    evidence_dir.mkdir(parents=True, exist_ok=True)
 
     contract_path = (
         root / str(getattr(args, "contract_path", "config/s0/writer_prompt_contracts.yaml"))
@@ -170,7 +214,31 @@ def run(args: Namespace, *, root: Path) -> int:
     contracts = load_contracts(contract_path)
     contract_snapshot = build_contract_snapshot(contracts)
 
+    evidence_manifest_raw = str(getattr(args, "evidence_manifest", "") or "").strip()
+    if not evidence_manifest_raw:
+        raise RuntimeError("writer-run requires --evidence-manifest")
+    manifest_path = Path(evidence_manifest_raw).resolve()
+    manifest = load_manifest(manifest_path)
+    manifest_lookup = target_index(manifest)
+    target_ids = list(manifest_lookup.keys())
+    if not target_ids:
+        raise RuntimeError("writer-run evidence manifest missing targets")
+    evidence_manifest_path = str(manifest_path)
+    progress_path = run_dir / "writer_execution_progress.json"
+    total_roles = len(target_ids) * len(REQUIRED_ROLES)
+
     if bool(getattr(args, "dry_run", False)):
+        _write_progress(
+            path=progress_path,
+            run_id=run_id,
+            target_ids=target_ids,
+            completed_targets=target_ids,
+            current_target="",
+            current_role="",
+            completed_roles=total_roles,
+            total_roles=total_roles,
+            status="dry_run",
+        )
         write_writer_outputs(
             writer_root=writer_root,
             role_rows={role: [] for role in REQUIRED_ROLES},
@@ -179,45 +247,26 @@ def run(args: Namespace, *, root: Path) -> int:
             merge_validation_report={"run_id": run_id, "status": "pass", "notes": ["dry-run"]},
         )
         write_json(
-            run_dir / "writer_host_run_summary.json", {"run_id": run_id, "status": "dry_run"}
+            run_dir / "writer_host_run_summary.json",
+            {
+                "run_id": run_id,
+                "status": "dry_run",
+                "target_ids": target_ids,
+                "evidence_manifest": evidence_manifest_path,
+                "corpora": list(manifest.get("corpora") or []),
+            },
         )
         return 0
 
-    evidence_manifest_raw = str(getattr(args, "evidence_manifest", "") or "").strip()
-    manifest_lookup: dict[str, dict[str, Any]] = {}
-    evidence_manifest_path = ""
-    if evidence_manifest_raw:
-        manifest_path = Path(evidence_manifest_raw).resolve()
-        manifest = load_manifest(manifest_path)
-        manifest_lookup = target_index(manifest)
-        evidence_manifest_path = str(manifest_path)
-
-    target_ids = _parse_targets(str(getattr(args, "targets", "") or ""))
-    if not target_ids and manifest_lookup:
-        target_ids = list(manifest_lookup.keys())
-    if not target_ids:
-        raise RuntimeError("writer-run requires --targets or --evidence-manifest")
-
-    prompt_catalog = _load_prompt_catalog(
-        (
-            root
-            / str(
-                getattr(
-                    args,
-                    "query_testset_path",
-                    "data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
-                )
-            )
-        ).resolve()
-    )
     role_cfg = contracts.get("roles") if isinstance(contracts.get("roles"), dict) else {}
     max_retries = int(getattr(args, "max_retries", 2) or 2)
-    mode = str(getattr(args, "query_mode", "lexical") or "lexical")
-    top_k = int(getattr(args, "top_k", 20) or 20)
-    corpus = str(getattr(args, "corpus", "rust_reference") or "rust_reference")
-    profile_path = str(getattr(args, "profile_path", "") or "")
     model = str(getattr(args, "model", "") or os.environ.get("WRITER_MODEL", "")).strip() or None
+    effective_model = model or configured_default_model(root / "opencode.json")
     agent = str(getattr(args, "agent", "") or os.environ.get("WRITER_AGENT", "")).strip() or None
+    ensure_model_available(effective_model)
+    corpora_used = (
+        list(manifest.get("corpora") or []) if isinstance(manifest.get("corpora"), list) else []
+    )
 
     role_rows: dict[str, list[dict[str, Any]]] = {role: [] for role in REQUIRED_ROLES}
     invocation_trace: list[dict[str, Any]] = []
@@ -225,63 +274,52 @@ def run(args: Namespace, *, root: Path) -> int:
     merge_entries: list[dict[str, Any]] = []
     drafts: list[dict[str, Any]] = []
     evidence_ids_by_target: dict[str, set[str]] = {}
+    completed_targets: list[str] = []
+    completed_roles = 0
+
+    _write_progress(
+        path=progress_path,
+        run_id=run_id,
+        target_ids=target_ids,
+        completed_targets=completed_targets,
+        current_target="",
+        current_role="",
+        completed_roles=completed_roles,
+        total_roles=total_roles,
+        status="running",
+    )
 
     for target_id in target_ids:
-        prompt = prompt_catalog.get(target_id)
-        if not isinstance(prompt, dict):
-            raise RuntimeError(f"prompt_id not found in query testset: {target_id}")
         manifest_target = manifest_lookup.get(target_id, {})
-        query_text = str(
-            manifest_target.get("query_text", "") or prompt.get("query_text", "")
-        ).strip()
-        expected_row_markers = list(
-            manifest_target.get("expected_row_markers") or prompt.get("expected_row_markers") or []
-        )
+        if not manifest_target:
+            raise RuntimeError(f"target missing from evidence manifest: {target_id}")
+        query_text = str(manifest_target.get("query_text", "") or "").strip()
+        expected_row_markers = list(manifest_target.get("expected_row_markers") or [])
         expected_row_marker = str(expected_row_markers[0]) if expected_row_markers else ""
-        evidence_rows: list[dict[str, Any]]
-        if manifest_target:
-            evidence_rows = _manifest_evidence_rows(manifest_target)
-        else:
-            query_payload = _query_target(
-                root=root,
-                corpus=corpus,
-                profile_path=profile_path,
-                prompt_id=target_id,
-                query_text=query_text,
-                mode=mode,
-                top_k=top_k,
-                save_response_dir=evidence_dir,
+        evidence_rows = _manifest_evidence_rows(manifest_target)
+        if not query_text:
+            raise RuntimeError(f"query_text missing from evidence manifest target: {target_id}")
+        if not evidence_rows:
+            raise RuntimeError(
+                f"selected_evidence missing from evidence manifest target: {target_id}"
             )
-            response = query_payload.get("response") if isinstance(query_payload, dict) else {}
-            rows = list(response.get("rows") or []) if isinstance(response, dict) else []
-            evidence_rows = []
-            for row in rows[:5]:
-                if not isinstance(row, dict):
-                    continue
-                statement_id = str(
-                    row.get("statement_id") or row.get("top_statement_id") or ""
-                ).strip()
-                if not statement_id:
-                    continue
-                evidence_rows.append(
-                    {
-                        "statement_id": statement_id,
-                        "source_anchor": str(
-                            row.get("source_anchor") or row.get("top_source_anchor") or ""
-                        ),
-                        "score": float(row.get("final_score") or 0.0),
-                        "statement_text": str(
-                            row.get("statement_text") or row.get("chunk_text") or ""
-                        ),
-                        "doc_id": str(row.get("doc_id") or row.get("top_doc_id") or ""),
-                    }
-                )
         evidence_ids_by_target[target_id] = {
             str(row.get("statement_id", "")) for row in evidence_rows
         }
 
         prior_outputs: dict[str, dict[str, Any]] = {}
         for role_name in REQUIRED_ROLES:
+            _write_progress(
+                path=progress_path,
+                run_id=run_id,
+                target_ids=target_ids,
+                completed_targets=completed_targets,
+                current_target=target_id,
+                current_role=role_name,
+                completed_roles=completed_roles,
+                total_roles=total_roles,
+                status="running",
+            )
             role_contract = role_cfg.get(role_name) if isinstance(role_cfg, dict) else {}
             if not isinstance(role_contract, dict):
                 raise RuntimeError(f"missing role config: {role_name}")
@@ -298,12 +336,19 @@ def run(args: Namespace, *, root: Path) -> int:
                 role_contract=role_contract_dict,
             )
 
-            def _validate(output: dict[str, Any]) -> list[str]:
+            def _validate(
+                output: dict[str, Any],
+                *,
+                _role_name: str = role_name,
+                _role_contract: dict[str, Any] = role_contract_dict,
+                _target_id: str = target_id,
+            ) -> list[str]:
                 return validate_role_output(
-                    role_name=role_name,
+                    role_name=_role_name,
                     output=output,
-                    role_contract=role_contract_dict,
-                    evidence_ids=evidence_ids_by_target[target_id],
+                    role_contract=_role_contract,
+                    evidence_ids=evidence_ids_by_target[_target_id],
+                    expected_prompt_id=_target_id if _role_name == "evidence_synthesizer" else None,
                 )
 
             outcome = run_role_with_retry(
@@ -311,17 +356,46 @@ def run(args: Namespace, *, root: Path) -> int:
                 prompt=prompt_text,
                 validate_output=_validate,
                 max_retries=max_retries,
-                model=model,
+                model=effective_model,
                 agent=agent,
             )
-            normalized_applied = False
-            if role_name == "evidence_synthesizer" and isinstance(outcome.output, dict):
-                normalized_output, normalized_applied = _normalize_synth_output(
+            normalization_changes: list[str] = []
+            if (
+                role_name == "evidence_synthesizer"
+                and outcome.failure_kind is None
+                and isinstance(outcome.output, dict)
+                and outcome.output
+            ):
+                normalized_output, normalization_changes = _normalize_synth_output(
                     outcome.output, target_id=target_id
                 )
                 outcome.output = normalized_output
-                if normalized_applied:
-                    outcome.violations = _validate(outcome.output)
+            elif (
+                role_name in {"amplification_author", "example_author", "rationale_author"}
+                and outcome.failure_kind is None
+                and isinstance(outcome.output, dict)
+                and outcome.output
+            ):
+                outcome.output, normalization_changes = _normalize_author_citation_keys(
+                    outcome.output,
+                    role_name=role_name,
+                    synth_evidence_ids=evidence_ids_by_target[target_id],
+                )
+                if role_name == "example_author":
+                    outcome.output, extra_changes = _normalize_example_output(outcome.output)
+                    normalization_changes.extend(extra_changes)
+            elif (
+                role_name == "metadata_citation_curator"
+                and outcome.failure_kind is None
+                and isinstance(outcome.output, dict)
+                and outcome.output
+            ):
+                outcome.output, normalization_changes = _normalize_metadata_output(
+                    outcome.output,
+                    synth_evidence_ids=evidence_ids_by_target[target_id],
+                )
+            if normalization_changes:
+                outcome.violations = _validate(outcome.output)
             prior_outputs[role_name] = outcome.output
             role_rows[role_name].append(
                 {
@@ -339,7 +413,7 @@ def run(args: Namespace, *, root: Path) -> int:
                     "target_id": target_id,
                     "role": role_name,
                     "session_id": outcome.session_id,
-                    "model": model,
+                    "model": effective_model,
                     "agent": agent,
                     "prompt_hash": prompt_hash,
                     "attempts": outcome.attempts,
@@ -347,7 +421,10 @@ def run(args: Namespace, *, root: Path) -> int:
                     "oscillation_detected": outcome.oscillation_detected,
                     "diminishing_returns": outcome.diminishing_returns,
                     "budget_exhausted": outcome.budget_exhausted,
-                    "normalization_fallback_applied": normalized_applied,
+                    "failure_kind": outcome.failure_kind,
+                    "failure_detail": outcome.failure_detail,
+                    "normalization_fallback_applied": bool(normalization_changes),
+                    "normalization_changes": normalization_changes,
                 }
             )
             validation_entries.append(
@@ -357,6 +434,18 @@ def run(args: Namespace, *, root: Path) -> int:
                     "attempts": outcome.attempts,
                     "violations": outcome.violations,
                 }
+            )
+            completed_roles += 1
+            _write_progress(
+                path=progress_path,
+                run_id=run_id,
+                target_ids=target_ids,
+                completed_targets=completed_targets,
+                current_target=target_id,
+                current_role=role_name,
+                completed_roles=completed_roles,
+                total_roles=total_roles,
+                status="running",
             )
 
         synth = prior_outputs.get("evidence_synthesizer", {})
@@ -393,6 +482,18 @@ def run(args: Namespace, *, root: Path) -> int:
                 "construct_terms": extract_construct_terms(synth),
                 "claim_to_evidence_map": extract_claim_map(synth),
             }
+        )
+        completed_targets.append(target_id)
+        _write_progress(
+            path=progress_path,
+            run_id=run_id,
+            target_ids=target_ids,
+            completed_targets=completed_targets,
+            current_target=target_id,
+            current_role="merge",
+            completed_roles=completed_roles,
+            total_roles=total_roles,
+            status="running",
         )
 
     write_writer_outputs(
@@ -445,6 +546,18 @@ def run(args: Namespace, *, root: Path) -> int:
             "normalization_report": str(run_dir / "normalization_report.json"),
             "evidence_gate_report": str(run_dir / "evidence_synthesizer_gate_report.json"),
             "evidence_manifest": evidence_manifest_path,
+            "corpora": corpora_used,
         },
+    )
+    _write_progress(
+        path=progress_path,
+        run_id=run_id,
+        target_ids=target_ids,
+        completed_targets=completed_targets,
+        current_target="",
+        current_role="",
+        completed_roles=completed_roles,
+        total_roles=total_roles,
+        status="completed" if not has_violations else "completed_with_violations",
     )
     return 0 if not has_violations else 2
