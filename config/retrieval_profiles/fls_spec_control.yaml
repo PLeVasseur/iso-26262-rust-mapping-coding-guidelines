@@ -1,0 +1,22 @@
+profile: fls_spec_control
+corpus: fls_spec
+query_mode_default: hybrid
+retrieval:
+  top_k: 12
+  candidate_limit: 4000
+models:
+  embed_model_id: Qwen/Qwen3-Embedding-4B
+  reranker_model_id: BAAI/bge-reranker-v2-m3
+semantic:
+  timeout_sec: 120
+  retries: 0
+hybrid:
+  fusion_method: weighted-v2
+  candidate_policy: lexical_semantic_union_v2
+  rerank_pool_size: 128
+  lexical_min: 24
+  semantic_min: 24
+  lexical_floor_count: 24
+  lexical_floor_share: 0.25
+  rrf_k: 60
+  rrf_window: 128

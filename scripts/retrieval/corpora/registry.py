@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from retrieval.corpora.base import CorpusAdapter
 from retrieval.corpora.core_docs_adapter import CoreDocsAdapter
+from retrieval.corpora.fls_spec_adapter import FlsSpecAdapter
 from retrieval.corpora.guidelines_repo_adapter import GuidelinesRepoAdapter
 from retrieval.corpora.rust_reference_adapter import RustReferenceAdapter
 
 _ADAPTERS: dict[str, CorpusAdapter] = {
     "rust_reference": RustReferenceAdapter(),
     "core_docs": CoreDocsAdapter(),
+    "fls_spec": FlsSpecAdapter(),
     "guidelines_repo": GuidelinesRepoAdapter(),
 }
 

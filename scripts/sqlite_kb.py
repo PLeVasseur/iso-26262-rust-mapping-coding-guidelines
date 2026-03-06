@@ -22,6 +22,7 @@ from retrieval.corpora.registry import list_supported_corpora
 from retrieval.services import (
     build_service,
     capture_service,
+    coding_guidelines_service,
     eval_report_service,
     eval_service,
     export_service,
@@ -35,15 +36,15 @@ from retrieval.services import (
     validate_audit_service,
     validate_service,
     verify_service,
-    writer_publish_service,
+    writer_campaign_service,
+    writer_conformance_service,
     writer_evidence_service,
+    writer_host_service,
+    writer_publish_service,
     writer_quality_gate_service,
     writer_review_packet_service,
     writer_run_service,
-    writer_host_service,
-    writer_conformance_service,
     writer_targets_service,
-    coding_guidelines_service,
 )
 from retrieval.services.capability import emit_unsupported
 from retrieval.services.provenance_guard import enforce_provenance_guard
@@ -234,6 +235,21 @@ def parse_args() -> argparse.Namespace:
         default="data/query_testsets/rust_reference_table1_retrieval_eval.yaml",
     )
 
+    writer_campaign = subparsers.add_parser("writer-campaign")
+    writer_campaign.add_argument("--corpora", default="rust_reference,core_docs")
+    writer_campaign.add_argument("--profile-path", default="")
+    writer_campaign.add_argument("--targets-manifest", required=True)
+    writer_campaign.add_argument("--run-id", default="")
+    writer_campaign.add_argument("--report-root", default="")
+    writer_campaign.add_argument("--output", default="")
+    writer_campaign.add_argument("--modes", default="lexical,semantic,hybrid")
+    writer_campaign.add_argument("--top-k", type=int, default=20)
+    writer_campaign.add_argument("--top-n-per-corpus", type=int, default=6)
+    writer_campaign.add_argument("--top-n-total", type=int, default=12)
+    writer_campaign.add_argument("--rrf-k", type=int, default=60)
+    writer_campaign.add_argument("--rank-window", type=int, default=100)
+    writer_campaign.add_argument("--allow-degraded", action="store_true")
+
     writer_quality_gate = subparsers.add_parser("writer-quality-gate")
     _add_common(writer_quality_gate)
     writer_quality_gate.add_argument("--run-dir", required=True)
@@ -368,6 +384,8 @@ def main() -> int:
             return phase_a_retired.run_enforce_calibration_quality(args, root=root)
         if args.subcommand == "pack-reviewer-packet":
             return phase_a_retired.run_pack_reviewer_packet(args, root=root)
+        if args.subcommand == "writer-campaign":
+            return writer_campaign_service.run(args, root=root)
 
         defaults = load_corpus_runtime_defaults(root=root, corpus=str(args.corpus))
         support_map = {

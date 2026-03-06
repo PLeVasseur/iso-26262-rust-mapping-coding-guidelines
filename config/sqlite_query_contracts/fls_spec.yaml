@@ -1,0 +1,92 @@
+version: 1
+database: fls_spec
+defaults:
+  row_limit: 200
+
+queries:
+  table1_row_requirements_v1:
+    description: Synthetic row requirement profile for fls_spec lexical/semantic retrieval
+    requires_order: true
+    row_limit: 1
+    params:
+      - row_marker
+    sql: |
+      SELECT
+        'fls' AS row_node_id,
+        'fls' AS row_marker,
+        'FLS paragraph retrieval profile' AS requirement_text,
+        'fls,paragraph,spec' AS profile_terms
+      ORDER BY row_marker ASC
+
+  statement_corpus_v3_all:
+    description: Full FLS paragraph retrieval corpus
+    requires_order: true
+    row_limit: 5000
+    params:
+      - statement_id_after
+    sql: |
+      SELECT
+        p.paragraph_id AS statement_id,
+        p.text AS statement_text,
+        COALESCE(p.section, p.chapter, '') AS section_heading,
+        ('https://rust-lang.github.io/fls/' || LOWER(COALESCE(p.chapter, '')) || '.html#' || p.paragraph_id) AS source_anchor,
+        COALESCE(s.built_at, '') AS source_fetched_at,
+        'fls' AS row_markers,
+        '' AS mechanism_ids,
+        '' AS mechanism_families
+      FROM paragraphs AS p
+      LEFT JOIN snapshots AS s ON s.snapshot_id = p.snapshot_id
+      WHERE :statement_id_after = '' OR p.paragraph_id > :statement_id_after
+      ORDER BY p.paragraph_id ASC
+
+  lexical_statement_search_v2:
+    description: Free-text lexical paragraph candidates using FTS5 and BM25
+    requires_order: true
+    row_limit: 500
+    params:
+      - fts_query
+    sql: |
+      SELECT
+        paragraph_id AS statement_id,
+        bm25(paragraphs_fts) AS bm25_raw
+      FROM paragraphs_fts
+      WHERE paragraphs_fts MATCH :fts_query
+      ORDER BY bm25_raw ASC, paragraph_id ASC
+
+  fls_paragraph_lookup_v1:
+    description: Lookup a single FLS paragraph by statement_id
+    requires_order: true
+    row_limit: 1
+    params:
+      - statement_id
+    sql: |
+      SELECT
+        p.paragraph_id AS statement_id,
+        p.paragraph_id AS paragraph_id,
+        p.text AS statement_text,
+        p.text AS text,
+        p.chapter AS chapter,
+        p.section AS section,
+        p.paragraph_number AS paragraph_number,
+        p.source_file AS source_file,
+        ('https://rust-lang.github.io/fls/' || LOWER(COALESCE(p.chapter, '')) || '.html#' || p.paragraph_id) AS source_anchor,
+        COALESCE(s.built_at, '') AS source_fetched_at,
+        'fls' AS row_markers,
+        '' AS mechanism_ids,
+        '' AS mechanism_families
+      FROM paragraphs AS p
+      LEFT JOIN snapshots AS s ON s.snapshot_id = p.snapshot_id
+      WHERE p.paragraph_id = :statement_id
+      ORDER BY p.paragraph_id ASC
+
+  fls_stats_v1:
+    description: Summary stats for fls_spec corpus health checks
+    requires_order: false
+    row_limit: 1
+    params: []
+    sql: |
+      SELECT
+        (SELECT COUNT(*) FROM paragraphs) AS paragraph_count,
+        (SELECT COUNT(DISTINCT chapter) FROM paragraphs) AS chapter_count,
+        COALESCE((SELECT commit_sha FROM snapshots ORDER BY snapshot_id DESC LIMIT 1), '') AS commit_sha,
+        COALESCE((SELECT built_at FROM snapshots ORDER BY snapshot_id DESC LIMIT 1), '') AS built_at

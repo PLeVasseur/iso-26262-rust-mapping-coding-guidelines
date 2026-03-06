@@ -45,6 +45,18 @@ class CorpusConfigLoaderTests(unittest.TestCase):
         self.assertTrue(cfg.supports_inspect)
         self.assertTrue(str(cfg.contract_path).endswith("guidelines_repo.yaml"))
 
+    def test_fls_spec_defaults_load(self) -> None:
+        cfg = load_corpus_runtime_defaults(root=ROOT, corpus="fls_spec")
+        self.assertEqual(cfg.corpus, "fls_spec")
+        self.assertEqual(cfg.profile_name, "fls_spec_control")
+        self.assertTrue(cfg.supports_query)
+        self.assertTrue(cfg.supports_materialize)
+        self.assertEqual(cfg.ingest_strategy, "fls_spec_v1")
+        self.assertEqual(cfg.chunk_target_min_tokens, 80)
+        self.assertEqual(cfg.chunk_target_max_tokens, 260)
+        self.assertEqual(cfg.chunk_overlap_percent, 0.0)
+        self.assertTrue(str(cfg.contract_path).endswith("fls_spec.yaml"))
+
 
 if __name__ == "__main__":
     unittest.main()

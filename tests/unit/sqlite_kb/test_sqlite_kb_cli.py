@@ -183,6 +183,21 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.subcommand, "writer-evidence")
         self.assertEqual(args.modes, "lexical,semantic,hybrid")
 
+    def test_parse_args_for_writer_campaign(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-campaign",
+                "--targets-manifest",
+                ".cache/sqlite_kb/reports/demo/targets.json",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-campaign")
+        self.assertEqual(args.corpora, "rust_reference,core_docs")
+
     def test_parse_args_for_writer_run_with_manifest(self) -> None:
         with patch.object(
             sys,

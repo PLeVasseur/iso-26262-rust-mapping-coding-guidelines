@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
-import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,43 @@ GUIDELINES_REPO_ROOT = Path(
 SPEC_LOCK_PATH = GUIDELINES_REPO_ROOT / "src" / "spec.lock"
 EXEMPLAR_MANIFEST = PROJECT_ROOT / "data" / "exemplar_manifest.json"
 _EXEMPLAR_OVERRIDES: list[dict[str, Any]] | None = None
+
+
+def _bootstrap_scripts_path() -> None:
+    scripts = PROJECT_ROOT / "scripts"
+    value = str(scripts)
+    if value not in sys.path:
+        sys.path.insert(0, value)
+
+
+def _load_fls_runtime() -> tuple[Path, Path, Path]:
+    _bootstrap_scripts_path()
+    from retrieval.corpora.config_loader import load_corpus_runtime_defaults
+
+    defaults = load_corpus_runtime_defaults(root=PROJECT_ROOT, corpus="fls_spec")
+    return defaults.db_path, defaults.contract_path, defaults.query_log_root
+
+
+def _query_contract(
+    *,
+    query_id: str,
+    params: dict[str, Any] | None = None,
+    row_limit: int | None = None,
+    db_path: Path | None = None,
+) -> dict[str, Any]:
+    _bootstrap_scripts_path()
+    from sqlite_query_guardrails import execute_contract_query
+
+    resolved_db_path = _resolve_fls_db_path(db_path)
+    _, contract_path, query_log_root = _load_fls_runtime()
+    return execute_contract_query(
+        db_path=resolved_db_path,
+        contract_path=contract_path,
+        query_id=query_id,
+        params=params,
+        row_limit=row_limit,
+        query_log_root=query_log_root,
+    )
 
 
 def _resolve_fls_db_path(db_path: Path | None = None) -> Path:
@@ -54,13 +91,12 @@ def _fts_query(text: str) -> str:
 def _db_has_paragraphs(db_path: Path) -> bool:
     if not db_path.exists():
         return False
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
-        count = int(connection.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0])
-    except sqlite3.Error:
+        result = _query_contract(query_id="fls_stats_v1", params={}, row_limit=1, db_path=db_path)
+        rows = list(result.get("rows") or [])
+        count = int(rows[0].get("paragraph_count", 0)) if rows else 0
+    except Exception:
         return False
-    finally:
-        connection.close()
     return count > 0
 
 
@@ -152,28 +188,25 @@ def _match_exemplar_override(construct_terms: list[str]) -> str:
 
 
 def _fetch_paragraph(paragraph_id: str, db_path: Path) -> dict[str, str] | None:
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
     try:
-        row = connection.execute(
-            """
-            SELECT paragraph_id, text, chapter, section, paragraph_number
-            FROM paragraphs
-            WHERE paragraph_id = ?
-            LIMIT 1
-            """,
-            (paragraph_id,),
-        ).fetchone()
-    finally:
-        connection.close()
-    if row is None:
+        result = _query_contract(
+            query_id="fls_paragraph_lookup_v1",
+            params={"statement_id": paragraph_id},
+            row_limit=1,
+            db_path=db_path,
+        )
+    except Exception:
         return None
+    rows = list(result.get("rows") or [])
+    if not rows:
+        return None
+    row = rows[0]
     return {
-        "paragraph_id": str(row["paragraph_id"]),
-        "text": str(row["text"]),
-        "chapter": str(row["chapter"]),
-        "section": str(row["section"]),
-        "paragraph_number": str(row["paragraph_number"]),
+        "paragraph_id": str(row.get("paragraph_id", "")),
+        "text": str(row.get("text", "")),
+        "chapter": str(row.get("chapter", "")),
+        "section": str(row.get("section", "")),
+        "paragraph_number": str(row.get("paragraph_number", "")),
     }
 
 
@@ -186,75 +219,53 @@ def search_fls_paragraphs(
     db_path = _resolve_fls_db_path(db_path)
     if not db_path.exists():
         return []
+    _bootstrap_scripts_path()
+    from retrieval.operations.query import execute_retrieval_query
+    from semantic_backend_client import SemanticBackendConfig
 
-    fts_query = _fts_query(query)
-    if not fts_query:
-        return []
-
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    try:
-        rows = connection.execute(
-            """
-            SELECT
-                p.paragraph_id,
-                p.paragraph_number,
-                p.chapter,
-                p.section,
-                p.text,
-                p.source_file,
-                paragraphs_fts.rank AS bm25_rank
-            FROM paragraphs_fts
-            JOIN paragraphs AS p ON paragraphs_fts.rowid = p.rowid
-            WHERE paragraphs_fts MATCH ?
-            ORDER BY paragraphs_fts.rank ASC
-            LIMIT ?
-            """,
-            (fts_query, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        connection.close()
-
-
-def _search_fls_paragraphs_in_chapter(
-    query: str,
-    *,
-    chapter: str,
-    db_path: Path,
-    limit: int = 5,
-) -> list[dict[str, Any]]:
-    if not db_path.exists():
-        return []
-
-    fts_query = _fts_query(query)
-    if not fts_query:
-        return []
-
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    try:
-        rows = connection.execute(
-            """
-            SELECT
-                p.paragraph_id,
-                p.paragraph_number,
-                p.chapter,
-                p.section,
-                p.text,
-                p.source_file,
-                paragraphs_fts.rank AS bm25_rank
-            FROM paragraphs_fts
-            JOIN paragraphs AS p ON paragraphs_fts.rowid = p.rowid
-            WHERE paragraphs_fts MATCH ? AND p.chapter = ?
-            ORDER BY paragraphs_fts.rank ASC
-            LIMIT ?
-            """,
-            (fts_query, chapter, limit),
-        ).fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        connection.close()
+    runtime_db_path, contract_path, query_log_root = _load_fls_runtime()
+    result = execute_retrieval_query(
+        mode="lexical",
+        db_path=db_path if db_path.exists() else runtime_db_path,
+        contract_path=contract_path,
+        query_log_root=query_log_root,
+        query_text=query,
+        row_marker="",
+        top_k=max(1, int(limit)),
+        candidate_limit=max(250, int(limit) * 25),
+        allow_degraded=True,
+        semantic_config=SemanticBackendConfig(
+            base_url="http://127.0.0.1:8080",
+            embed_model_id="Qwen/Qwen3-Embedding-4B",
+            reranker_model_id="BAAI/bge-reranker-v2-m3",
+        ),
+        semantic_retries=0,
+        persist_semantic_cache=False,
+        allow_online_corpus_embedding=False,
+        corpus="fls_spec",
+    )
+    rows = list(result.get("rows") or [])
+    out: list[dict[str, Any]] = []
+    for row in rows[: max(1, int(limit))]:
+        paragraph_id = str(row.get("statement_id", "")).strip()
+        if not paragraph_id:
+            continue
+        details = _fetch_paragraph(paragraph_id, db_path)
+        if not details:
+            continue
+        out.append(
+            {
+                "paragraph_id": paragraph_id,
+                "paragraph_number": str(details.get("paragraph_number", "")),
+                "chapter": str(details.get("chapter", "")),
+                "section": str(details.get("section", "")),
+                "text": str(details.get("text", "")),
+                "source_file": "",
+                "bm25_rank": float(row.get("bm25_raw", 0.0)),
+                "lexical_score": float(row.get("lexical_score", 0.0)),
+            }
+        )
+    return out
 
 
 def validate_fls_id(paragraph_id: str, *, spec_lock_path: Path = SPEC_LOCK_PATH) -> bool:
@@ -337,17 +348,6 @@ def resolve_fls_for_construct(
             if str(candidate.get("chapter", "")) in preferred_set:
                 best = candidate
                 break
-        else:
-            for chapter in preferred_chapters:
-                chapter_results = _search_fls_paragraphs_in_chapter(
-                    broad_query,
-                    chapter=chapter,
-                    db_path=db_path,
-                    limit=3,
-                )
-                if chapter_results:
-                    best = chapter_results[0]
-                    break
     paragraph_id = str(best.get("paragraph_id", ""))
     if not paragraph_id:
         return _unresolved("search returned no paragraph_id")
@@ -370,23 +370,13 @@ def get_fls_db_stats(db_path: Path | None = None) -> dict[str, Any]:
     db_path = _resolve_fls_db_path(db_path)
     if not db_path.exists():
         return {"available": False, "source": "none"}
-
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    try:
-        paragraph_count = int(connection.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0])
-        chapter_count = int(
-            connection.execute("SELECT COUNT(DISTINCT chapter) FROM paragraphs").fetchone()[0]
-        )
-        latest = connection.execute(
-            """
-            SELECT commit_sha, built_at
-            FROM snapshots
-            ORDER BY snapshot_id DESC
-            LIMIT 1
-            """
-        ).fetchone()
-    finally:
-        connection.close()
+    result = _query_contract(query_id="fls_stats_v1", params={}, row_limit=1, db_path=db_path)
+    rows = list(result.get("rows") or [])
+    top = rows[0] if rows else {}
+    paragraph_count = int(top.get("paragraph_count", 0) or 0)
+    chapter_count = int(top.get("chapter_count", 0) or 0)
+    commit_sha = str(top.get("commit_sha", "") or "")
+    built_at = str(top.get("built_at", "") or "")
 
     stats: dict[str, Any] = {
         "available": paragraph_count > 0,
@@ -394,7 +384,8 @@ def get_fls_db_stats(db_path: Path | None = None) -> dict[str, Any]:
         "paragraph_count": paragraph_count,
         "chapter_count": chapter_count,
     }
-    if latest:
-        stats["commit_sha"] = latest[0]
-        stats["built_at"] = latest[1]
+    if commit_sha:
+        stats["commit_sha"] = commit_sha
+    if built_at:
+        stats["built_at"] = built_at
     return stats
