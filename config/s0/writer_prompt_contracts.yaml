@@ -126,6 +126,11 @@ roles:
       You are the Example Author.
       Produce non-compliant and compliant narrative plus Rust code for {{target_id}} in the same construct family.
       Keep code aligned to normative constructs and execution semantics constraints in prompt context.
+      You MUST choose explicit rust-example miri intents for each example:
+      - non_compliant_miri_intent and compliant_miri_intent in {check, expect_ub, skip}
+      - if intent is skip, include matching non_empty justification field
+      - unsafe code MUST NOT omit a miri intent
+      Prefer check for compliant code and expect_ub only when the example intentionally demonstrates UB.
       Return JSON only.
     allowed_placeholders:
     - target_id
@@ -147,10 +152,12 @@ roles:
       - compliant_narrative
       - compliant_code
       - example_citation_keys
-      optional:
-      - compliant_mode
       - non_compliant_miri_intent
       - compliant_miri_intent
+      optional:
+      - compliant_mode
+      - non_compliant_miri_skip_justification
+      - compliant_miri_skip_justification
     forbidden_patterns:
     - template stub code
     - unrelated construct examples

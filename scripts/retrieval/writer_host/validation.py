@@ -5,6 +5,13 @@ import re
 from typing import Any
 
 
+_UNSAFE_RE = re.compile(r"\bunsafe\b")
+
+
+def _has_unsafe(code: Any) -> bool:
+    return bool(_UNSAFE_RE.search(str(code or "")))
+
+
 def validate_role_output(
     *,
     role_name: str,
@@ -77,6 +84,29 @@ def validate_role_output(
             for idx, key in enumerate(citation_keys):
                 if not str(key).strip():
                     violations.append(f"{citation_field}_blank:{idx}")
+
+    if role_name == "example_author":
+        allowed = {"check", "expect_ub", "skip"}
+        non_compliant_intent = str(output.get("non_compliant_miri_intent", "")).strip().lower()
+        compliant_intent = str(output.get("compliant_miri_intent", "")).strip().lower()
+        if non_compliant_intent not in allowed:
+            violations.append("non_compliant_miri_intent_invalid")
+        if compliant_intent not in allowed:
+            violations.append("compliant_miri_intent_invalid")
+
+        if _has_unsafe(output.get("non_compliant_code")) and non_compliant_intent not in allowed:
+            violations.append("unsafe_non_compliant_missing_miri_intent")
+        if _has_unsafe(output.get("compliant_code")) and compliant_intent not in allowed:
+            violations.append("unsafe_compliant_missing_miri_intent")
+
+        if non_compliant_intent == "skip":
+            reason = str(output.get("non_compliant_miri_skip_justification", "")).strip()
+            if not reason:
+                violations.append("non_compliant_miri_skip_requires_justification")
+        if compliant_intent == "skip":
+            reason = str(output.get("compliant_miri_skip_justification", "")).strip()
+            if not reason:
+                violations.append("compliant_miri_skip_requires_justification")
 
     return violations
 

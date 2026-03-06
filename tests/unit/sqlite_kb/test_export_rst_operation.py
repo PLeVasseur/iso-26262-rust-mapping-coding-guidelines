@@ -21,6 +21,42 @@ class ExportRstOperationTests(unittest.TestCase):
             root = Path(temp_dir)
             db_path = root / "guidelines.sqlite"
             output_root = root / "src" / "coding-guidelines"
+            common_root = root / "scripts" / "common"
+            common_root.mkdir(parents=True, exist_ok=True)
+            (common_root / "guideline_templates.py").write_text(
+                """
+def generate_id(prefix):
+    return f\"{prefix}_DUMMY\"
+
+def guideline_rst_template(guideline_title, category, status, release_begin, release_end, fls_id, decidability, scope, tags, amplification, exceptions, rationale, non_compliant_examples, compliant_examples, bibliography_entries):
+    return "\\n".join([
+        f".. guideline:: {guideline_title}",
+        f"   :id: {generate_id('gui')}",
+        f"   :category: {category}",
+        f"   :status: {status}",
+        f"   :release: {release_begin}",
+        f"   :fls: {fls_id}",
+        f"   :decidability: {decidability}",
+        f"   :scope: {scope}",
+        f"   :tags: {tags}",
+        "",
+        f"   {amplification}",
+        "",
+        "   .. rationale::",
+        f"      {rationale}",
+    ])
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            (common_root / "guideline_pages.py").write_text(
+                """
+def build_guideline_page_content(title, guideline_body):
+    return f\"{title}\\n{'=' * len(title)}\\n\\n{guideline_body}\\n\"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
 
             connection = sqlite3.connect(db_path)
             try:
@@ -68,7 +104,7 @@ class ExportRstOperationTests(unittest.TestCase):
                         "My Guideline",
                         "coding-guidelines/expressions/gui_ABC123.rst",
                         "mixed",
-                        '{"export_filename":"gui_ABC123.rst"}',
+                        '{"export_filename":"gui_ABC123.rst","category":"advisory","status":"draft","release":"1.85.1","fls_id":"fls_dummy12345","decidability":"undecidable","scope":"module","tags":["subset"]}',
                         "expressions",
                         "rev",
                         "hash",
@@ -88,6 +124,8 @@ class ExportRstOperationTests(unittest.TestCase):
 
             exported_path = output_root / "expressions" / "gui_ABC123.rst"
             self.assertTrue(exported_path.exists())
+            exported_text = exported_path.read_text(encoding="utf-8")
+            self.assertIn(".. guideline::", exported_text)
             index_path = output_root / "expressions" / "index.rst"
             self.assertTrue(index_path.exists())
             index_text = index_path.read_text(encoding="utf-8")

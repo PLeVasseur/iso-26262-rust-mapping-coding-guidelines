@@ -41,6 +41,21 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
         "filename": mapping["filename"],
         "chapter": mapping["chapter"],
         "title": mapping["title"],
+        "category": mapping["category"],
+        "status": mapping["status"],
+        "release": mapping["release"],
+        "fls_id": mapping["fls_id"],
+        "decidability": mapping["decidability"],
+        "scope": mapping["scope"],
+        "tags": list(mapping["tags"]),
+        "non_compliant_miri_intent": str(examples.get("non_compliant_miri_intent", "")).strip(),
+        "compliant_miri_intent": str(examples.get("compliant_miri_intent", "")).strip(),
+        "non_compliant_miri_skip_justification": str(
+            examples.get("non_compliant_miri_skip_justification", "")
+        ).strip(),
+        "compliant_miri_skip_justification": str(
+            examples.get("compliant_miri_skip_justification", "")
+        ).strip(),
         "blocks": [
             {
                 "block_type": "body",
@@ -53,22 +68,24 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
                 "content": str(rationale.get("rationale_text", "")).strip(),
             },
             {
-                "block_type": "non_compliant",
+                "block_type": "non_compliant_narrative",
                 "order_index": 3,
-                "content": (
-                    str(examples.get("non_compliant_narrative", "")).strip()
-                    + "\n\n"
-                    + str(examples.get("non_compliant_code", "")).strip()
-                ).strip(),
+                "content": str(examples.get("non_compliant_narrative", "")).strip(),
             },
             {
-                "block_type": "compliant",
+                "block_type": "non_compliant_code",
                 "order_index": 4,
-                "content": (
-                    str(examples.get("compliant_narrative", "")).strip()
-                    + "\n\n"
-                    + str(examples.get("compliant_code", "")).strip()
-                ).strip(),
+                "content": str(examples.get("non_compliant_code", "")).strip(),
+            },
+            {
+                "block_type": "compliant_narrative",
+                "order_index": 5,
+                "content": str(examples.get("compliant_narrative", "")).strip(),
+            },
+            {
+                "block_type": "compliant_code",
+                "order_index": 6,
+                "content": str(examples.get("compliant_code", "")).strip(),
             },
         ],
         "bibliography_rows": list(metadata.get("bibliography_rows") or []),
@@ -86,12 +103,45 @@ def run_ingest_from_run(*, root: Path, run_dir: Path, mode: str, output_db: Path
         records=mapped_rows,
         source_run_id=run_dir.name,
     )
+    metrics = {
+        "unsafe_examples_total": 0,
+        "miri_check_count": 0,
+        "miri_expect_ub_count": 0,
+        "miri_skip_count": 0,
+        "miri_skip_without_justification_count": 0,
+    }
+    for row in mapped_rows:
+        for side in ("non_compliant", "compliant"):
+            code = str(
+                next(
+                    (
+                        block.get("content", "")
+                        for block in list(row.get("blocks") or [])
+                        if str(block.get("block_type", "")) == f"{side}_code"
+                    ),
+                    "",
+                )
+            )
+            intent = str(row.get(f"{side}_miri_intent", "")).strip().lower()
+            justification = str(row.get(f"{side}_miri_skip_justification", "")).strip()
+            if "unsafe" in code:
+                metrics["unsafe_examples_total"] += 1
+            if intent == "check":
+                metrics["miri_check_count"] += 1
+            elif intent == "expect_ub":
+                metrics["miri_expect_ub_count"] += 1
+            elif intent == "skip":
+                metrics["miri_skip_count"] += 1
+                if not justification:
+                    metrics["miri_skip_without_justification_count"] += 1
+
     return {
         "status": "pass",
         "run_dir": str(run_dir),
         "mode": mode,
         "db": summary,
         "record_count": len(mapped_rows),
+        "annotation_policy_metrics": metrics,
     }
 
 
@@ -126,6 +176,11 @@ def run_publish_from_run(*, root: Path, run_dir: Path, mode: str, dry_run: bool)
     branch = str(worktree_info["branch"])
     try:
         ingest = run_ingest_from_run(root=root, run_dir=run_dir, mode=mode, output_db=db_path)
+        (publish_root / "annotation_policy_metrics.json").write_text(
+            json.dumps(ingest.get("annotation_policy_metrics", {}), indent=2, sort_keys=False)
+            + "\n",
+            encoding="utf-8",
+        )
         export = run_export_rst(root=root, db_path=db_path, guidelines_repo_root=worktree_root)
         conformance = run_conformance(
             repo_root=worktree_root,

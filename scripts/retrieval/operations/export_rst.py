@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -12,6 +11,10 @@ from pathlib import Path
 
 from retrieval.guidelines.build_runner import run_guidelines_build
 from retrieval.operations.chapter_index_policy import ensure_glob_toctree
+from retrieval.operations.guideline_template_bridge import (
+    build_template_guideline_page,
+    parse_bibliography_payload,
+)
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
@@ -29,58 +32,19 @@ def _digest_files(paths: list[Path]) -> str:
     return hasher.hexdigest()
 
 
-def _normalize_content(value: str) -> str:
-    lines = [
-        line.rstrip() for line in str(value).replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    ]
-    while lines and not lines[-1]:
-        lines.pop()
-    return "\n".join(lines)
-
-
-INLINE_ROLE_RE = re.compile(r":[a-zA-Z0-9_\-]+:`([^`]+)`")
-
-
-def _sanitize_text(value: str) -> str:
-    normalized = _normalize_content(value)
-    sanitized = INLINE_ROLE_RE.sub(r"``\1``", normalized)
-    return sanitized.replace(".. _", "")
-
-
-def _render_guideline(
-    title: str, blocks: list[tuple[str, int, str]], bibliography: list[tuple[str, str]]
-) -> str:
-    rendered_title = f"[Generated] {title}"
-    payload: list[str] = [rendered_title, "=" * len(rendered_title), ""]
-    label_map = {
-        "rationale": "Rationale",
-        "compliant": "Compliant Example",
-        "non_compliant": "Non-Compliant Example",
-        "body": "Guideline",
-    }
+def _block_lookup(blocks: list[tuple[str, int, str]]) -> dict[str, str]:
+    lookup: dict[str, str] = {}
     for block_type, _, content in blocks:
-        heading = label_map.get(block_type, block_type.replace("_", " ").title())
-        payload.append(f"**{heading}**")
-        payload.append("")
-        payload.append(".. code-block:: text")
-        payload.append("")
-        for line in _sanitize_text(content).split("\n"):
-            payload.append(f"   {line}")
-        payload.append("")
-
-    if bibliography:
-        payload.append("**Bibliography**")
-        payload.append("")
-        for key, content in sorted(bibliography):
-            payload.append(f"- {key}: {_sanitize_text(content)}")
-        payload.append("")
-    return "\n".join(payload).strip() + "\n"
+        lookup[str(block_type)] = str(content)
+    return lookup
 
 
 def export_guidelines(*, db_path: Path, output_root: Path) -> dict[str, object]:
     output_root.mkdir(parents=True, exist_ok=True)
+    guidelines_repo_root = output_root.parents[1]
     connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
     written_files: list[Path] = []
+    touched_chapters: set[str] = set()
     try:
         rows = connection.execute(
             """
@@ -125,13 +89,53 @@ def export_guidelines(*, db_path: Path, output_root: Path) -> dict[str, object]:
                 (guideline_id,),
             ).fetchall()
 
-            if not path.exists():
-                path.write_text(_render_guideline(title, blocks, bibliography), encoding="utf-8")
+            block_map = _block_lookup(blocks)
+            tags = [
+                str(tag).strip() for tag in list(metadata.get("tags") or []) if str(tag).strip()
+            ]
+            bibliography_entries: list[tuple[str, str, str, str]] = []
+            for _, content in bibliography:
+                parsed = parse_bibliography_payload(str(content))
+                if parsed is not None:
+                    bibliography_entries.append(parsed)
+
+            rendered = build_template_guideline_page(
+                guidelines_repo_root=guidelines_repo_root,
+                guideline_id=guideline_id,
+                title=title,
+                category=str(metadata.get("category", "advisory") or "advisory"),
+                status=str(metadata.get("status", "draft") or "draft"),
+                release=str(metadata.get("release", "1.85.1") or "1.85.1"),
+                fls_id=str(metadata.get("fls_id", "") or ""),
+                decidability=str(metadata.get("decidability", "undecidable") or "undecidable"),
+                scope=str(metadata.get("scope", "module") or "module"),
+                tags=tags,
+                amplification=str(block_map.get("body", "")).strip(),
+                rationale=str(block_map.get("rationale", "")).strip(),
+                non_compliant_examples=[
+                    (
+                        str(block_map.get("non_compliant_narrative", "")).strip(),
+                        str(block_map.get("non_compliant_code", "")).strip(),
+                    )
+                ],
+                compliant_examples=[
+                    (
+                        str(block_map.get("compliant_narrative", "")).strip(),
+                        str(block_map.get("compliant_code", "")).strip(),
+                    )
+                ],
+                bibliography_entries=bibliography_entries,
+                non_compliant_miri_intent=str(metadata.get("non_compliant_miri_intent", "") or ""),
+                compliant_miri_intent=str(metadata.get("compliant_miri_intent", "") or ""),
+            )
+
+            path.write_text(rendered, encoding="utf-8")
+            touched_chapters.add(chapter)
             written_files.append(path)
     finally:
         connection.close()
 
-    chapter_roots = sorted(path for path in output_root.iterdir() if path.is_dir())
+    chapter_roots = sorted((output_root / chapter) for chapter in touched_chapters)
     for chapter_root in chapter_roots:
         index_path = chapter_root / "index.rst"
         changed = ensure_glob_toctree(index_path)

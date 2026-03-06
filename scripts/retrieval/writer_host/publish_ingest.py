@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -63,6 +64,21 @@ def ingest_records(
                     "export_filename": filename,
                     "source_run_id": source_run_id,
                     "target_id": record.get("target_id", ""),
+                    "category": record.get("category", "advisory"),
+                    "status": record.get("status", "draft"),
+                    "release": record.get("release", "1.85.1"),
+                    "fls_id": record.get("fls_id", ""),
+                    "decidability": record.get("decidability", "undecidable"),
+                    "scope": record.get("scope", "module"),
+                    "tags": list(record.get("tags") or []),
+                    "non_compliant_miri_intent": record.get("non_compliant_miri_intent", ""),
+                    "compliant_miri_intent": record.get("compliant_miri_intent", ""),
+                    "non_compliant_miri_skip_justification": record.get(
+                        "non_compliant_miri_skip_justification", ""
+                    ),
+                    "compliant_miri_skip_justification": record.get(
+                        "compliant_miri_skip_justification", ""
+                    ),
                 },
                 sort_keys=False,
             )
@@ -99,12 +115,22 @@ def ingest_records(
                 )
 
             for bib in list(record.get("bibliography_rows") or []):
-                citation_key = str(bib.get("citation_key", "")).strip()
+                citation_key_raw = str(bib.get("citation_key", "")).strip()
+                citation_key = re.sub(r"[^A-Z0-9-]", "-", citation_key_raw.upper()).strip("-")
                 if not citation_key:
                     continue
                 url = str(bib.get("url", "")).strip()
                 title_text = str(bib.get("title", "")).strip() or citation_key
-                content = f"{title_text} {url}".strip()
+                author = str(bib.get("publisher", "")).strip() or "Reference"
+                content = json.dumps(
+                    {
+                        "citation_key": citation_key,
+                        "author": author,
+                        "title": title_text,
+                        "url": url,
+                    },
+                    sort_keys=False,
+                )
                 connection.execute(
                     "INSERT OR REPLACE INTO guideline_bibliography(bib_key, content, source_file_path) VALUES(?, ?, ?)",
                     (citation_key, content, f"writer/{source_run_id}"),
