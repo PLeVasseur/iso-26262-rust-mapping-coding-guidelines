@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from argparse import Namespace
 from pathlib import Path
@@ -20,6 +21,9 @@ from retrieval.writer_host.publish_git import (
 from retrieval.writer_host.publish_ingest import ingest_records
 from retrieval.writer_host.publish_loader import load_publish_payload
 from retrieval.writer_host.publish_mapping import map_publish_record
+
+_BIBENTRY_LINE_RE = re.compile(r"^(\s*\* - :bibentry:`)(gui_[^:]+:)([^`]+)(`)\s*$")
+_BIBDESC_LINE_RE = re.compile(r"^(\s*-\s+)(.*?)(https?://\S+)\s*$")
 
 
 def _load_guidelines_repo_root(root: Path) -> Path:
@@ -49,6 +53,7 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
         "fls_id": mapping["fls_id"],
         "fls_resolution": dict(mapping.get("fls_resolution") or {}),
         "fls_resolution_report": str(mapping.get("fls_resolution_report") or ""),
+        "publishability": dict(mapping.get("publishability") or {}),
         "decidability": mapping["decidability"],
         "scope": mapping["scope"],
         "tags": list(mapping["tags"]),
@@ -269,6 +274,140 @@ def _cleanup_report(*, requested: bool, performed: bool, reason: str) -> dict[st
     }
 
 
+def _canonicalize_exported_bibliography(
+    *, source_root: Path, generated_files: list[str]
+) -> dict[str, Any]:
+    generated_paths = {
+        Path(path).resolve() for path in generated_files if Path(path).suffix == ".rst"
+    }
+    all_rst_paths = sorted(path for path in source_root.rglob("*.rst") if path.is_file())
+    if not all_rst_paths:
+        return {"status": "skipped", "updated_files": [], "updated_entry_count": 0}
+
+    def _iter_entries(path: Path) -> list[dict[str, Any]]:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        out: list[dict[str, Any]] = []
+        for index, line in enumerate(lines[:-1]):
+            key_match = _BIBENTRY_LINE_RE.match(line)
+            desc_match = _BIBDESC_LINE_RE.match(lines[index + 1])
+            if key_match is None or desc_match is None:
+                continue
+            out.append(
+                {
+                    "guideline_prefix": key_match.group(2),
+                    "suffix": key_match.group(3),
+                    "url": desc_match.group(3),
+                    "description": desc_match.group(2).rstrip(),
+                    "key_line_index": index,
+                    "desc_line_index": index + 1,
+                }
+            )
+        return out
+
+    canonical_by_url: dict[str, tuple[str, str]] = {}
+    ordered_paths = [path for path in all_rst_paths if path not in generated_paths] + [
+        path for path in all_rst_paths if path in generated_paths
+    ]
+    for path in ordered_paths:
+        for entry in _iter_entries(path):
+            url = str(entry["url"])
+            canonical_by_url.setdefault(url, (str(entry["suffix"]), str(entry["description"])))
+
+    updated_files: list[str] = []
+    updated_entries = 0
+    for path in sorted(generated_paths):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        entries = _iter_entries(path)
+        replacements: dict[str, str] = {}
+        changed = False
+        for entry in entries:
+            url = str(entry["url"])
+            canonical = canonical_by_url.get(url)
+            if canonical is None:
+                continue
+            canonical_suffix, canonical_description = canonical
+            current_suffix = str(entry["suffix"])
+            current_description = str(entry["description"])
+            if current_suffix == canonical_suffix and current_description == canonical_description:
+                continue
+            key_match = _BIBENTRY_LINE_RE.match(lines[int(entry["key_line_index"])] or "")
+            desc_match = _BIBDESC_LINE_RE.match(lines[int(entry["desc_line_index"])] or "")
+            if key_match is None or desc_match is None:
+                continue
+            guideline_prefix = str(entry["guideline_prefix"])
+            lines[int(entry["key_line_index"])] = (
+                f"{key_match.group(1)}{guideline_prefix}{canonical_suffix}{key_match.group(4)}"
+            )
+            lines[int(entry["desc_line_index"])] = (
+                f"{desc_match.group(1)}{canonical_description} {url}"
+            )
+            replacements[current_suffix] = canonical_suffix
+            updated_entries += 1
+            changed = True
+        if changed:
+            text = "\n".join(lines) + "\n"
+            guideline_id = path.stem
+            for old_suffix, new_suffix in replacements.items():
+                text = text.replace(
+                    f":cite:`{guideline_id}:{old_suffix}`",
+                    f":cite:`{guideline_id}:{new_suffix}`",
+                )
+                text = text.replace(
+                    f":bibentry:`{guideline_id}:{old_suffix}`",
+                    f":bibentry:`{guideline_id}:{new_suffix}`",
+                )
+            path.write_text(text, encoding="utf-8")
+            updated_files.append(str(path))
+
+    return {
+        "status": "patched" if updated_files else "unchanged",
+        "updated_files": updated_files,
+        "updated_entry_count": updated_entries,
+    }
+
+
+def _prepare_review_mode_worktree(worktree_root: Path) -> dict[str, Any]:
+    fls_checks_path = worktree_root / "exts" / "coding_guidelines" / "fls_checks.py"
+    if not fls_checks_path.exists():
+        return {"status": "skipped", "reason": "fls_checks_missing", "path": str(fls_checks_path)}
+
+    original = fls_checks_path.read_text(encoding="utf-8")
+    if "OPENCODE_ALLOW_REVIEW_UNRESOLVED_FLS" in original:
+        return {"status": "already_patched", "path": str(fls_checks_path)}
+
+    import_anchor = "import json\nimport re\n"
+    helper_anchor = "\n\nclass FLSValidationError(SphinxError):\n"
+    condition_anchor = "            # Check if the FLS ID exists in the gathered IDs\n"
+    if (
+        import_anchor not in original
+        or helper_anchor not in original
+        or condition_anchor not in original
+    ):
+        raise RuntimeError(f"unable to patch review-mode FLS compatibility in {fls_checks_path}")
+
+    patched = original.replace(import_anchor, "import json\nimport os\nimport re\n", 1)
+    patched = patched.replace(
+        helper_anchor,
+        "\n\ndef _allow_review_unresolved_fls() -> bool:\n"
+        '    return os.environ.get("OPENCODE_ALLOW_REVIEW_UNRESOLVED_FLS", "").strip() == "1"\n'
+        "\n"
+        "\nclass FLSValidationError(SphinxError):\n",
+        1,
+    )
+    patched = patched.replace(
+        condition_anchor,
+        '            if fls_value == "fls_UNRESOLVED" and _allow_review_unresolved_fls():\n'
+        "                logger.info(\n"
+        '                    f"Need {need_id} retains fls_UNRESOLVED placeholder in review mode"\n'
+        "                )\n"
+        "                continue\n"
+        "\n" + condition_anchor,
+        1,
+    )
+    fls_checks_path.write_text(patched, encoding="utf-8")
+    return {"status": "patched", "path": str(fls_checks_path)}
+
+
 def _base_publish_report(
     *,
     root: Path,
@@ -295,6 +434,9 @@ def _base_publish_report(
         "export": {},
         "export_snapshot": {},
         "export_delta": {},
+        "review_mode_worktree": {},
+        "bibliography_canonicalization": {},
+        "publishability_audit": {},
         "conformance": {},
         "commit": {"committed": False},
         "push": {"pushed": False},
@@ -304,19 +446,13 @@ def _base_publish_report(
     }
 
 
-def run_ingest_from_run(
+def _ingest_mapped_rows(
     *,
-    root: Path,
     run_dir: Path,
     mode: str,
     output_db: Path,
-    resolution_report_root: Path | None = None,
+    mapped_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    payload = load_publish_payload(run_dir=run_dir, publishable=(mode == "publishable"))
-    mapped_rows: list[dict[str, Any]] = []
-    for row in payload["draft_rows"]:
-        mapping = map_publish_record(row, resolution_report_root=resolution_report_root)
-        mapped_rows.append(_build_record(row, mapping))
     summary = ingest_records(
         db_path=output_db,
         records=mapped_rows,
@@ -364,6 +500,86 @@ def run_ingest_from_run(
     }
 
 
+def run_ingest_from_run(
+    *,
+    root: Path,
+    run_dir: Path,
+    mode: str,
+    output_db: Path,
+    resolution_report_root: Path | None = None,
+    allow_unresolved: bool = False,
+) -> dict[str, Any]:
+    payload = load_publish_payload(run_dir=run_dir, publishable=(mode == "publishable"))
+    mapped_rows: list[dict[str, Any]] = []
+    for row in payload["draft_rows"]:
+        mapping = map_publish_record(
+            row,
+            resolution_report_root=resolution_report_root,
+            allow_unresolved=allow_unresolved,
+        )
+        mapped_rows.append(_build_record(row, mapping))
+    _ = root
+    return _ingest_mapped_rows(
+        run_dir=run_dir, mode=mode, output_db=output_db, mapped_rows=mapped_rows
+    )
+
+
+def _build_publishability_audit(
+    *,
+    run_dir: Path,
+    mode: str,
+    publish_root: Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    payload = load_publish_payload(run_dir=run_dir, publishable=(mode == "publishable"))
+    resolution_root = publish_root / "fls_resolution"
+    rows: list[dict[str, Any]] = []
+    for draft_row in payload["draft_rows"]:
+        mapping = map_publish_record(
+            draft_row,
+            resolution_report_root=resolution_root,
+            allow_unresolved=True,
+        )
+        publishability = dict(mapping.get("publishability") or {})
+        rows.append(
+            {
+                "target_id": str(mapping.get("target_id", "")),
+                "guideline_id": str(mapping.get("guideline_id", "")),
+                "filename": str(mapping.get("filename", "")),
+                "chapter": str(mapping.get("chapter", "")),
+                "title": str(mapping.get("title", "")),
+                "publishable": bool(publishability.get("publishable", False)),
+                "reason_code": str(publishability.get("reason_code", "")),
+                "reason": str(publishability.get("reason", "")),
+                "resolved_paragraph_id": str(publishability.get("resolved_paragraph_id", "")),
+                "report_path": str(publishability.get("report_path", "")),
+                "mapping": mapping,
+                "row": draft_row,
+            }
+        )
+    blocked = [row for row in rows if not bool(row.get("publishable", False))]
+    reason_counts: dict[str, int] = {}
+    for row in blocked:
+        code = str(row.get("reason_code", "UNRESOLVED")) or "UNRESOLVED"
+        reason_counts[code] = reason_counts.get(code, 0) + 1
+    audit = {
+        "run_dir": str(run_dir),
+        "mode": mode,
+        "draft_count": len(rows),
+        "publishable_count": len(rows) - len(blocked),
+        "blocked_count": len(blocked),
+        "status": "pass" if not blocked else "blocked",
+        "reason_counts": reason_counts,
+        "rows": [
+            {key: value for key, value in row.items() if key not in {"mapping", "row"}}
+            for row in rows
+        ],
+    }
+    path = publish_root / "publishability_audit.json"
+    path.write_text(json.dumps(audit, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    audit["path"] = str(path)
+    return audit, rows
+
+
 def run_export_rst(*, root: Path, db_path: Path, guidelines_repo_root: Path) -> dict[str, Any]:
     output_root = guidelines_repo_root / "src" / "coding-guidelines"
     summary = export_guidelines(db_path=db_path, output_root=output_root)
@@ -382,6 +598,7 @@ def run_publish_from_run(
     mode: str,
     dry_run: bool,
     keep_worktree: bool = False,
+    audit_only: bool = False,
 ) -> dict[str, Any]:
     repo_root = _load_guidelines_repo_root(root)
     publish_root = publish_root_for_run(root=root, run_dir=run_dir)
@@ -395,6 +612,44 @@ def run_publish_from_run(
         keep_worktree=keep_worktree,
     )
     report["repo_root"] = str(repo_root)
+
+    try:
+        audit, audited_rows = _build_publishability_audit(
+            run_dir=run_dir,
+            mode=mode,
+            publish_root=publish_root,
+        )
+        report["publishability_audit"] = audit
+    except Exception as exc:
+        report["failure_code"] = "PUBLISHABILITY_AUDIT_FAILED"
+        report["failure_message"] = str(exc)
+        return report
+
+    if audit_only:
+        blocked = int(audit.get("blocked_count", 0))
+        report["status"] = "publishability_pass" if blocked == 0 else "publishability_blocked"
+        report["failure_code"] = "" if blocked == 0 else "PUBLISHABILITY_BLOCKED"
+        report["failure_message"] = (
+            "" if blocked == 0 else f"{blocked} targets blocked publishable export"
+        )
+        report["cleanup"] = _cleanup_report(
+            requested=not keep_worktree,
+            performed=False,
+            reason="audit_only_no_worktree",
+        )
+        return report
+
+    if mode == "publishable" and int(audit.get("blocked_count", 0)) > 0:
+        blocked = int(audit.get("blocked_count", 0))
+        report["status"] = "publishability_blocked"
+        report["failure_code"] = "PUBLISHABILITY_BLOCKED"
+        report["failure_message"] = f"{blocked} targets blocked publishable export"
+        report["cleanup"] = _cleanup_report(
+            requested=not keep_worktree,
+            performed=False,
+            reason="publishability_blocked_before_worktree",
+        )
+        return report
 
     if dry_run:
         report["status"] = "dry_run"
@@ -413,13 +668,21 @@ def run_publish_from_run(
     cleanup_performed = False
     cleanup_reason = "preserved_for_review"
     try:
+        if mode == "review":
+            try:
+                report["review_mode_worktree"] = _prepare_review_mode_worktree(worktree_root)
+            except Exception as exc:
+                report["failure_code"] = "REVIEW_MODE_WORKTREE_PREP_FAILED"
+                report["failure_message"] = str(exc)
+                return report
+
         try:
-            ingest = run_ingest_from_run(
-                root=root,
+            mapped_records = [_build_record(row["row"], row["mapping"]) for row in audited_rows]
+            ingest = _ingest_mapped_rows(
                 run_dir=run_dir,
                 mode=mode,
                 output_db=db_path,
-                resolution_report_root=publish_root / "fls_resolution",
+                mapped_rows=mapped_records,
             )
             report["ingest"] = ingest
             (publish_root / "annotation_policy_metrics.json").write_text(
@@ -436,6 +699,10 @@ def run_publish_from_run(
             export = run_export_rst(root=root, db_path=db_path, guidelines_repo_root=worktree_root)
             report["export"] = export
             source_root = worktree_root / "src" / "coding-guidelines"
+            report["bibliography_canonicalization"] = _canonicalize_exported_bibliography(
+                source_root=source_root,
+                generated_files=list(((export.get("export") or {}).get("generated_files") or [])),
+            )
             delta_payload = _classify_export_delta(
                 worktree_root=worktree_root,
                 source_root=source_root,
@@ -472,11 +739,24 @@ def run_publish_from_run(
         conformance = run_conformance(
             repo_root=worktree_root,
             report_dir=publish_root,
+            mode=mode,
         )
         report["conformance"] = conformance
-        if mode == "publishable" and str(conformance.get("status", "")) != "pass":
+        if str(conformance.get("status", "")) != "pass":
             report["failure_code"] = "CONFORMANCE_FAILED"
-            report["failure_message"] = "publishable mode requires passing conformance"
+            report["failure_message"] = f"{mode} mode requires passing conformance"
+            return report
+
+        if mode != "publishable":
+            report["status"] = "review_export_pass"
+            report["failure_code"] = ""
+            report["failure_message"] = ""
+            if not keep_worktree:
+                remove_worktree(repo_root=repo_root, worktree_root=worktree_root)
+                cleanup_performed = True
+                cleanup_reason = "review_export_cleanup"
+            else:
+                cleanup_reason = "kept_by_request"
             return report
 
         commit_message = f"feat(guidelines): publish writer run {run_dir.name}"
@@ -534,7 +814,7 @@ def run_conformance_command(*, root: Path, run_dir: Path, mode: str) -> dict[str
     _ = run_dir  # reserved for future report linkage
     repo_root = _load_guidelines_repo_root(root)
     report_dir = root / ".cache" / "sqlite_kb" / "reports" / "writer_conformance" / run_dir.name
-    report = run_conformance(repo_root=repo_root, report_dir=report_dir)
+    report = run_conformance(repo_root=repo_root, report_dir=report_dir, mode=mode)
     return {
         "status": report.get("status", "fail"),
         "mode": mode,
@@ -545,7 +825,7 @@ def run_conformance_command(*, root: Path, run_dir: Path, mode: str) -> dict[str
     }
 
 
-def namespace_from_args(args: Namespace, *, root: Path) -> tuple[Path, str, bool, bool]:
+def namespace_from_args(args: Namespace, *, root: Path) -> tuple[Path, str, bool, bool, bool]:
     run_dir_raw = str(getattr(args, "run_dir", "") or "").strip()
     if not run_dir_raw:
         raise RuntimeError("--run-dir is required")
@@ -555,5 +835,8 @@ def namespace_from_args(args: Namespace, *, root: Path) -> tuple[Path, str, bool
     mode = str(getattr(args, "mode", "publishable") or "publishable")
     dry_run = bool(getattr(args, "dry_run", False))
     keep_worktree = bool(getattr(args, "keep_worktree", False))
+    audit_only = bool(getattr(args, "audit_only", False))
     _ = root
-    return run_dir, mode, dry_run, keep_worktree
+    if mode == "exploratory":
+        mode = "review"
+    return run_dir, mode, dry_run, keep_worktree, audit_only

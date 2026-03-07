@@ -283,11 +283,12 @@ def parse_args() -> argparse.Namespace:
     writer_publish = subparsers.add_parser("writer-publish")
     _add_artifact_common(writer_publish)
     writer_publish.add_argument(
-        "--mode", choices=("publishable", "exploratory"), default="publishable"
+        "--mode", choices=("publishable", "review", "exploratory"), default="publishable"
     )
     writer_publish.add_argument("--run-dir", required=True)
     writer_publish.add_argument("--dry-run", action="store_true")
     writer_publish.add_argument("--keep-worktree", action="store_true")
+    writer_publish.add_argument("--audit-only", action="store_true")
     writer_publish.add_argument("--output", default="")
 
     writer_conformance = subparsers.add_parser("writer-conformance")

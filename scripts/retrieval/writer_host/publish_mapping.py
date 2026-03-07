@@ -34,11 +34,16 @@ def _normalized_tags(tags: list[str]) -> list[str]:
     return out
 
 
+def _metadata_fls_candidate(metadata: dict[str, Any]) -> dict[str, Any]:
+    raw = metadata.get("fls_candidate") if isinstance(metadata, dict) else {}
+    return raw if isinstance(raw, dict) else {}
+
+
 def _resolve_fls_id(
     *,
     packet: dict[str, Any],
     report_root: Path | None = None,
-) -> tuple[str, dict[str, Any], str | None]:
+) -> tuple[str, dict[str, Any], str | None, dict[str, Any]]:
     candidates, variants = gather_candidates(packet=packet)
     paragraph = resolve_fls_for_guideline(
         packet,
@@ -75,18 +80,27 @@ def _resolve_fls_id(
                 payload=report,
             )
         )
-    if not fls_id.startswith("fls_") or fls_id == "fls_UNRESOLVED" or not validate_fls_id(fls_id):
-        reason = str(paragraph.get("unresolved_reason", "")).strip() or str(
-            decision.get("reason_code", "UNRESOLVED")
-        )
-        raise RuntimeError(f"failed to resolve valid fls id for title='{title}': {reason}")
-    return fls_id, decision, report_path
+    valid = fls_id.startswith("fls_") and fls_id != "fls_UNRESOLVED" and validate_fls_id(fls_id)
+    reason = str(paragraph.get("unresolved_reason", "")).strip() or str(
+        decision.get("reason_code", "UNRESOLVED")
+    )
+    publishability = {
+        "publishable": bool(valid),
+        "reason_code": str(decision.get("reason_code", ""))
+        or ("ACCEPTED" if valid else "UNRESOLVED"),
+        "reason": "" if valid else reason,
+        "resolved_paragraph_id": fls_id,
+        "report_path": report_path or "",
+        "decision": decision,
+    }
+    return (fls_id if valid else "fls_UNRESOLVED"), decision, report_path, publishability
 
 
 def map_publish_record(
     row: dict[str, Any],
     *,
     resolution_report_root: Path | None = None,
+    allow_unresolved: bool = False,
 ) -> dict[str, Any]:
     draft = row["draft"]
     metadata = row["metadata"]
@@ -99,16 +113,20 @@ def map_publish_record(
     stable = hashlib.sha1(target_id.encode("utf-8")).hexdigest()[:12]
     guideline_id = f"gui_{stable}"
     filename = f"{guideline_id}.rst"
-    fls_candidate = metadata.get("fls_candidate") if isinstance(metadata, dict) else {}
-    title = str((fls_candidate or {}).get("statement", "")).strip() or f"Guideline {target_id}"
+    fls_candidate = _metadata_fls_candidate(metadata)
     packet = build_resolution_packet(row)
+    title = str(packet.get("title", "")).strip() or f"Guideline {target_id}"
     packet["title"] = title
     packet["expected_domains"] = normalized_tags
-    fls_id, fls_resolution, fls_resolution_report = _resolve_fls_id(
+    fls_id, fls_resolution, fls_resolution_report, publishability = _resolve_fls_id(
         packet=packet,
         report_root=resolution_report_root,
     )
-    category_raw = str((fls_candidate or {}).get("category", "")).strip().lower()
+    if not bool(publishability.get("publishable", False)) and not allow_unresolved:
+        raise RuntimeError(
+            f"failed to resolve valid fls id for title='{title}': {publishability.get('reason', 'UNRESOLVED')}"
+        )
+    category_raw = str(fls_candidate.get("category", "")).strip().lower()
     category = "required" if "required" in category_raw or "safety" in category_raw else "advisory"
     return {
         "target_id": target_id,
@@ -122,6 +140,7 @@ def map_publish_record(
         "fls_id": fls_id,
         "fls_resolution": fls_resolution,
         "fls_resolution_report": fls_resolution_report,
+        "publishability": publishability,
         "decidability": "undecidable",
         "scope": "module",
         "tags": normalized_tags,

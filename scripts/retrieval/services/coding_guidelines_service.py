@@ -34,7 +34,7 @@ def run_reorg_path_mapping(args: Namespace, *, root: Path) -> int:
 
 
 def run_ingest_from_run(args: Namespace, *, root: Path) -> int:
-    run_dir, mode, _, _ = namespace_from_args(args, root=root)
+    run_dir, mode, _, _, _ = namespace_from_args(args, root=root)
     output_db_raw = str(getattr(args, "output_db", "") or "").strip()
     if output_db_raw:
         output_db = Path(output_db_raw).resolve()
@@ -65,20 +65,21 @@ def run_export_rst(args: Namespace, *, root: Path) -> int:
 
 
 def run_conformance(args: Namespace, *, root: Path) -> int:
-    run_dir, mode, _, _ = namespace_from_args(args, root=root)
+    run_dir, mode, _, _, _ = namespace_from_args(args, root=root)
     report = run_conformance_command(root=root, run_dir=run_dir, mode=mode)
     print(report["report_path"])
     return 0 if str(report.get("status", "")) == "pass" else 2
 
 
 def run_publish_from_run(args: Namespace, *, root: Path) -> int:
-    run_dir, mode, dry_run, keep_worktree = namespace_from_args(args, root=root)
+    run_dir, mode, dry_run, keep_worktree, audit_only = namespace_from_args(args, root=root)
     report = run_publish_stage(
         root=root,
         run_dir=run_dir,
         mode=mode,
         dry_run=dry_run,
         keep_worktree=keep_worktree,
+        audit_only=audit_only,
     )
     output_raw = str(getattr(args, "output", "") or "").strip()
     output_path = (
@@ -106,4 +107,9 @@ def run_publish_from_run(args: Namespace, *, root: Path) -> int:
         if output_path != default_output_path:
             write_publish_report(output_path, report)
     print(output_path)
-    return 0 if str(report.get("status", "")) in {"pass", "dry_run", "no_changes"} else 2
+    return (
+        0
+        if str(report.get("status", ""))
+        in {"pass", "dry_run", "no_changes", "review_export_pass", "publishability_pass"}
+        else 2
+    )

@@ -99,7 +99,9 @@ def build_resolution_packet(row: dict[str, Any]) -> dict[str, Any]:
 
     fls_candidate = _as_dict(metadata.get("fls_candidate"))
     target_id = _text(draft.get("target_id"))
-    title = _text(fls_candidate.get("statement")) or f"Guideline {target_id}"
+    claim_phrases = _extract_claim_phrases(draft)
+    title = _text(fls_candidate.get("statement")) or (claim_phrases[0] if claim_phrases else "")
+    title = title or f"Guideline {target_id}"
     tags = [value.lower() for value in _list_text(metadata.get("tags"))]
     amplification_text = _text(amplification.get("guideline_amplification_text"))
     rationale_text = _text(rationale.get("rationale_text"))
@@ -107,7 +109,6 @@ def build_resolution_packet(row: dict[str, Any]) -> dict[str, Any]:
     non_compliant_code = _text(examples.get("non_compliant_code"))
     compliant_narrative = _text(examples.get("compliant_narrative"))
     compliant_code = _text(examples.get("compliant_code"))
-    claim_phrases = _extract_claim_phrases(draft)
 
     field_terms = {
         "title": _tokenize(title, limit=20),

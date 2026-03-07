@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -153,3 +154,54 @@ def test_map_publish_record_writes_resolution_report_when_root_provided(
         )
 
     assert str(mapped["fls_resolution_report"]).endswith("ret_issue_001.json")
+
+
+@pytest.mark.parametrize("fls_candidate", [True, False, "subset-candidate"])
+def test_map_publish_record_tolerates_non_dict_fls_candidate(
+    monkeypatch,
+    fls_candidate,
+) -> None:
+    row = _row_fixture()
+    metadata = dict(cast(dict[str, Any], row["metadata"]))
+    metadata["fls_candidate"] = fls_candidate
+    row["metadata"] = metadata
+    monkeypatch.setattr(
+        publish_mapping,
+        "gather_candidates",
+        lambda packet: ([{"paragraph_id": "fls_unsafe003"}], []),
+    )
+    monkeypatch.setattr(
+        publish_mapping,
+        "resolve_fls_for_guideline",
+        lambda packet, precomputed_candidates=None, precomputed_variants=None: {
+            "paragraph_id": "fls_unsafe003",
+            "decision": {"accepted": True, "reason_code": "ACCEPTED"},
+        },
+    )
+    monkeypatch.setattr(publish_mapping, "validate_fls_id", lambda value: value == "fls_unsafe003")
+
+    mapped = publish_mapping.map_publish_record(row)
+
+    assert mapped["guideline_id"].startswith("gui_")
+    assert mapped["filename"] == f"{mapped['guideline_id']}.rst"
+    assert mapped["title"] == "Unsafe fallback can violate invariants"
+    assert mapped["category"] == "advisory"
+
+
+def test_map_publish_record_allows_unresolved_in_review_mode(monkeypatch) -> None:
+    monkeypatch.setattr(publish_mapping, "gather_candidates", lambda packet: ([], []))
+    monkeypatch.setattr(
+        publish_mapping,
+        "resolve_fls_for_guideline",
+        lambda packet, precomputed_candidates=None, precomputed_variants=None: {
+            "paragraph_id": "fls_UNRESOLVED",
+            "unresolved_reason": "top candidate chapter mismatches expected domain",
+            "decision": {"reason_code": "CHAPTER_MISMATCH", "accepted": False},
+        },
+    )
+
+    mapped = publish_mapping.map_publish_record(_row_fixture(), allow_unresolved=True)
+
+    assert mapped["fls_id"] == "fls_UNRESOLVED"
+    assert mapped["publishability"]["publishable"] is False
+    assert mapped["publishability"]["reason_code"] == "CHAPTER_MISMATCH"

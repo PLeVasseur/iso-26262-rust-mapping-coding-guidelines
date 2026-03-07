@@ -29,10 +29,27 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
     )
     hard_failures = [name for name, ok in checks.items() if not ok]
     status = "pass" if not hard_failures else "fail"
+    conformance_path = run_dir / "writer_conformance_report.json"
+    review_ready = {"status": "not_evaluated", "checks": {}}
+    if conformance_path.exists():
+        conformance = _load_json(conformance_path)
+        conformance_checks = dict(conformance.get("checks") or {})
+        review_ready = {
+            "status": "pass" if str(conformance.get("status", "")) == "pass" else "fail",
+            "checks": conformance_checks,
+            "report_path": str(conformance_path),
+        }
     return {
         "status": status,
         "run_dir": str(run_dir),
         "checks": checks,
+        "lifecycle": {
+            "writer_complete": status,
+            "review_ready": review_ready,
+            "next_required_gate": "writer_conformance"
+            if review_ready["status"] == "not_evaluated"
+            else "none",
+        },
         "hard_failures": hard_failures,
         "warning_count": warning_count,
     }

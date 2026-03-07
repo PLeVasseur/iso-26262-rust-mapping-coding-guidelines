@@ -26,6 +26,8 @@ def test_quality_gate_passes_for_complete_run(tmp_path: Path) -> None:
     report = evaluate_run(run_dir)
     assert report["status"] == "pass"
     assert report["hard_failures"] == []
+    assert report["lifecycle"]["writer_complete"] == "pass"
+    assert report["lifecycle"]["review_ready"]["status"] == "not_evaluated"
 
 
 def test_quality_gate_fails_when_auditor_blocked(tmp_path: Path) -> None:
@@ -42,6 +44,28 @@ def test_quality_gate_fails_when_auditor_blocked(tmp_path: Path) -> None:
     report = evaluate_run(run_dir)
     assert report["status"] == "fail"
     assert "auditor_pass" in report["hard_failures"]
+
+
+def test_quality_gate_reports_review_ready_when_conformance_exists(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write(run_dir / "normalization_report.json", {"status": "pass"})
+    _write(run_dir / "evidence_synthesizer_gate_report.json", {"status": "pass"})
+    _write(run_dir / "writer_output_auditor_report.json", {"status": "pass", "blocked_count": 0})
+    _write(
+        run_dir / "writer_subagent_outputs" / "merge_validation_report.json",
+        {"status": "pass", "entries": []},
+    )
+    _write(run_dir / "writer_host_run_summary.json", {"status": "completed"})
+    _write(
+        run_dir / "writer_conformance_report.json",
+        {"status": "pass", "checks": {"m15_extract_examples": True, "offline_build": True}},
+    )
+
+    report = evaluate_run(run_dir)
+
+    assert report["status"] == "pass"
+    assert report["lifecycle"]["review_ready"]["status"] == "pass"
+    assert report["lifecycle"]["next_required_gate"] == "none"
 
 
 def test_evidence_gate_fails_on_prompt_example_and_empty_semantics(tmp_path: Path) -> None:

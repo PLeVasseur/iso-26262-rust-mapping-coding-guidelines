@@ -235,6 +235,25 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.subcommand, "writer-publish")
         self.assertTrue(args.keep_worktree)
 
+    def test_parse_args_for_writer_publish_review_audit(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-publish",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+                "--mode",
+                "review",
+                "--audit-only",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-publish")
+        self.assertEqual(args.mode, "review")
+        self.assertTrue(args.audit_only)
+
     def test_parse_args_for_writer_review_packet(self) -> None:
         with patch.object(
             sys,

@@ -142,6 +142,13 @@ roles:
       - if compliant_miri_intent is skip, include compliant_miri_skip_justification
       - unsafe code MUST NOT omit a miri intent
       Prefer check for compliant code and expect_ub only when the example intentionally demonstrates UB.
+      REVIEW-EXPORT CONFORMANCE CONSTRAINTS:
+      - Examples should be valid Rust that can survive the rendered-page extraction harness.
+      - Do not use parser-rejected or intentionally ill-formed Rust as the non-compliant example unless compile-fail examples are explicitly requested by the prompt context.
+      - Non-compliant examples should demonstrate bad semantics, unsafe assumptions, or dangerous API usage, not mere syntax failure.
+      - Avoid deprecated APIs in both examples unless the target is specifically about deprecation or migration.
+      - Avoid unstable APIs and code patterns that compile only on nightly or behind feature gates.
+      - Keep examples warning-clean under ordinary rustc compilation; do not leave dead code, unused helper items, or unused trait items that trigger warning failures.
       Return JSON only.
     allowed_placeholders:
     - target_id
@@ -214,6 +221,10 @@ roles:
       Ensure citation keys are auditable and modality/category alignment is correct.
       citation_key_map MUST use the canonical direction citation_key -> evidence_id.
       Do not reverse the map. Do not emit evidence_id -> citation_key.
+      BIBLIOGRAPHY CONFORMANCE CONSTRAINTS:
+      - Bibliography rows must be renderer-compatible and supply a stable URL field using url or source_anchor.
+      - If multiple bibliography rows refer to the same source URL, keep the descriptive title/author representation consistent for that URL.
+      - Do not emit conflicting duplicate bibliography descriptions for the same URL within one guideline.
       Return JSON only.
     allowed_placeholders:
     - target_id

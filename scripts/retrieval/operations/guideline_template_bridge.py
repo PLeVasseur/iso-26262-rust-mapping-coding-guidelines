@@ -146,9 +146,15 @@ def parse_bibliography_payload(raw_content: str) -> tuple[str, str, str, str] | 
     except Exception:
         return None
     citation_key = str(payload.get("citation_key", "")).strip()
-    author = str(payload.get("author", "")).strip() or "Reference"
-    title = str(payload.get("title", "")).strip() or citation_key
-    url = str(payload.get("url", "")).strip()
+    author = (
+        str(payload.get("author", "")).strip()
+        or str(payload.get("publisher", "")).strip()
+        or str(payload.get("document", "")).strip()
+        or str(payload.get("corpus", "")).strip()
+        or "Reference"
+    )
+    title = str(payload.get("title", "")).strip().rstrip(".") or citation_key
+    url = str(payload.get("url", "")).strip() or str(payload.get("source_anchor", "")).strip()
     if not citation_key:
         return None
     return citation_key, author, title, url

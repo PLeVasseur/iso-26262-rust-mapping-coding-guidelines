@@ -3,11 +3,12 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 
 def run_guidelines_build(
-    *, repo_root: Path, offline: bool = True
+    *, repo_root: Path, offline: bool = True, extra_env: dict[str, str] | None = None
 ) -> tuple[int, str, str, list[str]]:
     cmd: list[str] = []
     make_script = repo_root / "make.py"
@@ -25,6 +26,7 @@ def run_guidelines_build(
     completed = subprocess.run(
         cmd,
         cwd=str(repo_root),
+        env={**os.environ, **(extra_env or {})},
         text=True,
         capture_output=True,
         check=False,

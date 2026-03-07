@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
 
 _UNSAFE_RE = re.compile(r"\bunsafe\b")
+_AMBIGUOUS_REF_RANGE_RE = re.compile(r"&\s*[A-Za-z0-9_]+\s*\.\.=?")
+_DEPRECATED_EXAMPLE_PATTERNS = {
+    "slice_unchecked": re.compile(r"\.slice_unchecked\s*\("),
+}
+_UNSTABLE_EXAMPLE_PATTERNS = {
+    "core_hint_must_use": re.compile(r"\bcore::hint::must_use\s*\("),
+}
 
 
 def _has_unsafe(code: Any) -> bool:
@@ -14,6 +25,69 @@ def _has_unsafe(code: Any) -> bool:
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _bibliography_url(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    for key in ("url", "source_anchor"):
+        value = _clean_text(row.get(key, ""))
+        if value:
+            return value
+    return ""
+
+
+def _bibliography_author(row: Any) -> str:
+    if not isinstance(row, dict):
+        return "Reference"
+    for key in ("author", "publisher", "document", "corpus"):
+        value = _clean_text(row.get(key, ""))
+        if value:
+            return value
+    return "Reference"
+
+
+def _bibliography_title(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    return _clean_text(row.get("title", ""))
+
+
+def _normalize_bibliography_descriptor(row: Any) -> tuple[str, str]:
+    return _bibliography_author(row), _bibliography_title(row)
+
+
+def _should_probe_rust_example(code: str) -> bool:
+    text = str(code or "").strip()
+    return bool(text) and "fn main" in text
+
+
+def _probe_rust_example(code: str) -> list[str]:
+    rustc = shutil.which("rustc")
+    if not rustc or not _should_probe_rust_example(code):
+        return []
+    with tempfile.TemporaryDirectory(prefix="writer_example_probe_") as tmpdir:
+        source_path = Path(tmpdir) / "probe.rs"
+        source_path.write_text(code, encoding="utf-8")
+        completed = subprocess.run(
+            [rustc, "--edition=2021", "-Dwarnings", str(source_path)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    if completed.returncode == 0:
+        return []
+    compiler_output = f"{completed.stdout}\n{completed.stderr}".lower()
+    violations: list[str] = []
+    if "unstable library feature" in compiler_output:
+        violations.append("rustc_probe:unstable_api")
+    if "is never used" in compiler_output or "dead_code" in compiler_output:
+        violations.append("rustc_probe:dead_code_warning")
+    if "warning:" in compiler_output:
+        violations.append("rustc_probe:warnings_as_errors")
+    if not violations:
+        violations.append("rustc_probe:compile_error")
+    return violations
 
 
 def canonicalize_metadata_citation_map(
@@ -152,6 +226,53 @@ def validate_role_output(
             reason = str(output.get("compliant_miri_skip_justification", "")).strip()
             if not reason:
                 violations.append("compliant_miri_skip_requires_justification")
+
+        for field_name in ("non_compliant_code", "compliant_code"):
+            code = str(output.get(field_name, "") or "")
+            if _AMBIGUOUS_REF_RANGE_RE.search(code):
+                violations.append(f"{field_name}:compile_fail_pattern_ambiguous_ref_range")
+            for label, pattern in _DEPRECATED_EXAMPLE_PATTERNS.items():
+                if pattern.search(code):
+                    violations.append(f"{field_name}:deprecated_api:{label}")
+            for label, pattern in _UNSTABLE_EXAMPLE_PATTERNS.items():
+                if pattern.search(code):
+                    violations.append(f"{field_name}:unstable_api:{label}")
+            for probe_violation in _probe_rust_example(code):
+                violations.append(f"{field_name}:{probe_violation}")
+
+        justification_fields = (
+            str(output.get("non_compliant_miri_skip_justification", "") or ""),
+            str(output.get("compliant_miri_skip_justification", "") or ""),
+        )
+        if any("intentionally ill-formed rust" in value.lower() for value in justification_fields):
+            violations.append("compile_fail_examples_not_allowed_by_default")
+
+    if role_name == "metadata_citation_curator":
+        bibliography_rows = output.get("bibliography_rows")
+        if not isinstance(bibliography_rows, list):
+            violations.append("bibliography_rows_not_list")
+        else:
+            descriptor_by_url: dict[str, tuple[str, str]] = {}
+            for idx, row in enumerate(bibliography_rows):
+                if not isinstance(row, dict):
+                    violations.append(f"bibliography_row_not_object:{idx}")
+                    continue
+                citation_key = _clean_text(row.get("citation_key", ""))
+                if not citation_key:
+                    violations.append(f"bibliography_row_missing_citation_key:{idx}")
+                title = _bibliography_title(row)
+                if not title:
+                    violations.append(f"bibliography_row_missing_title:{idx}")
+                url = _bibliography_url(row)
+                if not url:
+                    violations.append(f"bibliography_row_missing_url:{idx}")
+                    continue
+                descriptor = _normalize_bibliography_descriptor(row)
+                prior = descriptor_by_url.get(url)
+                if prior is None:
+                    descriptor_by_url[url] = descriptor
+                elif prior != descriptor:
+                    violations.append(f"bibliography_duplicate_url_inconsistent:{idx}")
 
     return violations
 
