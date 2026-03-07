@@ -17,6 +17,9 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
     summary = _load_json(run_dir / "writer_host_run_summary.json")
     editorial_path = run_dir / "editorial_review_report.json"
     editorial = _load_json(editorial_path) if editorial_path.exists() else {}
+    curation_path = run_dir / "editorial_curation_report.json"
+    curation = _load_json(curation_path) if curation_path.exists() else {}
+    planned_atoms_path = run_dir / "planned_atoms.jsonl"
 
     checks = {
         "normalization_pass": str(normalization.get("status", "")) == "pass",
@@ -54,13 +57,49 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
             "review_count": int(editorial.get("review_count", 0) or 0),
             "report_path": str(editorial_path),
         }
+    planner_status = {
+        "status": "not_evaluated",
+        "planned_atom_count": 0,
+        "report_path": "",
+    }
+    if planned_atoms_path.exists():
+        planned_count = sum(
+            1
+            for line in planned_atoms_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        planner_status = {
+            "status": "pass" if planned_count > 0 else "review",
+            "planned_atom_count": planned_count,
+            "report_path": str(planned_atoms_path),
+        }
+    curator_status = {
+        "status": "not_evaluated",
+        "entry_count": 0,
+        "report_path": "",
+    }
+    if curation:
+        curator_status = {
+            "status": "pass"
+            if any(
+                str(row.get("export_recommendation", "")).strip() == "export"
+                for entry in list(curation.get("entries") or [])
+                for row in list((entry or {}).get("atom_decisions") or [])
+                if isinstance(row, dict)
+            )
+            else "review",
+            "entry_count": len(list(curation.get("entries") or [])),
+            "report_path": str(curation_path),
+        }
     return {
         "status": status,
         "run_dir": str(run_dir),
         "checks": checks,
         "lifecycle": {
             "writer_complete": status,
+            "editorial_planned": planner_status,
             "editorially_reviewable": editorial_status,
+            "editorially_curated": curator_status,
             "review_ready": review_ready,
             "next_required_gate": "writer_conformance"
             if review_ready["status"] == "not_evaluated"

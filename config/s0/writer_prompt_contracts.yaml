@@ -99,11 +99,51 @@ roles:
     style_rules_ref:
     - global_rules
     abstain_policy: emit reasoned abstain when evidence insufficient
+  editorial_planner:
+    prompt_template_id: writer-editorial-planner-v1
+    prompt_template_text: |
+      You are the Editorial Planner.
+      Decide whether {{target_id}} should emit one narrow guideline atom, several atoms, or no exported atom.
+      Use the evidence synthesis, style rules, and overlap candidates provided in the prompt context.
+      Your job is planning, not final prose writing.
+      Rules:
+      {{planner_rules}}
+      Baseline overlap candidates:
+      {{baseline_overlap_candidates}}
+      Planning schema hint:
+      {{planning_schema_hint}}
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - evidence_synthesis
+    - planner_rules
+    - baseline_overlap_candidates
+    - planning_schema_hint
+    required_inputs:
+    - evidence_synthesizer_output
+    - style_context.global_rules
+    - style_context.planner_rules
+    required_output_schema:
+      required:
+      - target_id
+      - decision
+      - decision_confidence
+      - decision_rationale
+      - rule_atoms
+    forbidden_patterns:
+    - final rendered guideline prose
+    - uncited factual assertions
+    style_rules_ref:
+    - global_rules
+    - planner_rules
+    abstain_policy: emit abstain_off_target or drop_as_baseline_overlap when planning should not produce a writeable atom
   amplification_author:
     prompt_template_id: writer-amplification-v1
     prompt_template_text: |
       You are the Amplification Author.
       Write construct-specific normative body text for {{target_id}} using evidence synthesis and exemplars {{exemplar_ids}}.
+      Planned atom context:
+      {{planned_atom}}
       Follow style excerpts and forbidden patterns in prompt context.
       Return JSON only with explicit normative strength.
     allowed_placeholders:
@@ -111,6 +151,7 @@ roles:
     - table1_row
     - evidence_synthesis
     - exemplar_ids
+    - planned_atom
     - amplification_rules
     required_inputs:
     - evidence_synthesizer_output
@@ -135,6 +176,8 @@ roles:
     prompt_template_text: |
       You are the Example Author.
       Produce non-compliant and compliant narrative plus Rust code for {{target_id}} in the same construct family.
+      Planned atom context:
+      {{planned_atom}}
       Keep code aligned to normative constructs and execution semantics constraints in prompt context.
       You MUST choose explicit rust-example miri intents for each example:
       - non_compliant_miri_intent and compliant_miri_intent in {check, expect_ub, skip}
@@ -156,6 +199,7 @@ roles:
     - evidence_synthesis
     - amplification
     - exemplar_ids
+    - planned_atom
     - example_rules
     required_inputs:
     - evidence_synthesizer_output
@@ -189,12 +233,15 @@ roles:
     prompt_template_text: |
       You are the Rationale Author.
       Produce a clear hazard -> mechanism -> consequence causal chain for {{target_id}}.
+      Planned atom context:
+      {{planned_atom}}
       Keep rationale non-tautological and evidence-aligned.
       Return JSON only.
     allowed_placeholders:
     - target_id
     - evidence_synthesis
     - examples
+    - planned_atom
     - rationale_rules
     required_inputs:
     - evidence_synthesizer_output
@@ -219,6 +266,8 @@ roles:
     prompt_template_text: |
       You are the Metadata/Citation Curator.
       Produce style-conformant metadata and bibliography rows for {{target_id}}.
+      Planned atom context:
+      {{planned_atom}}
       Ensure citation keys are auditable and modality/category alignment is correct.
       citation_key_map MUST use the canonical direction citation_key -> evidence_id.
       Do not reverse the map. Do not emit evidence_id -> citation_key.
@@ -235,6 +284,7 @@ roles:
     - target_id
     - all_writer_outputs
     - exemplar_metadata_patterns
+    - planned_atom
     - metadata_bibliography_rules
     required_inputs:
     - evidence_synthesizer_output
@@ -258,3 +308,47 @@ roles:
     - global_rules
     - metadata_bibliography_rules
     abstain_policy: emit abstain metadata with explicit note
+  editorial_curator:
+    prompt_template_id: writer-editorial-curator-v1
+    prompt_template_text: |
+      You are the Editorial Curator.
+      Review the planned atoms and the written atom drafts for {{target_id}}.
+      Decide which atoms should survive into the exported batch.
+      Use both intra-batch overlap and baseline-overlap candidates.
+      Rules:
+      {{curator_rules}}
+      Planned atoms:
+      {{planned_atoms}}
+      Candidate drafts:
+      {{candidate_drafts}}
+      Batch overlap candidates:
+      {{batch_overlap_candidates}}
+      Baseline overlap candidates:
+      {{baseline_overlap_candidates}}
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - planned_atoms
+    - candidate_drafts
+    - batch_overlap_candidates
+    - baseline_overlap_candidates
+    - curator_rules
+    required_inputs:
+    - editorial_planner_output
+    - atom_level_author_outputs
+    - style_context.global_rules
+    - style_context.curator_rules
+    required_output_schema:
+      required:
+      - target_id
+      - family_id
+      - decision_summary
+      - decision_confidence
+      - atom_decisions
+    forbidden_patterns:
+    - export everything
+    - preserve umbrella rule at all costs
+    style_rules_ref:
+    - global_rules
+    - curator_rules
+    abstain_policy: prefer needs_human_review over exporting uncertain or unsupported atoms

@@ -131,6 +131,33 @@ def test_writer_host_runtime_writes_progress_during_execution(tmp_path: Path) ->
 
     outputs = {
         "evidence_synthesizer": dict(base_output),
+        "editorial_planner": {
+            "target_id": "RET-ISSUE-005",
+            "decision": "emit_one",
+            "decision_confidence": "high",
+            "decision_rationale": "One narrow ownership rule is sufficient.",
+            "rule_atoms": [
+                {
+                    "atom_id": "RET-ISSUE-005::atom::ownership-safety",
+                    "disposition": "write",
+                    "title": "Preserve ownership safety when reading through raw pointers",
+                    "review_question": "Does the code preserve ownership safety when using raw pointer reads?",
+                    "chapter": "ownership-and-destruction",
+                    "primary_construct_family": "ownership-and-destruction",
+                    "secondary_construct_families": [],
+                    "hazard_focus": "unsafe pointer reads can bypass ownership invariants",
+                    "mechanism_focus": "raw pointer reads bypass checked ownership APIs",
+                    "mitigation_focus": "use checked ownership-preserving access patterns",
+                    "why_distinct": "single ownership-focused rule",
+                    "evidence_ids": ["rust_reference::stmt-1"],
+                    "claim_ids": ["RET-ISSUE-005::claim::1"],
+                    "writer_brief": "Keep the atom narrow.",
+                    "batch_overlap": {"status": "none", "candidates": []},
+                    "baseline_overlap": {"status": "low", "candidates": []},
+                    "write_recommendation": "write",
+                }
+            ],
+        },
         "amplification_author": {
             "target_id": "RET-ISSUE-005",
             "guideline_amplification_text": "Amplify",
@@ -164,6 +191,24 @@ def test_writer_host_runtime_writes_progress_during_execution(tmp_path: Path) ->
             "citation_key_map": {"cite-1": "rust_reference::stmt-1"},
             "metadata_validation_notes": ["ok"],
         },
+        "editorial_curator": {
+            "target_id": "RET-ISSUE-005",
+            "family_id": "RET-ISSUE-005",
+            "decision_summary": "Keep the planned atom.",
+            "decision_confidence": "high",
+            "atom_decisions": [
+                {
+                    "atom_id": "RET-ISSUE-005::atom::ownership-safety",
+                    "draft_id": "draft::RET-ISSUE-005::atom::ownership-safety",
+                    "disposition": "keep",
+                    "decision_confidence": "high",
+                    "batch_overlap_decision": {"status": "clear", "compared_atoms": []},
+                    "baseline_overlap_decision": {"status": "clear", "overlapping_guidelines": []},
+                    "final_why": "Distinct atom.",
+                    "export_recommendation": "export",
+                }
+            ],
+        },
     }
 
     def fake_run_role_with_retry(*, role_name: str, **_: object) -> RetryOutcome:
@@ -190,7 +235,13 @@ def test_writer_host_runtime_writes_progress_during_execution(tmp_path: Path) ->
     )
     assert progress["status"] == "completed"
     assert progress["completed_target_count"] == 1
-    assert progress["completed_roles"] == 5
+    assert progress["completed_roles"] == 7
+    merge_report = json.loads(
+        (report_root / "writer_subagent_outputs" / "merge_validation_report.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert merge_report["status"] == "pass"
 
 
 def test_writer_host_runtime_normalizes_synth_prompt_aliases_and_citation_map(
@@ -229,6 +280,33 @@ def test_writer_host_runtime_normalizes_synth_prompt_aliases_and_citation_map(
                 }
             ],
         },
+        "editorial_planner": {
+            "target_id": "RET-ISSUE-005",
+            "decision": "emit_one",
+            "decision_confidence": "medium",
+            "decision_rationale": "One atom is enough.",
+            "rule_atoms": [
+                {
+                    "atom_id": "RET-ISSUE-005::atom::ownership-safety",
+                    "disposition": "write",
+                    "title": "Preserve ownership safety when reading through raw pointers",
+                    "review_question": "Does the code preserve ownership safety when using raw pointer reads?",
+                    "chapter": "ownership-and-destruction",
+                    "primary_construct_family": "ownership-and-destruction",
+                    "secondary_construct_families": [],
+                    "hazard_focus": "hazard",
+                    "mechanism_focus": "mechanism",
+                    "mitigation_focus": "mitigation",
+                    "why_distinct": "single rule",
+                    "evidence_ids": ["rust_reference::stmt-1"],
+                    "claim_ids": ["RET-ISSUE-005::claim::1"],
+                    "writer_brief": "Keep narrow.",
+                    "batch_overlap": {"status": "none", "candidates": []},
+                    "baseline_overlap": {"status": "low", "candidates": []},
+                    "write_recommendation": "write",
+                }
+            ],
+        },
         "amplification_author": {
             "target_id": "RET-ISSUE-005",
             "guideline_amplification_text": "Amplify",
@@ -258,9 +336,34 @@ def test_writer_host_runtime_normalizes_synth_prompt_aliases_and_citation_map(
             "target_id": "RET-ISSUE-005",
             "tags": ["tag"],
             "fls_candidate": "FLS-1",
-            "bibliography_rows": [{"citation_key": "cite-1"}],
+            "bibliography_rows": [
+                {
+                    "citation_key": "cite-1",
+                    "title": "Ownership evidence",
+                    "source_anchor": "https://example.test/rust_reference",
+                    "document": "Rust Reference",
+                }
+            ],
             "citation_key_map": {"rust_reference::stmt-1": "cite-1"},
             "metadata_validation_notes": ["ok"],
+        },
+        "editorial_curator": {
+            "target_id": "RET-ISSUE-005",
+            "family_id": "RET-ISSUE-005",
+            "decision_summary": "Keep the atom.",
+            "decision_confidence": "high",
+            "atom_decisions": [
+                {
+                    "atom_id": "RET-ISSUE-005::atom::ownership-safety",
+                    "draft_id": "draft::RET-ISSUE-005::atom::ownership-safety",
+                    "disposition": "keep",
+                    "decision_confidence": "high",
+                    "batch_overlap_decision": {"status": "clear", "compared_atoms": []},
+                    "baseline_overlap_decision": {"status": "clear", "overlapping_guidelines": []},
+                    "final_why": "Distinct atom.",
+                    "export_recommendation": "export",
+                }
+            ],
         },
     }
 
@@ -355,6 +458,17 @@ def test_writer_host_runtime_preserves_transport_failure_without_normalization(
             failure_kind="model_not_found",
             failure_detail="configured OpenCode model not available",
         ),
+        "editorial_planner": RetryOutcome(
+            output={},
+            attempts=1,
+            violations=["planner_unavailable"],
+            oscillation_detected=False,
+            diminishing_returns=False,
+            budget_exhausted=True,
+            session_id="test::editorial_planner",
+            failure_kind="planner_unavailable",
+            failure_detail="planner unavailable",
+        ),
         "amplification_author": RetryOutcome(
             output={},
             attempts=1,
@@ -396,6 +510,17 @@ def test_writer_host_runtime_preserves_transport_failure_without_normalization(
             diminishing_returns=False,
             budget_exhausted=True,
             session_id="test::metadata_citation_curator",
+            failure_kind="transport_failure",
+            failure_detail="transport failed",
+        ),
+        "editorial_curator": RetryOutcome(
+            output={},
+            attempts=1,
+            violations=["transport_failure"],
+            oscillation_detected=False,
+            diminishing_returns=False,
+            budget_exhausted=True,
+            session_id="test::editorial_curator",
             failure_kind="transport_failure",
             failure_detail="transport failed",
         ),

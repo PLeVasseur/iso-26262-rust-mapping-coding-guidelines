@@ -5,13 +5,21 @@ from typing import Any
 
 import yaml
 
-REQUIRED_ROLES = (
+PRE_ATOM_ROLES = (
     "evidence_synthesizer",
+    "editorial_planner",
+)
+
+ATOM_AUTHOR_ROLES = (
     "amplification_author",
     "example_author",
     "rationale_author",
     "metadata_citation_curator",
 )
+
+POST_ATOM_ROLES = ("editorial_curator",)
+
+REQUIRED_ROLES = PRE_ATOM_ROLES + ATOM_AUTHOR_ROLES + POST_ATOM_ROLES
 
 
 def load_contracts(contract_path: Path) -> dict[str, Any]:

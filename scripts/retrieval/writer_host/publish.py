@@ -41,8 +41,11 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
     rationale = row["rationale"]
     examples = row["examples"]
     metadata = row["metadata"]
+    draft = row.get("draft") if isinstance(row.get("draft"), dict) else {}
     return {
         "target_id": mapping["target_id"],
+        "atom_id": mapping.get("atom_id", ""),
+        "draft_id": mapping.get("draft_id", ""),
         "guideline_id": mapping["guideline_id"],
         "filename": mapping["filename"],
         "chapter": mapping["chapter"],
@@ -57,6 +60,10 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
         "decidability": mapping["decidability"],
         "scope": mapping["scope"],
         "tags": list(mapping["tags"]),
+        "source_plan_id": str(draft.get("source_plan_id", "")).strip(),
+        "review_question": str(draft.get("review_question", "")).strip(),
+        "curation_disposition": str(draft.get("curation_disposition", "")).strip(),
+        "curation_reason": str(draft.get("curation_reason", "")).strip(),
         "non_compliant_miri_intent": str(examples.get("non_compliant_miri_intent", "")).strip(),
         "compliant_miri_intent": str(examples.get("compliant_miri_intent", "")).strip(),
         "non_compliant_miri_skip_justification": str(

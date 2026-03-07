@@ -13,10 +13,12 @@ def test_load_contracts_and_snapshot_contains_all_roles() -> None:
     assert isinstance(roles, dict)
     for role_name in (
         "evidence_synthesizer",
+        "editorial_planner",
         "amplification_author",
         "example_author",
         "rationale_author",
         "metadata_citation_curator",
+        "editorial_curator",
     ):
         assert role_name in roles
         role_row = roles[role_name]

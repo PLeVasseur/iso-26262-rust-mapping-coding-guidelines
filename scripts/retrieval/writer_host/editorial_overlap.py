@@ -37,6 +37,61 @@ def _jaccard(left: set[str], right: set[str]) -> float:
     return len(left & right) / float(len(left | right))
 
 
+def _row_tokens(row: dict[str, Any]) -> set[str]:
+    return _tokens(
+        row.get("title"),
+        row.get("chapter"),
+        row.get("construct_terms") or row.get("construct_keywords"),
+        row.get("claim_text_blob") or row.get("operative_text"),
+        row.get("review_question") or row.get("review_question_hint"),
+    )
+
+
+def top_overlap_candidates(
+    row: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    *,
+    top_k: int = 5,
+    candidate_id_key: str = "target_id",
+) -> list[dict[str, Any]]:
+    left_tokens = _row_tokens(row)
+    ranked: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        score = _jaccard(left_tokens, _row_tokens(candidate))
+        if score <= 0.0:
+            continue
+        overlap_kind = (
+            "near_duplicate"
+            if score >= 0.75
+            else ("partial_same_family" if score >= 0.45 else "low")
+        )
+        residue_status = (
+            "none"
+            if overlap_kind == "near_duplicate"
+            else ("weak_residue" if score >= 0.6 else "meaningful_residue")
+        )
+        ranked.append(
+            {
+                "candidate_id": str(candidate.get(candidate_id_key, "")).strip(),
+                "chapter": str(candidate.get("chapter", "")).strip(),
+                "overlap_kind": overlap_kind,
+                "overlap_score": round(score, 4),
+                "shared_review_question": str(
+                    candidate.get("review_question") or candidate.get("review_question_hint") or ""
+                ).strip(),
+                "shared_constructs": list(
+                    candidate.get("construct_terms") or candidate.get("construct_keywords") or []
+                )[:6],
+                "difference_summary": "Deterministic overlap candidate.",
+                "residue_status": residue_status,
+            }
+        )
+    ranked.sort(key=lambda item: float(item.get("overlap_score", 0.0)), reverse=True)
+    return ranked[:top_k]
+
+
 def analyze_overlap(rows: list[dict[str, Any]]) -> dict[str, Any]:
     pairs: list[dict[str, Any]] = []
     by_target: dict[str, list[dict[str, Any]]] = {}
@@ -66,6 +121,8 @@ def analyze_overlap(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 {
                     "left_target_id": str(left.get("target_id", "")),
                     "right_target_id": str(right.get("target_id", "")),
+                    "left_atom_id": str(left.get("atom_id", "")),
+                    "right_atom_id": str(right.get("atom_id", "")),
                     "score": round(score, 4),
                     "kind": "near_duplicate" if score >= 0.6 else "family_overlap",
                 }

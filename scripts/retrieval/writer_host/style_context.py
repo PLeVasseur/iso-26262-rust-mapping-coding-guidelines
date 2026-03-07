@@ -36,4 +36,14 @@ def load_style_context(*, run_dir: Path) -> dict[str, Any]:
             "Chapter/tags should reflect the real construct family.",
             "Remove exact duplicate bibliography rows and keep evidence curation deliberate.",
         ],
+        "planner_rules": [
+            "Plan the smallest set of rule atoms that each correspond to one review question.",
+            "Split broad targets only when hazards, chapter homes, or example shapes differ materially.",
+            "If evidence is off-target or already fully covered by baseline, abstain or drop instead of inventing a broad atom.",
+        ],
+        "curator_rules": [
+            "Keep the smallest non-overlapping set of supportable written atoms.",
+            "Drop baseline restatements with no meaningful residue.",
+            "Prefer human review to over-exporting uncertain atoms.",
+        ],
     }

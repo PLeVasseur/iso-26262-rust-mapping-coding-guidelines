@@ -84,6 +84,8 @@ def map_publish_record(
     draft = row["draft"]
     metadata = row["metadata"]
     target_id = str(draft.get("target_id", "")).strip()
+    atom_id = str(draft.get("atom_id", "")).strip()
+    draft_id = str(draft.get("draft_id", "")).strip()
     if not target_id:
         raise RuntimeError("missing target_id for publish mapping")
     tags = list(metadata.get("tags") or [])
@@ -92,6 +94,10 @@ def map_publish_record(
         "construct_scope": list(draft.get("construct_terms") or []),
         "claim_to_evidence_map": list(draft.get("claim_to_evidence_map") or []),
     }
+    amplification: dict[str, Any] = dict()
+    amplification_raw = row.get("amplification")
+    if isinstance(amplification_raw, dict):
+        amplification = dict(amplification_raw)
     title = (
         str(draft.get("title", "")).strip()
         or str((editorial or {}).get("proposed_title", "")).strip()
@@ -100,9 +106,7 @@ def map_publish_record(
         title = derive_title(
             target_id=target_id,
             synth=pseudo_synth,
-            amplification=row.get("amplification")
-            if isinstance(row.get("amplification"), dict)
-            else {},
+            amplification=amplification,
             metadata=metadata if isinstance(metadata, dict) else {},
         )
     routing = route_chapter(
@@ -117,7 +121,8 @@ def map_publish_record(
         synth=pseudo_synth,
         chapter=chapter,
     )
-    stable = hashlib.sha1(target_id.encode("utf-8")).hexdigest()[:12]
+    stable_seed = atom_id or draft_id or target_id
+    stable = hashlib.sha1(stable_seed.encode("utf-8")).hexdigest()[:12]
     guideline_id = f"gui_{stable}"
     filename = f"{guideline_id}.rst"
     fls_candidate = _metadata_fls_candidate(metadata)
@@ -137,6 +142,8 @@ def map_publish_record(
     category = "required" if "required" in category_raw or "safety" in category_raw else "advisory"
     return {
         "target_id": target_id,
+        "atom_id": atom_id,
+        "draft_id": draft_id,
         "guideline_id": guideline_id,
         "filename": filename,
         "chapter": chapter,

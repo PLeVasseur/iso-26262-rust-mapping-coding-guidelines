@@ -43,6 +43,7 @@ def build_role_prompt(
     prior_outputs: dict[str, dict[str, Any]],
     role_contract: dict[str, Any],
     run_dir: Path | None = None,
+    extra_context: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     evidence_ids = sorted(
         {
@@ -118,6 +119,24 @@ def build_role_prompt(
             "metadata_bibliography_rules",
             "- Keep citation keys stable and auditable.",
         ),
+        "planner_rules": _style_lines(
+            "planner_rules",
+            "- Plan the smallest set of supportable rule atoms.",
+        ),
+        "curator_rules": _style_lines(
+            "curator_rules",
+            "- Keep the smallest non-overlapping set of atoms.",
+        ),
+        "planned_atoms": _to_json((extra_context or {}).get("planned_atoms", [])),
+        "planned_atom": _to_json((extra_context or {}).get("planned_atom", {})),
+        "candidate_drafts": _to_json((extra_context or {}).get("candidate_drafts", [])),
+        "batch_overlap_candidates": _to_json(
+            (extra_context or {}).get("batch_overlap_candidates", [])
+        ),
+        "baseline_overlap_candidates": _to_json(
+            (extra_context or {}).get("baseline_overlap_candidates", [])
+        ),
+        "planning_schema_hint": _to_json((extra_context or {}).get("planning_schema_hint", {})),
     }
     rendered = _render_template(template, placeholders)
 

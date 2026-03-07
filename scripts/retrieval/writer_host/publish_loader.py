@@ -17,13 +17,13 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _by_target(path: Path) -> dict[str, dict[str, Any]]:
+def _by_draft(path: Path) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for row in _read_jsonl(path):
-        target_id = str(row.get("target_id", "")).strip()
+        draft_id = str(row.get("draft_id", "")).strip()
         output = row.get("output")
-        if target_id and isinstance(output, dict):
-            out[target_id] = output
+        if draft_id and isinstance(output, dict):
+            out[draft_id] = output
     return out
 
 
@@ -47,34 +47,37 @@ def load_publish_payload(*, run_dir: Path, publishable: bool) -> dict[str, Any]:
     if not drafts:
         raise RuntimeError("drafts.jsonl is empty")
 
-    amplification = _by_target(subagent_root / "amplification_author.jsonl")
-    rationale = _by_target(subagent_root / "rationale_author.jsonl")
-    examples = _by_target(subagent_root / "example_author.jsonl")
-    metadata = _by_target(subagent_root / "metadata_citation_curator.jsonl")
+    amplification = _by_draft(subagent_root / "amplification_author.jsonl")
+    rationale = _by_draft(subagent_root / "rationale_author.jsonl")
+    examples = _by_draft(subagent_root / "example_author.jsonl")
+    metadata = _by_draft(subagent_root / "metadata_citation_curator.jsonl")
 
     rows: list[dict[str, Any]] = []
     for draft in drafts:
         target_id = str(draft.get("target_id", "")).strip()
+        draft_id = str(draft.get("draft_id", "")).strip()
         if not target_id:
             raise RuntimeError("draft missing target_id")
-        if target_id not in amplification:
-            raise RuntimeError(f"missing amplification output for {target_id}")
-        if target_id not in rationale:
-            raise RuntimeError(f"missing rationale output for {target_id}")
-        if target_id not in examples:
-            raise RuntimeError(f"missing example output for {target_id}")
-        if target_id not in metadata:
-            raise RuntimeError(f"missing metadata output for {target_id}")
+        if not draft_id:
+            raise RuntimeError(f"draft missing draft_id for {target_id}")
+        if draft_id not in amplification:
+            raise RuntimeError(f"missing amplification output for {draft_id}")
+        if draft_id not in rationale:
+            raise RuntimeError(f"missing rationale output for {draft_id}")
+        if draft_id not in examples:
+            raise RuntimeError(f"missing example output for {draft_id}")
+        if draft_id not in metadata:
+            raise RuntimeError(f"missing metadata output for {draft_id}")
         claim_map = draft.get("claim_to_evidence_map")
         if not isinstance(claim_map, list) or not claim_map:
-            raise RuntimeError(f"draft claim map empty for {target_id}")
+            raise RuntimeError(f"draft claim map empty for {draft_id}")
         rows.append(
             {
                 "draft": draft,
-                "amplification": amplification[target_id],
-                "rationale": rationale[target_id],
-                "examples": examples[target_id],
-                "metadata": metadata[target_id],
+                "amplification": amplification[draft_id],
+                "rationale": rationale[draft_id],
+                "examples": examples[draft_id],
+                "metadata": metadata[draft_id],
             }
         )
 
