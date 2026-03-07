@@ -15,6 +15,7 @@ from retrieval.writer_host.publish_git import (
     finalize_commit,
     push_branch,
     remove_worktree,
+    status_porcelain,
 )
 from retrieval.writer_host.publish_ingest import ingest_records
 from retrieval.writer_host.publish_loader import load_publish_payload
@@ -115,6 +116,151 @@ def _copy_export_snapshot(*, source_root: Path, snapshot_root: Path) -> dict[str
     }
 
 
+def _relative_export_paths(*, generated_files: list[str], source_root: Path) -> list[str]:
+    out: list[str] = []
+    for raw in generated_files:
+        candidate = Path(str(raw)).resolve()
+        try:
+            rel = candidate.relative_to(source_root)
+        except ValueError:
+            continue
+        out.append(rel.as_posix())
+    return sorted(dict.fromkeys(out))
+
+
+def _classify_export_delta(
+    *, worktree_root: Path, source_root: Path, generated_files: list[str]
+) -> dict[str, Any]:
+    relative_generated = _relative_export_paths(
+        generated_files=generated_files, source_root=source_root
+    )
+    if not relative_generated:
+        return {
+            "snapshot_root": "",
+            "source_worktree": str(worktree_root),
+            "generated_files": [],
+            "created_files": [],
+            "modified_files": [],
+            "deleted_files": [],
+            "unchanged_generated_files": [],
+            "counts": {
+                "generated": 0,
+                "created": 0,
+                "modified": 0,
+                "deleted": 0,
+                "unchanged_generated": 0,
+            },
+        }
+
+    rows = status_porcelain(
+        worktree_root=worktree_root,
+        pathspecs=[f"src/coding-guidelines/{path}" for path in relative_generated],
+    )
+    status_by_path = {
+        Path(str(row.get("path", ""))).relative_to("src/coding-guidelines").as_posix(): row
+        for row in rows
+        if str(row.get("path", "")).startswith("src/coding-guidelines/")
+    }
+
+    created: list[str] = []
+    modified: list[str] = []
+    deleted: list[str] = []
+    unchanged: list[str] = []
+    for path in relative_generated:
+        row = status_by_path.get(path)
+        if row is None:
+            unchanged.append(path)
+            continue
+        code = str(row.get("code", "  "))
+        if "?" in code or "A" in code:
+            created.append(path)
+        elif "D" in code:
+            deleted.append(path)
+        elif "M" in code or "R" in code or "C" in code:
+            modified.append(path)
+        else:
+            unchanged.append(path)
+
+    return {
+        "snapshot_root": "",
+        "source_worktree": str(worktree_root),
+        "generated_files": relative_generated,
+        "created_files": created,
+        "modified_files": modified,
+        "deleted_files": deleted,
+        "unchanged_generated_files": unchanged,
+        "counts": {
+            "generated": len(relative_generated),
+            "created": len(created),
+            "modified": len(modified),
+            "deleted": len(deleted),
+            "unchanged_generated": len(unchanged),
+        },
+    }
+
+
+def _write_export_delta_manifest(*, publish_root: Path, payload: dict[str, Any]) -> Path:
+    path = publish_root / "exported_guidelines_changes.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return path
+
+
+def _render_export_delta_note(*, payload: dict[str, Any], manifest_path: Path) -> str:
+    counts = dict(payload.get("counts") or {})
+    created = list(payload.get("created_files") or [])
+    modified = list(payload.get("modified_files") or [])
+    deleted = list(payload.get("deleted_files") or [])
+    unchanged = list(payload.get("unchanged_generated_files") or [])
+
+    def _section(title: str, paths: list[str]) -> list[str]:
+        lines = [f"## {title}", ""]
+        if not paths:
+            lines.append("- none")
+        else:
+            lines.extend(f"- `{path}`" for path in paths)
+        lines.append("")
+        return lines
+
+    lines = [
+        "# This Run Changes",
+        "",
+        "This snapshot contains the full exported `src/coding-guidelines` tree for durability.",
+        "The lists below identify the files changed by this publish run.",
+        "",
+        f"- Manifest: `{manifest_path.name}`",
+        f"- Generated files: {int(counts.get('generated', 0))}",
+        f"- Created files: {int(counts.get('created', 0))}",
+        f"- Modified files: {int(counts.get('modified', 0))}",
+        f"- Deleted files: {int(counts.get('deleted', 0))}",
+        f"- Unchanged generated files: {int(counts.get('unchanged_generated', 0))}",
+        "",
+    ]
+    lines.extend(_section("Created Files", created))
+    lines.extend(_section("Modified Files", modified))
+    if deleted:
+        lines.extend(_section("Deleted Files", deleted))
+    else:
+        lines.extend(["## Deleted Files", "", "- none", ""])
+    lines.extend(["## Unchanged Generated Files", ""])
+    if unchanged:
+        lines.append(f"- count: {len(unchanged)}")
+    else:
+        lines.append("- count: 0")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _write_export_delta_note(
+    *, snapshot_root: Path, payload: dict[str, Any], manifest_path: Path
+) -> Path:
+    note_path = snapshot_root / "THIS_RUN_CHANGES.md"
+    note_path.write_text(
+        _render_export_delta_note(payload=payload, manifest_path=manifest_path),
+        encoding="utf-8",
+    )
+    return note_path
+
+
 def _cleanup_report(*, requested: bool, performed: bool, reason: str) -> dict[str, Any]:
     return {
         "requested": requested,
@@ -148,6 +294,7 @@ def _base_publish_report(
         "ingest": {},
         "export": {},
         "export_snapshot": {},
+        "export_delta": {},
         "conformance": {},
         "commit": {"committed": False},
         "push": {"pushed": False},
@@ -288,11 +435,35 @@ def run_publish_from_run(
         try:
             export = run_export_rst(root=root, db_path=db_path, guidelines_repo_root=worktree_root)
             report["export"] = export
+            source_root = worktree_root / "src" / "coding-guidelines"
+            delta_payload = _classify_export_delta(
+                worktree_root=worktree_root,
+                source_root=source_root,
+                generated_files=list(((export.get("export") or {}).get("generated_files") or [])),
+            )
             snapshot = _copy_export_snapshot(
-                source_root=worktree_root / "src" / "coding-guidelines",
+                source_root=source_root,
                 snapshot_root=publish_root / "exported_guidelines",
             )
+            delta_payload["snapshot_root"] = str(snapshot["path"])
+            manifest_path = _write_export_delta_manifest(
+                publish_root=publish_root, payload=delta_payload
+            )
+            note_path = _write_export_delta_note(
+                snapshot_root=Path(str(snapshot["path"])),
+                payload=delta_payload,
+                manifest_path=manifest_path,
+            )
+            snapshot_files = list(snapshot.get("files") or [])
+            snapshot_files.append(str(note_path))
+            snapshot["files"] = sorted(dict.fromkeys(snapshot_files))
+            snapshot["file_count"] = len(snapshot["files"])
             report["export_snapshot"] = snapshot
+            report["export_delta"] = {
+                **delta_payload,
+                "manifest_path": str(manifest_path),
+                "note_path": str(note_path),
+            }
         except Exception as exc:
             report["failure_code"] = "EXPORT_FAILED"
             report["failure_message"] = str(exc)

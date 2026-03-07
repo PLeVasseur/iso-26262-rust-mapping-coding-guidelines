@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 
 def _run(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -63,6 +64,33 @@ def push_branch(*, worktree_root: Path, branch: str) -> dict[str, str | bool]:
         "pushed": True,
         "branch": branch,
     }
+
+
+def status_porcelain(
+    *, worktree_root: Path, pathspecs: list[str] | None = None
+) -> list[dict[str, Any]]:
+    command = ["git", "status", "--porcelain=v1"]
+    if pathspecs:
+        command.append("--")
+        command.extend(pathspecs)
+    status = _run(*command, cwd=worktree_root)
+    if status.returncode != 0:
+        raise RuntimeError(f"git status failed: {status.stderr.strip() or status.stdout.strip()}")
+    rows: list[dict[str, Any]] = []
+    for line in status.stdout.splitlines():
+        if not line.strip():
+            continue
+        code = line[:2]
+        path = line[3:].strip()
+        rows.append(
+            {
+                "code": code,
+                "path": path,
+                "index_status": code[:1],
+                "worktree_status": code[1:2],
+            }
+        )
+    return rows
 
 
 def remove_worktree(*, repo_root: Path, worktree_root: Path) -> None:

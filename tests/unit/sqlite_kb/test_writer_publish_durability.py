@@ -21,6 +21,20 @@ def _seed_exported_guidelines(worktree_root: Path) -> None:
     (out / "index.rst").write_text("Unsafety\n========\n", encoding="utf-8")
 
 
+def _export_payload(worktree_root: Path) -> dict[str, object]:
+    return {
+        "status": "pass",
+        "output_root": str(worktree_root / "src" / "coding-guidelines"),
+        "export": {
+            "file_count": 2,
+            "generated_files": [
+                str(worktree_root / "src" / "coding-guidelines" / "unsafety" / "gui_demo.rst"),
+                str(worktree_root / "src" / "coding-guidelines" / "unsafety" / "index.rst"),
+            ],
+        },
+    }
+
+
 def test_run_publish_from_run_preserves_snapshot_on_conformance_failure(
     monkeypatch,
     tmp_path: Path,
@@ -50,13 +64,17 @@ def test_run_publish_from_run_preserves_snapshot_on_conformance_failure(
 
     def fake_export(**kwargs):
         _seed_exported_guidelines(worktree_root)
-        return {
-            "status": "pass",
-            "output_root": str(worktree_root / "src" / "coding-guidelines"),
-            "export": {"file_count": 2},
-        }
+        return _export_payload(worktree_root)
 
     monkeypatch.setattr(publish, "run_export_rst", fake_export)
+    monkeypatch.setattr(
+        publish,
+        "status_porcelain",
+        lambda **kwargs: [
+            {"code": "??", "path": "src/coding-guidelines/unsafety/gui_demo.rst"},
+            {"code": " M", "path": "src/coding-guidelines/unsafety/index.rst"},
+        ],
+    )
     monkeypatch.setattr(publish, "run_conformance", lambda **kwargs: {"status": "fail"})
     monkeypatch.setattr(
         publish,
@@ -76,6 +94,9 @@ def test_run_publish_from_run_preserves_snapshot_on_conformance_failure(
     assert report["failure_code"] == "CONFORMANCE_FAILED"
     assert snapshot_path.exists()
     assert (snapshot_path / "unsafety" / "gui_demo.rst").exists()
+    assert (snapshot_path / "THIS_RUN_CHANGES.md").exists()
+    assert report["export_delta"]["created_files"] == ["unsafety/gui_demo.rst"]
+    assert report["export_delta"]["modified_files"] == ["unsafety/index.rst"]
     assert report["cleanup"]["performed"] is False
     assert report["cleanup"]["reason"] == "preserved_after_non_pass"
     assert removed == []
@@ -110,14 +131,10 @@ def test_run_publish_from_run_reports_no_changes_and_keeps_artifacts(
         publish,
         "run_export_rst",
         lambda **kwargs: (
-            _seed_exported_guidelines(worktree_root)
-            or {
-                "status": "pass",
-                "output_root": str(worktree_root / "src" / "coding-guidelines"),
-                "export": {"file_count": 2},
-            }
+            _seed_exported_guidelines(worktree_root) or _export_payload(worktree_root)
         ),
     )
+    monkeypatch.setattr(publish, "status_porcelain", lambda **kwargs: [])
     monkeypatch.setattr(publish, "run_conformance", lambda **kwargs: {"status": "pass"})
     monkeypatch.setattr(
         publish,
@@ -140,6 +157,12 @@ def test_run_publish_from_run_reports_no_changes_and_keeps_artifacts(
     assert report["status"] == "no_changes"
     assert report["failure_code"] == "NO_CHANGES"
     assert Path(str(report["export_snapshot"]["path"])).exists()
+    assert Path(str(report["export_delta"]["manifest_path"])).exists()
+    assert Path(str(report["export_delta"]["note_path"])).exists()
+    assert report["export_delta"]["unchanged_generated_files"] == [
+        "unsafety/gui_demo.rst",
+        "unsafety/index.rst",
+    ]
     assert report["cleanup"]["performed"] is False
 
 
@@ -170,13 +193,16 @@ def test_run_publish_from_run_cleans_worktree_after_success(monkeypatch, tmp_pat
         publish,
         "run_export_rst",
         lambda **kwargs: (
-            _seed_exported_guidelines(worktree_root)
-            or {
-                "status": "pass",
-                "output_root": str(worktree_root / "src" / "coding-guidelines"),
-                "export": {"file_count": 2},
-            }
+            _seed_exported_guidelines(worktree_root) or _export_payload(worktree_root)
         ),
+    )
+    monkeypatch.setattr(
+        publish,
+        "status_porcelain",
+        lambda **kwargs: [
+            {"code": "??", "path": "src/coding-guidelines/unsafety/gui_demo.rst"},
+            {"code": " M", "path": "src/coding-guidelines/unsafety/index.rst"},
+        ],
     )
     monkeypatch.setattr(publish, "run_conformance", lambda **kwargs: {"status": "pass"})
     monkeypatch.setattr(
@@ -204,6 +230,8 @@ def test_run_publish_from_run_cleans_worktree_after_success(monkeypatch, tmp_pat
     assert report["push"]["pushed"] is True
     assert report["cleanup"]["performed"] is True
     assert report["cleanup"]["reason"] == "success_cleanup"
+    assert Path(str(report["export_delta"]["manifest_path"])).exists()
+    assert Path(str(report["export_delta"]["note_path"])).exists()
     assert removed == [(repo_root, worktree_root)]
 
 
@@ -240,10 +268,19 @@ def test_writer_publish_service_writes_run_scoped_report_and_packet(
                 "performed": False,
                 "reason": "preserved_after_non_pass",
             },
+            "export_delta": {
+                "manifest_path": str(publish_root / "exported_guidelines_changes.json"),
+                "note_path": str(publish_root / "exported_guidelines" / "THIS_RUN_CHANGES.md"),
+            },
             "commit": {"committed": False},
             "push": {"pushed": False},
         },
     )
+    (publish_root / "exported_guidelines").mkdir(parents=True)
+    (publish_root / "exported_guidelines" / "THIS_RUN_CHANGES.md").write_text(
+        "# This Run Changes\n", encoding="utf-8"
+    )
+    (publish_root / "exported_guidelines_changes.json").write_text("{}\n", encoding="utf-8")
 
     code = writer_publish_service.run(Namespace(output=""), root=tmp_path)
 
@@ -257,3 +294,4 @@ def test_writer_publish_service_writes_run_scoped_report_and_packet(
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert payload["review_packet"]["path"] == str(packet_path)
     assert payload["review_packet"]["manifest_path"] == str(manifest_path)
+    assert payload["export_delta"]["manifest_path"].endswith("exported_guidelines_changes.json")

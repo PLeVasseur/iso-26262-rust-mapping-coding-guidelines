@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -127,11 +128,12 @@ def _fake_map_publish_record(
         path = resolution_report_root / f"{target_id.lower()}.json"
         _write_json(path, {"target_id": target_id, "decision": {"reason_code": "ACCEPTED"}})
         report_path = str(path)
-    token = target_id.lower().replace("-", "_")
+    stable = hashlib.sha1(target_id.encode("utf-8")).hexdigest()[:12]
+    guideline_id = f"gui_{stable}"
     return {
         "target_id": target_id,
-        "guideline_id": f"gui_{token}",
-        "filename": f"gui_{token}.rst",
+        "guideline_id": guideline_id,
+        "filename": f"{guideline_id}.rst",
         "chapter": chapter,
         "title": f"Generated guideline for {target_id}",
         "category": "required",
@@ -162,6 +164,22 @@ def _make_finalize(commit_result: dict[str, Any]):
 
 def _fake_push(**kwargs: Any) -> dict[str, Any]:
     return {"pushed": True, "branch": str(kwargs["branch"])}
+
+
+def _expected_delta(targets: list[str]) -> dict[str, list[str]]:
+    created: list[str] = []
+    modified: set[str] = set()
+    for target_id in targets:
+        suffix = target_id.rsplit("-", 1)[-1]
+        order = int(suffix) if suffix.isdigit() else 1
+        chapter = "unsafety" if order % 2 else "exceptions-and-errors"
+        stable = hashlib.sha1(target_id.encode("utf-8")).hexdigest()[:12]
+        created.append(f"{chapter}/gui_{stable}.rst")
+        modified.add(f"{chapter}/index.rst")
+    return {
+        "created": sorted(created),
+        "modified": sorted(modified),
+    }
 
 
 def run_validation(*, root: Path, output_root: Path) -> dict[str, Any]:
@@ -206,6 +224,9 @@ def run_validation(*, root: Path, output_root: Path) -> dict[str, Any]:
             _build_run(run_dir, targets)
             publish.finalize_commit = _make_finalize(commit_result)
             publish.push_branch = _fake_push
+            publish_root = root / ".cache" / "sqlite_kb" / "reports" / "writer_publish" / run_name
+            if publish_root.exists():
+                shutil.rmtree(publish_root)
 
             code = writer_publish_service.run(
                 Namespace(
@@ -217,14 +238,16 @@ def run_validation(*, root: Path, output_root: Path) -> dict[str, Any]:
                 ),
                 root=root,
             )
-            publish_root = (
-                root / ".cache" / "sqlite_kb" / "reports" / "writer_publish" / run_dir.name
-            )
             report_path = publish_root / "writer_publish_report.json"
             packet_path = publish_root / "writer_publish_review_packet.zip"
             manifest_path = publish_root / "writer_publish_review_packet.manifest.json"
             report = json.loads(report_path.read_text(encoding="utf-8"))
             snapshot_path = Path(str(report["export_snapshot"]["path"]))
+            delta_manifest_path = Path(str(report["export_delta"]["manifest_path"]))
+            delta_note_path = Path(str(report["export_delta"]["note_path"]))
+            delta_manifest = json.loads(delta_manifest_path.read_text(encoding="utf-8"))
+            delta_note = delta_note_path.read_text(encoding="utf-8")
+            expected_delta = _expected_delta(targets)
             worktree_path = Path(str(report["worktree"])) if report.get("worktree") else None
             exported_files = sorted(
                 str(path.relative_to(snapshot_path)) for path in snapshot_path.rglob("*.rst")
@@ -239,6 +262,8 @@ def run_validation(*, root: Path, output_root: Path) -> dict[str, Any]:
                 or not snapshot_path.exists()
                 or not packet_path.exists()
                 or not manifest_path.exists()
+                or not delta_manifest_path.exists()
+                or not delta_note_path.exists()
             ):
                 raise RuntimeError(f"{run_name} missing durable artifacts")
             if not exported_files:
@@ -249,6 +274,13 @@ def run_validation(*, root: Path, output_root: Path) -> dict[str, Any]:
                 expect["expect_cleanup"]
             ):
                 raise RuntimeError(f"{run_name} worktree persistence mismatch: {worktree_path}")
+            if sorted(delta_manifest.get("created_files") or []) != expected_delta["created"]:
+                raise RuntimeError(f"{run_name} created delta mismatch: {delta_manifest}")
+            if sorted(delta_manifest.get("modified_files") or []) != expected_delta["modified"]:
+                raise RuntimeError(f"{run_name} modified delta mismatch: {delta_manifest}")
+            for path in expected_delta["created"] + expected_delta["modified"]:
+                if f"`{path}`" not in delta_note:
+                    raise RuntimeError(f"{run_name} missing delta note path: {path}")
 
             results.append(
                 {
@@ -258,11 +290,15 @@ def run_validation(*, root: Path, output_root: Path) -> dict[str, Any]:
                     "report_path": str(report_path),
                     "snapshot_path": str(snapshot_path),
                     "packet_path": str(packet_path),
+                    "delta_manifest_path": str(delta_manifest_path),
+                    "delta_note_path": str(delta_note_path),
                     "worktree": str(worktree_path) if worktree_path is not None else "",
                     "worktree_exists_after_run": bool(worktree_path.exists())
                     if worktree_path
                     else False,
                     "exported_rst_files": exported_files,
+                    "created_files": list(delta_manifest.get("created_files") or []),
+                    "modified_files": list(delta_manifest.get("modified_files") or []),
                 }
             )
     finally:
