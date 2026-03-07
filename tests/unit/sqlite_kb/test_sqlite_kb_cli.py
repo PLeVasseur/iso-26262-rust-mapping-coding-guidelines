@@ -203,6 +203,24 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.subcommand, "writer-run")
         self.assertEqual(args.evidence_manifest, ".cache/sqlite_kb/reports/demo/manifest.json")
 
+    def test_parse_args_for_writer_run_target_subset(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-run",
+                "--evidence-manifest",
+                ".cache/sqlite_kb/reports/demo/manifest.json",
+                "--target-id",
+                "RET-ISSUE-006",
+                "--target-id",
+                "RET-ISSUE-003",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.target_ids, ["RET-ISSUE-006", "RET-ISSUE-003"])
+
     def test_parse_args_for_writer_publish(self) -> None:
         with patch.object(
             sys,

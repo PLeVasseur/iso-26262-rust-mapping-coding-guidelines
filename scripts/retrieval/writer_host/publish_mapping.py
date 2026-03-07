@@ -6,32 +6,11 @@ from typing import Any
 
 from context.fls_lookup import resolve_fls_for_guideline, validate_fls_id
 
+from retrieval.writer_host.chapter_routing import normalized_tags_for_domains, route_chapter
 from retrieval.writer_host.fls_candidate_search import gather_candidates
 from retrieval.writer_host.fls_resolution_packet import build_resolution_packet
 from retrieval.writer_host.fls_resolution_report import write_resolution_report
-
-
-def _chapter_from_tags(tags: list[str]) -> str:
-    lowered = [str(tag).strip().lower() for tag in tags if str(tag).strip()]
-    if any("unsafe" in tag for tag in lowered):
-        return "unsafety"
-    if any("error" in tag for tag in lowered):
-        return "exceptions-and-errors"
-    if any("macro" in tag for tag in lowered):
-        return "macros"
-    return "expressions"
-
-
-def _normalized_tags(tags: list[str]) -> list[str]:
-    lowered = [str(tag).strip().lower() for tag in tags if str(tag).strip()]
-    out: list[str] = []
-    if any("unsafe" in tag for tag in lowered):
-        out.append("unsafe")
-    if any("error" in tag for tag in lowered):
-        out.append("defect")
-    if not out:
-        out.append("subset")
-    return out
+from retrieval.writer_host.title_policy import derive_title
 
 
 def _metadata_fls_candidate(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -108,14 +87,42 @@ def map_publish_record(
     if not target_id:
         raise RuntimeError("missing target_id for publish mapping")
     tags = list(metadata.get("tags") or [])
-    chapter = _chapter_from_tags(tags)
-    normalized_tags = _normalized_tags(tags)
+    editorial = metadata.get("editorial_metadata") if isinstance(metadata, dict) else {}
+    pseudo_synth = {
+        "construct_scope": list(draft.get("construct_terms") or []),
+        "claim_to_evidence_map": list(draft.get("claim_to_evidence_map") or []),
+    }
+    title = (
+        str(draft.get("title", "")).strip()
+        or str((editorial or {}).get("proposed_title", "")).strip()
+    )
+    if not title:
+        title = derive_title(
+            target_id=target_id,
+            synth=pseudo_synth,
+            amplification=row.get("amplification")
+            if isinstance(row.get("amplification"), dict)
+            else {},
+            metadata=metadata if isinstance(metadata, dict) else {},
+        )
+    routing = route_chapter(
+        metadata=metadata if isinstance(metadata, dict) else {},
+        synth=pseudo_synth,
+        title=title,
+        current_tags=tags,
+    )
+    chapter = str(draft.get("chapter", "")).strip() or str(routing.get("chapter", "expressions"))
+    normalized_tags = normalized_tags_for_domains(
+        metadata=metadata if isinstance(metadata, dict) else {},
+        synth=pseudo_synth,
+        chapter=chapter,
+    )
     stable = hashlib.sha1(target_id.encode("utf-8")).hexdigest()[:12]
     guideline_id = f"gui_{stable}"
     filename = f"{guideline_id}.rst"
     fls_candidate = _metadata_fls_candidate(metadata)
     packet = build_resolution_packet(row)
-    title = str(packet.get("title", "")).strip() or f"Guideline {target_id}"
+    title = title or str(packet.get("title", "")).strip() or f"Guideline {target_id}"
     packet["title"] = title
     packet["expected_domains"] = normalized_tags
     fls_id, fls_resolution, fls_resolution_report, publishability = _resolve_fls_id(

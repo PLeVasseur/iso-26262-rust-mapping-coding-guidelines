@@ -27,6 +27,7 @@ def test_quality_gate_passes_for_complete_run(tmp_path: Path) -> None:
     assert report["status"] == "pass"
     assert report["hard_failures"] == []
     assert report["lifecycle"]["writer_complete"] == "pass"
+    assert report["lifecycle"]["editorially_reviewable"]["status"] == "not_evaluated"
     assert report["lifecycle"]["review_ready"]["status"] == "not_evaluated"
 
 
@@ -66,6 +67,27 @@ def test_quality_gate_reports_review_ready_when_conformance_exists(tmp_path: Pat
     assert report["status"] == "pass"
     assert report["lifecycle"]["review_ready"]["status"] == "pass"
     assert report["lifecycle"]["next_required_gate"] == "none"
+
+
+def test_quality_gate_reports_editorial_review_status(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write(run_dir / "normalization_report.json", {"status": "pass"})
+    _write(run_dir / "evidence_synthesizer_gate_report.json", {"status": "pass"})
+    _write(run_dir / "writer_output_auditor_report.json", {"status": "pass", "blocked_count": 0})
+    _write(
+        run_dir / "writer_subagent_outputs" / "merge_validation_report.json",
+        {"status": "pass", "entries": []},
+    )
+    _write(run_dir / "writer_host_run_summary.json", {"status": "completed"})
+    _write(
+        run_dir / "editorial_review_report.json",
+        {"status": "review", "blocked_count": 1, "review_count": 4},
+    )
+
+    report = evaluate_run(run_dir)
+
+    assert report["lifecycle"]["editorially_reviewable"]["status"] == "review"
+    assert report["lifecycle"]["editorially_reviewable"]["blocked_count"] == 1
 
 
 def test_evidence_gate_fails_on_prompt_example_and_empty_semantics(tmp_path: Path) -> None:

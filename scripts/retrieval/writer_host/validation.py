@@ -253,6 +253,7 @@ def validate_role_output(
             violations.append("bibliography_rows_not_list")
         else:
             descriptor_by_url: dict[str, tuple[str, str]] = {}
+            seen_exact_rows: set[tuple[str, str, str]] = set()
             for idx, row in enumerate(bibliography_rows):
                 if not isinstance(row, dict):
                     violations.append(f"bibliography_row_not_object:{idx}")
@@ -267,6 +268,11 @@ def validate_role_output(
                 if not url:
                     violations.append(f"bibliography_row_missing_url:{idx}")
                     continue
+                exact_row = (url, title, _bibliography_author(row))
+                if exact_row in seen_exact_rows:
+                    violations.append(f"bibliography_exact_duplicate:{idx}")
+                else:
+                    seen_exact_rows.add(exact_row)
                 descriptor = _normalize_bibliography_descriptor(row)
                 prior = descriptor_by_url.get(url)
                 if prior is None:

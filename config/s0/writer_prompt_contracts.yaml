@@ -149,6 +149,7 @@ roles:
       - Avoid deprecated APIs in both examples unless the target is specifically about deprecation or migration.
       - Avoid unstable APIs and code patterns that compile only on nightly or behind feature gates.
       - Keep examples warning-clean under ordinary rustc compilation; do not leave dead code, unused helper items, or unused trait items that trigger warning failures.
+      - Examples should illustrate exactly one reviewable rule and should not widen the chapter/topic beyond the operative text.
       Return JSON only.
     allowed_placeholders:
     - target_id
@@ -225,6 +226,10 @@ roles:
       - Bibliography rows must be renderer-compatible and supply a stable URL field using url or source_anchor.
       - If multiple bibliography rows refer to the same source URL, keep the descriptive title/author representation consistent for that URL.
       - Do not emit conflicting duplicate bibliography descriptions for the same URL within one guideline.
+      EDITORIAL QUALITY CONSTRAINTS:
+      - Title and metadata intent should describe one reviewable rule, not a source paraphrase or process note.
+      - Choose tags that match the real chapter family; do not default everything to expressions/unsafe themes.
+      - If the available evidence is off-target for the requested construct family, record that clearly and abstain from inventing a polished replacement title.
       Return JSON only.
     allowed_placeholders:
     - target_id

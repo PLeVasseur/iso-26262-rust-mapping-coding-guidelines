@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from retrieval.writer_host.title_policy import derive_title
+
 TOKEN_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 STOPWORDS = {
     "the",
@@ -98,9 +100,21 @@ def build_resolution_packet(row: dict[str, Any]) -> dict[str, Any]:
     metadata = _as_dict(row.get("metadata"))
 
     fls_candidate = _as_dict(metadata.get("fls_candidate"))
+    editorial = _as_dict(metadata.get("editorial_metadata"))
     target_id = _text(draft.get("target_id"))
     claim_phrases = _extract_claim_phrases(draft)
-    title = _text(fls_candidate.get("statement")) or (claim_phrases[0] if claim_phrases else "")
+    title = (
+        _text(draft.get("title"))
+        or _text(editorial.get("proposed_title"))
+        or derive_title(
+            target_id=target_id,
+            synth=draft,
+            amplification=amplification,
+            metadata=metadata,
+        )
+        or _text(fls_candidate.get("statement"))
+        or (claim_phrases[0] if claim_phrases else "")
+    )
     title = title or f"Guideline {target_id}"
     tags = [value.lower() for value in _list_text(metadata.get("tags"))]
     amplification_text = _text(amplification.get("guideline_amplification_text"))
@@ -125,7 +139,12 @@ def build_resolution_packet(row: dict[str, Any]) -> dict[str, Any]:
         "target_id": target_id,
         "title": title,
         "tags": tags,
-        "expected_domains": _normalize_expected_domains(tags, title),
+        "expected_domains": (
+            [_text(editorial.get("primary_construct_family"))]
+            + _list_text(editorial.get("secondary_construct_families"))
+        )
+        if _text(editorial.get("primary_construct_family"))
+        else _normalize_expected_domains(tags, title),
         "amplification_text": amplification_text,
         "rationale_text": rationale_text,
         "non_compliant_narrative": non_compliant_narrative,

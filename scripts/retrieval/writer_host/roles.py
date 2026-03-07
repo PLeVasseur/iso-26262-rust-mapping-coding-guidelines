@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
+
+from retrieval.writer_host.style_context import load_style_context
 
 
 def _render_template(template: str, values: dict[str, str]) -> str:
@@ -39,6 +42,7 @@ def build_role_prompt(
     evidence_rows: list[dict[str, Any]],
     prior_outputs: dict[str, dict[str, Any]],
     role_contract: dict[str, Any],
+    run_dir: Path | None = None,
 ) -> tuple[str, str]:
     evidence_ids = sorted(
         {
@@ -69,22 +73,51 @@ def build_role_prompt(
 
     template = str(role_contract.get("prompt_template_text", "")).strip()
     corpus_placeholder = _derive_corpus_placeholder(evidence_rows)
+    style_context = (
+        load_style_context(run_dir=run_dir)
+        if run_dir is not None
+        else load_style_context(run_dir=Path("."))
+    )
+
+    def _style_lines(key: str, fallback: str) -> str:
+        value = style_context.get(key)
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            if cleaned:
+                return "\n".join(f"- {item}" for item in cleaned)
+        return fallback
+
     placeholders = {
         "target_id": target_id,
         "table1_row": table1_row,
         "corpus": corpus_placeholder,
         "evidence_ids": _to_json(evidence_ids),
         "evidence_snippets": _to_json(snippets),
-        "exemplar_ids": _to_json([]),
-        "global_rules": "Do not fabricate evidence. Return JSON only.",
+        "exemplar_ids": _to_json(list(prior_outputs.get("selected_exemplar_ids", []))),
+        "global_rules": _style_lines(
+            "global_rules",
+            "- Do not fabricate evidence.\n- Return JSON only.",
+        ),
         "evidence_synthesis": _to_json(prior_outputs.get("evidence_synthesizer", {})),
         "amplification": _to_json(prior_outputs.get("amplification_author", {})),
         "examples": _to_json(prior_outputs.get("example_author", {})),
         "all_writer_outputs": _to_json(prior_outputs),
-        "amplification_rules": "Prefer explicit, actionable controls.",
-        "example_rules": "Provide concise, compile-oriented snippets.",
-        "rationale_rules": "Use hazard->mechanism->consequence chain.",
-        "metadata_bibliography_rules": "Keep citation keys stable and auditable.",
+        "amplification_rules": _style_lines(
+            "amplification_rules",
+            "- Prefer explicit, actionable controls.",
+        ),
+        "example_rules": _style_lines(
+            "example_rules",
+            "- Provide concise, compile-oriented snippets.",
+        ),
+        "rationale_rules": _style_lines(
+            "rationale_rules",
+            "- Use hazard->mechanism->consequence chain.",
+        ),
+        "metadata_bibliography_rules": _style_lines(
+            "metadata_bibliography_rules",
+            "- Keep citation keys stable and auditable.",
+        ),
     }
     rendered = _render_template(template, placeholders)
 

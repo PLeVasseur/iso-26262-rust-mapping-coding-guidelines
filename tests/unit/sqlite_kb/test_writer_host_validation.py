@@ -185,3 +185,49 @@ def test_validate_metadata_curator_flags_inconsistent_duplicate_urls() -> None:
     )
 
     assert "bibliography_duplicate_url_inconsistent:1" in violations
+
+
+def test_validate_metadata_curator_flags_exact_duplicate_rows() -> None:
+    contract = {
+        "required_output_schema": {
+            "required": [
+                "target_id",
+                "tags",
+                "fls_candidate",
+                "bibliography_rows",
+                "citation_key_map",
+                "metadata_validation_notes",
+            ]
+        },
+        "forbidden_patterns": [],
+    }
+    output = {
+        "target_id": "RET-ISSUE-006",
+        "tags": ["diagnostics"],
+        "fls_candidate": {"statement": "Lint policy"},
+        "bibliography_rows": [
+            {
+                "citation_key": "RET-ISSUE-006:SRC-1",
+                "document": "Rust Reference",
+                "title": "Diagnostic attributes",
+                "source_anchor": "https://doc.rust-lang.org/reference/attributes/diagnostics.html#diagnostic-attributes",
+            },
+            {
+                "citation_key": "RET-ISSUE-006:SRC-2",
+                "document": "Rust Reference",
+                "title": "Diagnostic attributes",
+                "source_anchor": "https://doc.rust-lang.org/reference/attributes/diagnostics.html#diagnostic-attributes",
+            },
+        ],
+        "citation_key_map": {"RET-ISSUE-006:SRC-1": "rust_reference::chunk::1"},
+        "metadata_validation_notes": ["note"],
+    }
+
+    violations = validate_role_output(
+        role_name="metadata_citation_curator",
+        output=output,
+        role_contract=contract,
+        evidence_ids={"rust_reference::chunk::1"},
+    )
+
+    assert "bibliography_exact_duplicate:1" in violations

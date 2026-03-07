@@ -16,6 +16,10 @@ from retrieval.writer_host.artifacts import (
     write_writer_output_auditor_report,
     write_writer_outputs,
 )
+from retrieval.writer_host.editorial_decomposition import assess_decomposition
+from retrieval.writer_host.editorial_metadata import build_editorial_metadata
+from retrieval.writer_host.editorial_review_report import build_editorial_review_report
+from retrieval.writer_host.editorial_validation import validate_editorial_bundle
 from retrieval.writer_host.contracts import REQUIRED_ROLES, build_contract_snapshot, load_contracts
 from retrieval.writer_host.manifest import load_manifest, target_index
 from retrieval.writer_host.retry import run_role_with_retry
@@ -167,7 +171,53 @@ def _normalize_metadata_output(
         normalized["citation_key_map"] = citation_map
     if inverted:
         changes.append("citation_key_map_reversed_inverted")
+    bibliography_rows = normalized.get("bibliography_rows")
+    if isinstance(bibliography_rows, list):
+        deduped: list[Any] = []
+        seen_rows: set[tuple[str, str, str]] = set()
+        removed = 0
+        for row in bibliography_rows:
+            if not isinstance(row, dict):
+                deduped.append(row)
+                continue
+            url = str(row.get("url") or row.get("source_anchor") or "").strip()
+            title = str(row.get("title") or "").strip()
+            author = str(
+                row.get("author")
+                or row.get("publisher")
+                or row.get("document")
+                or row.get("corpus")
+                or ""
+            ).strip()
+            key = (url, title, author)
+            if url and key in seen_rows:
+                removed += 1
+                continue
+            if url:
+                seen_rows.add(key)
+            deduped.append(row)
+        if removed:
+            normalized["bibliography_rows"] = deduped
+            changes.append(f"bibliography_rows_exact_duplicates_removed:{removed}")
     return normalized, changes
+
+
+def _filter_manifest_targets(
+    manifest: dict[str, Any], requested_target_ids: set[str]
+) -> dict[str, Any]:
+    if not requested_target_ids:
+        return manifest
+    targets = manifest.get("targets") if isinstance(manifest, dict) else []
+    if not isinstance(targets, list):
+        return manifest
+    filtered = [
+        row
+        for row in targets
+        if isinstance(row, dict) and str(row.get("target_id", "")).strip() in requested_target_ids
+    ]
+    out = dict(manifest)
+    out["targets"] = filtered
+    return out
 
 
 def _write_progress(
@@ -219,6 +269,12 @@ def run(args: Namespace, *, root: Path) -> int:
         raise RuntimeError("writer-run requires --evidence-manifest")
     manifest_path = Path(evidence_manifest_raw).resolve()
     manifest = load_manifest(manifest_path)
+    requested_target_ids = {
+        str(value).strip()
+        for value in list(getattr(args, "target_ids", []) or [])
+        if str(value).strip()
+    }
+    manifest = _filter_manifest_targets(manifest, requested_target_ids)
     manifest_lookup = target_index(manifest)
     target_ids = list(manifest_lookup.keys())
     if not target_ids:
@@ -272,6 +328,7 @@ def run(args: Namespace, *, root: Path) -> int:
     invocation_trace: list[dict[str, Any]] = []
     validation_entries: list[dict[str, Any]] = []
     merge_entries: list[dict[str, Any]] = []
+    editorial_entries: list[dict[str, Any]] = []
     drafts: list[dict[str, Any]] = []
     evidence_ids_by_target: dict[str, set[str]] = {}
     completed_targets: list[str] = []
@@ -334,6 +391,7 @@ def run(args: Namespace, *, root: Path) -> int:
                 evidence_rows=evidence_rows,
                 prior_outputs=prior_outputs,
                 role_contract=role_contract_dict,
+                run_dir=run_dir,
             )
 
             def _validate(
@@ -449,6 +507,23 @@ def run(args: Namespace, *, root: Path) -> int:
             )
 
         synth = prior_outputs.get("evidence_synthesizer", {})
+        amplification = prior_outputs.get("amplification_author", {})
+        rationale = prior_outputs.get("rationale_author", {})
+        examples = prior_outputs.get("example_author", {})
+        metadata = prior_outputs.get("metadata_citation_curator", {})
+        if isinstance(metadata, dict):
+            metadata = dict(metadata)
+            metadata["editorial_metadata"] = build_editorial_metadata(
+                target_id=target_id,
+                query_text=query_text,
+                synth=synth if isinstance(synth, dict) else {},
+                amplification=amplification if isinstance(amplification, dict) else {},
+                rationale=rationale if isinstance(rationale, dict) else {},
+                examples=examples if isinstance(examples, dict) else {},
+                metadata=metadata,
+                evidence_rows=evidence_rows,
+            )
+            prior_outputs["metadata_citation_curator"] = metadata
         merge_violations = validate_target_bundle(target_id=target_id, outputs=prior_outputs)
         merge_hard_violations = [
             item
@@ -473,16 +548,68 @@ def run(args: Namespace, *, root: Path) -> int:
                 "warnings": merge_warnings,
             }
         )
-        drafts.append(
+        editorial_metadata = (
+            dict(metadata.get("editorial_metadata") or {}) if isinstance(metadata, dict) else {}
+        )
+        draft = {
+            "draft_id": f"draft::{target_id}",
+            "target_id": target_id,
+            "target_prompt_id": target_id,
+            "status": "drafted",
+            "construct_terms": extract_construct_terms(synth),
+            "claim_to_evidence_map": extract_claim_map(synth),
+            "title": str(editorial_metadata.get("proposed_title", "")).strip(),
+            "review_question": str(editorial_metadata.get("review_question", "")).strip(),
+            "chapter": str(editorial_metadata.get("candidate_chapter", "expressions")).strip(),
+            "primary_construct_family": str(
+                editorial_metadata.get("primary_construct_family", "")
+            ).strip(),
+            "topic_keywords": list(editorial_metadata.get("topic_keywords") or []),
+        }
+        evidence_quality = {
+            "status": str(editorial_metadata.get("evidence_quality_status", "pass")),
+            "issues": list(editorial_metadata.get("evidence_quality_issues") or []),
+            "blocked": str(editorial_metadata.get("evidence_quality_status", "pass")) == "fail",
+        }
+        decomposition = assess_decomposition(
+            target_id=target_id,
+            synth=synth if isinstance(synth, dict) else {},
+            amplification=amplification if isinstance(amplification, dict) else {},
+            metadata=metadata if isinstance(metadata, dict) else {},
+        )
+        editorial_violations = validate_editorial_bundle(
+            target_id=target_id,
+            draft=draft,
+            metadata=metadata if isinstance(metadata, dict) else {},
+            synth=synth if isinstance(synth, dict) else {},
+            evidence_quality=evidence_quality,
+            decomposition=decomposition,
+        )
+        editorial_entries.append(
             {
-                "draft_id": f"draft::{target_id}",
                 "target_id": target_id,
-                "target_prompt_id": target_id,
-                "status": "drafted",
-                "construct_terms": extract_construct_terms(synth),
-                "claim_to_evidence_map": extract_claim_map(synth),
+                "title": draft["title"],
+                "chapter": draft["chapter"],
+                "construct_terms": draft["construct_terms"],
+                "claim_text_blob": " ".join(
+                    str(row.get("claim_text", "")).strip()
+                    for row in list(draft.get("claim_to_evidence_map") or [])
+                    if isinstance(row, dict)
+                ),
+                "editorial_violations": editorial_violations,
+                "evidence_quality": evidence_quality,
+                "decomposition": decomposition,
             }
         )
+        validation_entries.append(
+            {
+                "target_id": target_id,
+                "role": "editorial",
+                "attempts": 1,
+                "violations": editorial_violations,
+            }
+        )
+        drafts.append(draft)
         completed_targets.append(target_id)
         _write_progress(
             path=progress_path,
@@ -514,6 +641,10 @@ def run(args: Namespace, *, root: Path) -> int:
         run_dir / "role_validation_report.json", {"run_id": run_id, "entries": validation_entries}
     )
     write_jsonl(run_dir / "drafts.jsonl", drafts)
+    write_json(
+        run_dir / "editorial_review_report.json",
+        build_editorial_review_report(editorial_entries),
+    )
     write_normalization_report(
         run_dir / "normalization_report.json",
         run_id=run_id,
@@ -534,7 +665,11 @@ def run(args: Namespace, *, root: Path) -> int:
         gate_report=gate_report,
     )
 
-    has_violations = any(bool(entry.get("violations")) for entry in validation_entries)
+    has_violations = any(
+        bool(entry.get("violations"))
+        for entry in validation_entries
+        if str(entry.get("role", "")) != "editorial"
+    )
 
     write_json(
         run_dir / "writer_host_run_summary.json",
@@ -547,6 +682,7 @@ def run(args: Namespace, *, root: Path) -> int:
             "evidence_gate_report": str(run_dir / "evidence_synthesizer_gate_report.json"),
             "evidence_manifest": evidence_manifest_path,
             "corpora": corpora_used,
+            "editorial_review_report": str(run_dir / "editorial_review_report.json"),
         },
     )
     _write_progress(

@@ -15,6 +15,7 @@ def test_build_resolution_packet_uses_all_writer_fields() -> None:
     row = {
         "draft": {
             "target_id": "RET-ISSUE-001",
+            "title": "Encode error-path invariants in checked APIs",
             "claim_to_evidence_map": [
                 {"claim_text": "Unsafe fallback may violate pointer invariants."}
             ],
@@ -38,7 +39,7 @@ def test_build_resolution_packet_uses_all_writer_fields() -> None:
     packet = build_resolution_packet(row)
 
     assert packet["target_id"] == "RET-ISSUE-001"
-    assert "weak defensive handling" in packet["title"].lower()
+    assert packet["title"] == "Encode error-path invariants in checked APIs"
     assert packet["amplification_text"]
     assert packet["rationale_text"]
     assert "get_unchecked" in packet["non_compliant_code"]

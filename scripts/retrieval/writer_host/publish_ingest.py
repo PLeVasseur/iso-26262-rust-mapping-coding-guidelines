@@ -39,6 +39,7 @@ def _canonicalize_bibliography_rows(
 ) -> list[dict[str, Any]]:
     effective_canonical = canonical_by_url if canonical_by_url is not None else {}
     out: list[dict[str, Any]] = []
+    seen_exact: set[tuple[str, str, str]] = set()
     for row in rows:
         citation_key = str(row.get("citation_key", "") or "").strip()
         if not citation_key:
@@ -54,6 +55,11 @@ def _canonicalize_bibliography_rows(
             citation_key = canonical_key
             author = canonical_author
             title = canonical_title
+        exact_key = (url, author, title)
+        if url and exact_key in seen_exact:
+            continue
+        if url:
+            seen_exact.add(exact_key)
         out.append(
             {
                 **row,

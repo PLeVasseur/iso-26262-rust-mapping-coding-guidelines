@@ -66,6 +66,19 @@ def run_conformance(
         offline=True,
         extra_env=build_env,
     )
+    if int(build_code) != 0 and "Build complete ->" in str(build_stdout or ""):
+        retry_code, retry_stdout, retry_stderr, retry_versions = run_guidelines_build(
+            repo_root=repo_root,
+            offline=True,
+            extra_env=build_env,
+        )
+        if int(retry_code) == 0:
+            build_code, build_stdout, build_stderr, versions = (
+                retry_code,
+                retry_stdout,
+                retry_stderr,
+                retry_versions,
+            )
     metrics: dict[str, int] = {}
     metrics_path = report_dir / "annotation_policy_metrics.json"
     if metrics_path.exists():

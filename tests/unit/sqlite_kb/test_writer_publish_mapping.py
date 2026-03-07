@@ -19,6 +19,9 @@ def _row_fixture() -> dict[str, object]:
     return {
         "draft": {
             "target_id": "RET-ISSUE-001",
+            "title": "Preserve safety invariants on error paths",
+            "chapter": "exceptions-and-errors",
+            "construct_terms": ["unsafe", "Result"],
             "claim_to_evidence_map": [
                 {
                     "claim_id": "RET-ISSUE-001::claim::1",
@@ -184,7 +187,7 @@ def test_map_publish_record_tolerates_non_dict_fls_candidate(
 
     assert mapped["guideline_id"].startswith("gui_")
     assert mapped["filename"] == f"{mapped['guideline_id']}.rst"
-    assert mapped["title"] == "Unsafe fallback can violate invariants"
+    assert mapped["title"] == "Preserve safety invariants on error paths"
     assert mapped["category"] == "advisory"
 
 

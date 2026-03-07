@@ -251,6 +251,7 @@ def parse_args() -> argparse.Namespace:
     writer_run.add_argument("--max-retries", type=int, default=2)
     writer_run.add_argument("--model", default="")
     writer_run.add_argument("--agent", default="")
+    writer_run.add_argument("--target-id", action="append", dest="target_ids", default=[])
     writer_run.add_argument("--dry-run", action="store_true")
 
     writer_evidence = subparsers.add_parser("writer-evidence")

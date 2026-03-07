@@ -15,6 +15,8 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
     auditor = _load_json(run_dir / "writer_output_auditor_report.json")
     merge = _load_json(run_dir / "writer_subagent_outputs" / "merge_validation_report.json")
     summary = _load_json(run_dir / "writer_host_run_summary.json")
+    editorial_path = run_dir / "editorial_review_report.json"
+    editorial = _load_json(editorial_path) if editorial_path.exists() else {}
 
     checks = {
         "normalization_pass": str(normalization.get("status", "")) == "pass",
@@ -39,12 +41,26 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
             "checks": conformance_checks,
             "report_path": str(conformance_path),
         }
+    editorial_status = {
+        "status": "not_evaluated",
+        "blocked_count": 0,
+        "review_count": 0,
+        "report_path": "",
+    }
+    if editorial:
+        editorial_status = {
+            "status": "pass" if str(editorial.get("status", "")) == "pass" else "review",
+            "blocked_count": int(editorial.get("blocked_count", 0) or 0),
+            "review_count": int(editorial.get("review_count", 0) or 0),
+            "report_path": str(editorial_path),
+        }
     return {
         "status": status,
         "run_dir": str(run_dir),
         "checks": checks,
         "lifecycle": {
             "writer_complete": status,
+            "editorially_reviewable": editorial_status,
             "review_ready": review_ready,
             "next_required_gate": "writer_conformance"
             if review_ready["status"] == "not_evaluated"
