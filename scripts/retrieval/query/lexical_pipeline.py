@@ -47,21 +47,24 @@ def materialize_common_row(raw_row: dict[str, Any], query_tokens: set[str]) -> d
     text = str(raw_row.get("statement_text", raw_row.get("chunk_text", "")))
     overlap = len(query_tokens.intersection(tokenize(text))) if query_tokens else 0
     bm25_raw = float(raw_row.get("bm25_raw", 0.0))
-    payload = {
-        "statement_id": statement_id,
-        "statement_text": text,
-        "section_heading": str(raw_row.get("section_heading", "")),
-        "source_anchor": str(raw_row.get("source_anchor", "")),
-        "source_fetched_at": str(raw_row.get("source_fetched_at", "")),
-        "row_markers": split_csv_field(str(raw_row.get("row_markers", ""))),
-        "mechanism_ids": split_csv_field(str(raw_row.get("mechanism_ids", ""))),
-        "mechanism_families": split_csv_field(str(raw_row.get("mechanism_families", ""))),
-        "text_sha256": sha256_text(text.lower()),
-        "bm25_raw": bm25_raw,
-        "phrase_match": int(raw_row.get("phrase_match", 0) or 0),
-        "token_overlap_count": overlap,
-        "lexical_score": -bm25_raw,
-    }
+    payload = dict(raw_row)
+    payload.update(
+        {
+            "statement_id": statement_id,
+            "statement_text": text,
+            "section_heading": str(raw_row.get("section_heading", "")),
+            "source_anchor": str(raw_row.get("source_anchor", "")),
+            "source_fetched_at": str(raw_row.get("source_fetched_at", "")),
+            "row_markers": split_csv_field(str(raw_row.get("row_markers", ""))),
+            "mechanism_ids": split_csv_field(str(raw_row.get("mechanism_ids", ""))),
+            "mechanism_families": split_csv_field(str(raw_row.get("mechanism_families", ""))),
+            "text_sha256": sha256_text(text.lower()),
+            "bm25_raw": bm25_raw,
+            "phrase_match": int(raw_row.get("phrase_match", 0) or 0),
+            "token_overlap_count": overlap,
+            "lexical_score": -bm25_raw,
+        }
+    )
     if "chunk_uid" in raw_row or "chunk_text" in raw_row:
         payload["chunk_uid"] = statement_id
         payload["chunk_text"] = text

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -34,6 +37,14 @@ except ModuleNotFoundError:  # pragma: no cover - script-entry fallback
 FLS_SOURCE_DIR = Path(".cache/fls_source/current")
 DB_PATH = Path(".cache/sqlite_kb/current/fls_spec.db")
 COMPAT_DB_PATH = Path("data/fls_spec.db")
+FLS_SOURCE_URL = "https://rust-lang.github.io/fls/index.html"
+DEFAULT_EMBED_MODEL_ID = "Qwen/Qwen3-Embedding-4B"
+DEFAULT_RERANKER_MODEL_ID = "BAAI/bge-reranker-v2-m3"
+DEFAULT_EMBED_MODEL_REVISION = "unknown"
+DEFAULT_RERANKER_MODEL_REVISION = "unknown"
+DEFAULT_EMBED_MODEL_LICENSE = "unknown"
+DEFAULT_RERANKER_MODEL_LICENSE = "unknown"
+DEFAULT_EMBEDDING_DIM = 2560
 
 
 def _ensure_compat_symlink(canonical_db_path: Path, compat_db_path: Path | None = None) -> None:
@@ -67,6 +78,29 @@ def _load_commit_sha(source_dir: Path) -> str:
     except (OSError, json.JSONDecodeError):
         return "local"
     return str(metadata.get("commit_sha") or "local")
+
+
+def _load_source_metadata(source_dir: Path) -> dict[str, Any]:
+    metadata_path = source_dir / "_metadata.json"
+    if not metadata_path.exists():
+        return {}
+    try:
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _token_len(text: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9_]+", text))
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _insert_ordered_text_rows(
@@ -114,6 +148,9 @@ def build_fls_db(
         )
 
     commit_sha = _load_commit_sha(source_dir)
+    source_metadata = _load_source_metadata(source_dir)
+    source_fetched_at = str(source_metadata.get("fetched_at") or _utc_now())
+    source_state_sha = _sha256_text(json.dumps(source_metadata, sort_keys=True))
     chapters = sorted({paragraph.chapter for paragraph in paragraphs if paragraph.chapter})
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,6 +164,9 @@ def build_fls_db(
             CREATE TABLE snapshots (
                 snapshot_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 commit_sha TEXT NOT NULL,
+                source_url TEXT NOT NULL DEFAULT '',
+                fetched_at TEXT NOT NULL DEFAULT '',
+                sha256 TEXT NOT NULL DEFAULT '',
                 built_at TEXT NOT NULL DEFAULT (datetime('now')),
                 paragraph_count INTEGER NOT NULL,
                 chapter_count INTEGER NOT NULL,
@@ -142,6 +182,8 @@ def build_fls_db(
                 section TEXT NOT NULL DEFAULT '',
                 subsection TEXT NOT NULL DEFAULT '',
                 text TEXT NOT NULL,
+                raw_text TEXT NOT NULL,
+                clean_text TEXT NOT NULL,
                 source_file TEXT NOT NULL,
                 document_link TEXT NOT NULL,
                 paragraph_link TEXT NOT NULL,
@@ -171,37 +213,136 @@ def build_fls_db(
             CREATE TABLE fls_paragraph_defined_terms (
                 paragraph_id TEXT NOT NULL,
                 term_text TEXT NOT NULL,
+                term_target TEXT NOT NULL DEFAULT '',
                 term_order INTEGER NOT NULL
             );
 
             CREATE TABLE fls_paragraph_term_refs (
                 paragraph_id TEXT NOT NULL,
                 term_text TEXT NOT NULL,
+                term_target TEXT NOT NULL DEFAULT '',
                 term_order INTEGER NOT NULL
             );
 
             CREATE TABLE fls_paragraph_syntax_defs (
                 paragraph_id TEXT NOT NULL,
                 symbol_text TEXT NOT NULL,
+                symbol_target TEXT NOT NULL DEFAULT '',
                 symbol_order INTEGER NOT NULL
             );
 
             CREATE TABLE fls_paragraph_syntax_refs (
                 paragraph_id TEXT NOT NULL,
                 symbol_text TEXT NOT NULL,
+                symbol_target TEXT NOT NULL DEFAULT '',
                 symbol_order INTEGER NOT NULL
             );
 
             CREATE TABLE fls_paragraph_std_refs (
                 paragraph_id TEXT NOT NULL,
                 symbol_text TEXT NOT NULL,
+                symbol_target TEXT NOT NULL DEFAULT '',
                 symbol_order INTEGER NOT NULL
             );
 
             CREATE TABLE fls_paragraph_refs (
                 paragraph_id TEXT NOT NULL,
+                ref_text TEXT NOT NULL DEFAULT '',
                 ref_target TEXT NOT NULL,
                 ref_order INTEGER NOT NULL
+            );
+
+            CREATE TABLE source_documents (
+                document_id TEXT PRIMARY KEY,
+                snapshot_id INTEGER NOT NULL,
+                chapter_id TEXT NOT NULL DEFAULT '',
+                rel_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL,
+                source_fetched_at TEXT NOT NULL,
+                source_commit_sha TEXT NOT NULL,
+                order_index INTEGER NOT NULL
+            );
+
+            CREATE TABLE docs (
+                doc_uid TEXT PRIMARY KEY,
+                source_path TEXT NOT NULL,
+                title TEXT NOT NULL,
+                revision TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL,
+                chapter_id TEXT NOT NULL DEFAULT '',
+                order_index INTEGER NOT NULL
+            );
+
+            CREATE TABLE sections (
+                section_id TEXT PRIMARY KEY,
+                snapshot_id INTEGER NOT NULL,
+                document_id TEXT NOT NULL,
+                chapter_id TEXT NOT NULL DEFAULT '',
+                anchor TEXT NOT NULL,
+                heading TEXT NOT NULL,
+                order_index INTEGER NOT NULL,
+                level INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                source_sha256 TEXT NOT NULL,
+                source_fetched_at TEXT NOT NULL,
+                source_commit_sha TEXT NOT NULL
+            );
+
+            CREATE TABLE chunks (
+                chunk_uid TEXT PRIMARY KEY,
+                section_id TEXT NOT NULL,
+                raw_text TEXT NOT NULL,
+                clean_text TEXT NOT NULL,
+                char_len INTEGER NOT NULL,
+                token_len INTEGER NOT NULL,
+                source_sha256 TEXT NOT NULL,
+                source_fetched_at TEXT NOT NULL,
+                source_commit_sha TEXT NOT NULL,
+                order_index INTEGER NOT NULL
+            );
+
+            CREATE TABLE chunk_spans (
+                chunk_uid TEXT NOT NULL,
+                source_anchor TEXT NOT NULL,
+                start_offset INTEGER NOT NULL,
+                end_offset INTEGER NOT NULL,
+                span_order INTEGER NOT NULL,
+                PRIMARY KEY (chunk_uid, span_order)
+            );
+
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                chunk_uid UNINDEXED,
+                section_id UNINDEXED,
+                section_heading,
+                chunk_text,
+                tokenize='unicode61 remove_diacritics 2'
+            );
+
+            CREATE TABLE semantic_models (
+                model_id TEXT PRIMARY KEY,
+                model_role TEXT NOT NULL,
+                model_name TEXT NOT NULL,
+                model_revision TEXT NOT NULL,
+                embedding_dim INTEGER NOT NULL,
+                distance_metric TEXT NOT NULL,
+                license TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                retrieval_mode TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE chunk_embeddings (
+                chunk_uid TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                embed_version TEXT NOT NULL,
+                text_sha256 TEXT NOT NULL,
+                vector_json TEXT NOT NULL,
+                vector_norm REAL NOT NULL,
+                embedded_at TEXT NOT NULL,
+                source_fetched_at TEXT NOT NULL,
+                PRIMARY KEY(chunk_uid, model_id, embed_version)
             );
 
             CREATE VIRTUAL TABLE paragraphs_fts USING fts5(
@@ -212,7 +353,7 @@ def build_fls_db(
                 subsection,
                 document_link,
                 section_link,
-                text,
+                clean_text,
                 content='paragraphs',
                 content_rowid='rowid'
             );
@@ -228,7 +369,7 @@ def build_fls_db(
                     subsection,
                     document_link,
                     section_link,
-                    text
+                    clean_text
                 ) VALUES (
                     new.rowid,
                     new.paragraph_id,
@@ -238,7 +379,7 @@ def build_fls_db(
                     new.subsection,
                     new.document_link,
                     new.section_link,
-                    new.text
+                    new.clean_text
                 );
             END;
 
@@ -252,16 +393,31 @@ def build_fls_db(
             CREATE INDEX idx_syntax_refs_paragraph_id ON fls_paragraph_syntax_refs(paragraph_id);
             CREATE INDEX idx_std_refs_paragraph_id ON fls_paragraph_std_refs(paragraph_id);
             CREATE INDEX idx_paragraph_refs_paragraph_id ON fls_paragraph_refs(paragraph_id);
+            CREATE INDEX idx_sections_document ON sections(document_id, order_index);
+            CREATE INDEX idx_chunks_section ON chunks(section_id, order_index);
+            CREATE INDEX idx_chunk_spans_anchor ON chunk_spans(source_anchor, chunk_uid);
+            CREATE INDEX idx_chunk_embeddings_model ON chunk_embeddings(model_id, chunk_uid, embed_version);
             """
         )
 
         cursor = connection.execute(
             """
-            INSERT INTO snapshots(commit_sha, paragraph_count, chapter_count, document_count, section_count)
-            VALUES(?, ?, ?, ?, ?)
+            INSERT INTO snapshots(
+                commit_sha,
+                source_url,
+                fetched_at,
+                sha256,
+                paragraph_count,
+                chapter_count,
+                document_count,
+                section_count
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 commit_sha,
+                FLS_SOURCE_URL,
+                source_fetched_at,
+                source_state_sha,
                 len(paragraphs),
                 len(chapters),
                 len(topology_index["documents_by_link"]),
@@ -273,6 +429,17 @@ def build_fls_db(
         snapshot_id = int(cursor.lastrowid)
 
         for document in topology_index["documents_by_link"].values():
+            document_sha = _sha256_text(
+                json.dumps(
+                    {
+                        "title": document.title,
+                        "document_link": document.document_link,
+                        "ordinal": document.ordinal,
+                        "informational": bool(document.informational),
+                    },
+                    sort_keys=True,
+                )
+            )
             connection.execute(
                 """
                 INSERT INTO fls_documents(document_link, title, ordinal, informational)
@@ -285,8 +452,72 @@ def build_fls_db(
                     int(document.informational),
                 ),
             )
+            connection.execute(
+                """
+                INSERT INTO source_documents(
+                    document_id,
+                    snapshot_id,
+                    chapter_id,
+                    rel_path,
+                    title,
+                    source_sha256,
+                    source_fetched_at,
+                    source_commit_sha,
+                    order_index
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document.document_link,
+                    snapshot_id,
+                    document.document_link,
+                    document.document_link,
+                    document.title,
+                    document_sha,
+                    source_fetched_at,
+                    commit_sha,
+                    document.ordinal,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO docs(
+                    doc_uid,
+                    source_path,
+                    title,
+                    revision,
+                    fetched_at,
+                    source_sha256,
+                    chapter_id,
+                    order_index
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document.document_link,
+                    document.document_link,
+                    document.title,
+                    commit_sha,
+                    source_fetched_at,
+                    document_sha,
+                    document.document_link,
+                    document.ordinal,
+                ),
+            )
 
         for section in topology_index["sections_by_link"].values():
+            section_sha = _sha256_text(
+                json.dumps(
+                    {
+                        "section_id": section.section_id,
+                        "section_link": section.section_link,
+                        "document_link": section.document_link,
+                        "title": section.title,
+                        "number": section.number,
+                        "ordinal": section.ordinal,
+                        "informational": bool(section.informational),
+                    },
+                    sort_keys=True,
+                )
+            )
             connection.execute(
                 """
                 INSERT INTO fls_sections(
@@ -309,8 +540,84 @@ def build_fls_db(
                     int(section.informational),
                 ),
             )
+            connection.execute(
+                """
+                INSERT INTO sections(
+                    section_id,
+                    snapshot_id,
+                    document_id,
+                    chapter_id,
+                    anchor,
+                    heading,
+                    order_index,
+                    level,
+                    text,
+                    source_sha256,
+                    source_fetched_at,
+                    source_commit_sha
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    section.section_id,
+                    snapshot_id,
+                    section.document_link,
+                    section.document_link,
+                    section.section_link,
+                    section.title,
+                    section.ordinal,
+                    1,
+                    section.title,
+                    section_sha,
+                    source_fetched_at,
+                    commit_sha,
+                ),
+            )
 
-        for paragraph in paragraphs:
+        semantic_model_rows = [
+            (
+                "semantic.embedder.primary",
+                "embedder",
+                DEFAULT_EMBED_MODEL_ID,
+                DEFAULT_EMBED_MODEL_REVISION,
+                DEFAULT_EMBEDDING_DIM,
+                "cosine",
+                DEFAULT_EMBED_MODEL_LICENSE,
+                "huggingface-tei",
+                "hybrid",
+                source_fetched_at,
+            ),
+            (
+                "semantic.reranker.primary",
+                "reranker",
+                DEFAULT_RERANKER_MODEL_ID,
+                DEFAULT_RERANKER_MODEL_REVISION,
+                0,
+                "n/a",
+                DEFAULT_RERANKER_MODEL_LICENSE,
+                "huggingface-tei",
+                "hybrid",
+                source_fetched_at,
+            ),
+        ]
+        connection.executemany(
+            """
+            INSERT INTO semantic_models(
+                model_id,
+                model_role,
+                model_name,
+                model_revision,
+                embedding_dim,
+                distance_metric,
+                license,
+                provider,
+                retrieval_mode,
+                created_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            semantic_model_rows,
+        )
+
+        for order_index, paragraph in enumerate(paragraphs, start=1):
             connection.execute(
                 """
                 INSERT INTO paragraphs(
@@ -320,6 +627,8 @@ def build_fls_db(
                     section,
                     subsection,
                     text,
+                    raw_text,
+                    clean_text,
                     source_file,
                     document_link,
                     paragraph_link,
@@ -327,7 +636,7 @@ def build_fls_db(
                     section_id,
                     checksum,
                     snapshot_id
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     paragraph.paragraph_id,
@@ -335,7 +644,9 @@ def build_fls_db(
                     paragraph.chapter,
                     paragraph.section,
                     paragraph.subsection,
-                    paragraph.text,
+                    paragraph.clean_text,
+                    paragraph.raw_text,
+                    paragraph.clean_text,
                     paragraph.source_file,
                     paragraph.document_link,
                     paragraph.paragraph_link,
@@ -343,6 +654,69 @@ def build_fls_db(
                     paragraph.section_id,
                     paragraph.checksum,
                     snapshot_id,
+                ),
+            )
+            chunk_source_sha = paragraph.checksum or _sha256_text(paragraph.raw_text)
+            connection.execute(
+                """
+                INSERT INTO chunks(
+                    chunk_uid,
+                    section_id,
+                    raw_text,
+                    clean_text,
+                    char_len,
+                    token_len,
+                    source_sha256,
+                    source_fetched_at,
+                    source_commit_sha,
+                    order_index
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    paragraph.paragraph_id,
+                    paragraph.section_id,
+                    paragraph.raw_text,
+                    paragraph.clean_text,
+                    len(paragraph.clean_text),
+                    _token_len(paragraph.clean_text),
+                    chunk_source_sha,
+                    source_fetched_at,
+                    commit_sha,
+                    order_index,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO chunk_spans(
+                    chunk_uid,
+                    source_anchor,
+                    start_offset,
+                    end_offset,
+                    span_order
+                ) VALUES(?, ?, ?, ?, ?)
+                """,
+                (
+                    paragraph.paragraph_id,
+                    paragraph.paragraph_link,
+                    0,
+                    len(paragraph.clean_text),
+                    1,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO chunks_fts(
+                    chunk_uid,
+                    section_id,
+                    section_heading,
+                    chunk_text
+                ) VALUES(?, ?, ?, ?)
+                """,
+                (
+                    paragraph.paragraph_id,
+                    paragraph.section_id,
+                    paragraph.section or paragraph.chapter,
+                    paragraph.clean_text,
                 ),
             )
             _insert_ordered_text_rows(
@@ -353,6 +727,17 @@ def build_fls_db(
                 paragraph_id=paragraph.paragraph_id,
                 values=paragraph.defined_terms,
             )
+            for ordinal, (value, target) in enumerate(
+                zip(paragraph.defined_terms, paragraph.defined_term_targets, strict=True)
+            ):
+                connection.execute(
+                    """
+                    UPDATE fls_paragraph_defined_terms
+                    SET term_target = ?
+                    WHERE paragraph_id = ? AND term_order = ?
+                    """,
+                    (target, paragraph.paragraph_id, ordinal),
+                )
             _insert_ordered_text_rows(
                 connection,
                 table_name="fls_paragraph_term_refs",
@@ -361,6 +746,17 @@ def build_fls_db(
                 paragraph_id=paragraph.paragraph_id,
                 values=paragraph.term_refs,
             )
+            for ordinal, (value, target) in enumerate(
+                zip(paragraph.term_refs, paragraph.term_ref_targets, strict=True)
+            ):
+                connection.execute(
+                    """
+                    UPDATE fls_paragraph_term_refs
+                    SET term_target = ?
+                    WHERE paragraph_id = ? AND term_order = ?
+                    """,
+                    (target, paragraph.paragraph_id, ordinal),
+                )
             _insert_ordered_text_rows(
                 connection,
                 table_name="fls_paragraph_syntax_defs",
@@ -369,6 +765,17 @@ def build_fls_db(
                 paragraph_id=paragraph.paragraph_id,
                 values=paragraph.syntax_defs,
             )
+            for ordinal, (value, target) in enumerate(
+                zip(paragraph.syntax_defs, paragraph.syntax_def_targets, strict=True)
+            ):
+                connection.execute(
+                    """
+                    UPDATE fls_paragraph_syntax_defs
+                    SET symbol_target = ?
+                    WHERE paragraph_id = ? AND symbol_order = ?
+                    """,
+                    (target, paragraph.paragraph_id, ordinal),
+                )
             _insert_ordered_text_rows(
                 connection,
                 table_name="fls_paragraph_syntax_refs",
@@ -377,6 +784,17 @@ def build_fls_db(
                 paragraph_id=paragraph.paragraph_id,
                 values=paragraph.syntax_refs,
             )
+            for ordinal, (value, target) in enumerate(
+                zip(paragraph.syntax_refs, paragraph.syntax_ref_targets, strict=True)
+            ):
+                connection.execute(
+                    """
+                    UPDATE fls_paragraph_syntax_refs
+                    SET symbol_target = ?
+                    WHERE paragraph_id = ? AND symbol_order = ?
+                    """,
+                    (target, paragraph.paragraph_id, ordinal),
+                )
             _insert_ordered_text_rows(
                 connection,
                 table_name="fls_paragraph_std_refs",
@@ -385,14 +803,27 @@ def build_fls_db(
                 paragraph_id=paragraph.paragraph_id,
                 values=paragraph.std_refs,
             )
-            _insert_ordered_text_rows(
-                connection,
-                table_name="fls_paragraph_refs",
-                value_column="ref_target",
-                order_column="ref_order",
-                paragraph_id=paragraph.paragraph_id,
-                values=paragraph.paragraph_refs,
-            )
+            for ordinal, (value, target) in enumerate(
+                zip(paragraph.std_refs, paragraph.std_ref_targets, strict=True)
+            ):
+                connection.execute(
+                    """
+                    UPDATE fls_paragraph_std_refs
+                    SET symbol_target = ?
+                    WHERE paragraph_id = ? AND symbol_order = ?
+                    """,
+                    (target, paragraph.paragraph_id, ordinal),
+                )
+            for ordinal, (ref_text, ref_target) in enumerate(
+                zip(paragraph.paragraph_refs, paragraph.paragraph_ref_targets, strict=True)
+            ):
+                connection.execute(
+                    """
+                    INSERT INTO fls_paragraph_refs(paragraph_id, ref_text, ref_target, ref_order)
+                    VALUES(?, ?, ?, ?)
+                    """,
+                    (paragraph.paragraph_id, ref_text, ref_target, ordinal),
+                )
 
         connection.commit()
     finally:

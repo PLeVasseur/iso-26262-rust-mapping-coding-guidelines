@@ -14,6 +14,8 @@ from context.fls_lookup import (
 from scripts.build_fls_db import build_fls_db
 from scripts.fetch_fls_source import fetch_fls_source
 from scripts.parse_fls_paragraphs import parse_fls_rst
+from scripts.retrieval.operations.query import execute_retrieval_query
+from semantic_backend_client import SemanticBackendConfig
 
 
 def _write_sample_fls_source(source_dir: Path) -> None:
@@ -156,7 +158,8 @@ def test_parse_fls_rst_extracts_dp_paragraphs(tmp_path: Path) -> None:
     assert paragraphs[0].paragraph_id == "fls_sendsync001"
     assert paragraphs[0].paragraph_number == "17:1"
     assert paragraphs[0].chapter == "Concurrency"
-    assert "thread" in paragraphs[0].text
+    assert ":t:`thread`" in paragraphs[0].raw_text
+    assert "thread" in paragraphs[0].clean_text
 
 
 def test_parse_fls_rst_preserves_role_aware_metadata(tmp_path: Path) -> None:
@@ -201,6 +204,52 @@ The :dt:`strict provenance` model constrains :t:`pointer` interpretation and :st
     assert paragraph.checksum == "checksum-glossary"
 
 
+def test_parse_fls_rst_preserves_role_targets_and_bracketed_text(tmp_path: Path) -> None:
+    rst_path = tmp_path / "ffi.rst"
+    rst_path.write_text(
+        """
+Foreign Function Interface
+==========================
+
+.. _fls_ffi001:
+
+:dp:`fls_ffi001`
+The :dt:`external function <extern function>` calling convention constrains :t:`thread[s] <thread>` interaction and :p:`17.2 <fls_threads002>` semantics.
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    paragraphs = parse_fls_rst(
+        rst_path,
+        paragraph_numbers={"fls_ffi001": "21:4"},
+        paragraph_metadata={
+            "fls_ffi001": {
+                "document_link": "ffi.html",
+                "paragraph_link": "ffi.html#fls_ffi001",
+                "section_link": "ffi.html#ffi",
+                "section_id": "ffi",
+                "checksum": "checksum-ffi",
+            }
+        },
+    )
+
+    assert len(paragraphs) == 1
+    paragraph = paragraphs[0]
+    assert paragraph.raw_text != paragraph.clean_text
+    assert ":dt:`external function <extern function>`" in paragraph.raw_text
+    assert paragraph.clean_text == (
+        "The external function <extern function> calling convention constrains "
+        "threads <thread> interaction and 17.2 <fls_threads002> semantics."
+    )
+    assert paragraph.defined_terms == ("external function",)
+    assert paragraph.defined_term_targets == ("extern function",)
+    assert paragraph.term_refs == ("threads",)
+    assert paragraph.term_ref_targets == ("thread",)
+    assert paragraph.paragraph_refs == ("17.2",)
+    assert paragraph.paragraph_ref_targets == ("fls_threads002",)
+
+
 def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source_dir = tmp_path / "fls_source"
     db_path = tmp_path / "fls_spec.db"
@@ -238,6 +287,12 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
             "paragraphs",
             "fls_documents",
             "fls_sections",
+            "source_documents",
+            "sections",
+            "chunks",
+            "chunk_spans",
+            "chunk_embeddings",
+            "semantic_models",
             "fls_paragraph_defined_terms",
             "fls_paragraph_term_refs",
             "fls_paragraph_syntax_defs",
@@ -251,6 +306,47 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         ).fetchone()
         assert doc_link == "concurrency.html"
         assert section_link == "concurrency.html#fls_chapter_anchor"
+        raw_text, clean_text = connection.execute(
+            "SELECT raw_text, clean_text FROM paragraphs WHERE paragraph_id = ?",
+            ("fls_sendsync001",),
+        ).fetchone()
+        assert ":t:`thread`" in raw_text
+        assert ":t:`thread`" not in clean_text
+        chunk_row = connection.execute(
+            "SELECT chunk_uid, section_id FROM chunks WHERE chunk_uid = ?",
+            ("fls_atomic002",),
+        ).fetchone()
+        assert chunk_row == ("fls_atomic002", "fls_chapter_anchor")
+        span_row = connection.execute(
+            "SELECT source_anchor, start_offset, span_order FROM chunk_spans WHERE chunk_uid = ?",
+            ("fls_atomic002",),
+        ).fetchone()
+        assert span_row == ("concurrency.html#fls_atomic002", 0, 1)
+
+    retrieval_result = execute_retrieval_query(
+        mode="lexical",
+        db_path=db_path,
+        contract_path=Path("config/sqlite_query_contracts/fls_spec.yaml"),
+        query_log_root=tmp_path / "query_logs",
+        query_text="atomic fence ordering",
+        row_marker="",
+        top_k=5,
+        candidate_limit=200,
+        allow_degraded=True,
+        semantic_config=SemanticBackendConfig(
+            base_url="http://127.0.0.1:1",
+            embed_model_id="Qwen/Qwen3-Embedding-4B",
+            reranker_model_id="BAAI/bge-reranker-v2-m3",
+            timeout_sec=0.2,
+        ),
+        semantic_retries=0,
+        persist_semantic_cache=False,
+        allow_online_corpus_embedding=False,
+        corpus="fls_spec",
+    )
+    assert retrieval_result["rows"]
+    assert retrieval_result["rows"][0]["chunk_uid"] == "fls_atomic002"
+    assert retrieval_result["rows"][0]["paragraph_id"] == "fls_atomic002"
 
     search_results = search_fls_paragraphs("atomic fence ordering", db_path=db_path)
     assert search_results
@@ -390,3 +486,97 @@ def test_fetch_fls_source_hard_failure(monkeypatch: pytest.MonkeyPatch, tmp_path
             max_retries=3,
             backoff_base_seconds=0,
         )
+
+
+def test_build_fls_db_persists_role_targets(tmp_path: Path) -> None:
+    source_dir = tmp_path / "fls_source"
+    db_path = tmp_path / "fls_spec.db"
+    spec_lock_path = tmp_path / "spec.lock"
+    topology_path = tmp_path / "paragraph-ids.json"
+
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "ffi.rst").write_text(
+        """
+Foreign Function Interface
+==========================
+
+.. _fls_ffi001:
+
+:dp:`fls_ffi001`
+The :dt:`external function <extern function>` calling convention constrains :t:`thread[s] <thread>` interaction and :p:`17.2 <fls_threads002>` semantics.
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (source_dir / "_metadata.json").write_text(
+        json.dumps({"commit_sha": "sample-sha"}),
+        encoding="utf-8",
+    )
+    spec_lock_path.write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {
+                        "title": "Foreign Function Interface",
+                        "sections": [
+                            {
+                                "id": "fls_ffi_anchor",
+                                "paragraphs": [{"id": "fls_ffi001", "number": "21:4"}],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    topology_path.write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {
+                        "title": "Foreign Function Interface",
+                        "link": "ffi.html",
+                        "informational": False,
+                        "sections": [
+                            {
+                                "id": "fls_ffi_anchor",
+                                "number": "21",
+                                "title": "Foreign Function Interface",
+                                "link": "ffi.html",
+                                "informational": False,
+                                "paragraphs": [
+                                    {
+                                        "id": "fls_ffi001",
+                                        "number": "21:4",
+                                        "link": "ffi.html#fls_ffi001",
+                                        "checksum": "checksum-ffi",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    build_fls_db(
+        source_dir=source_dir,
+        db_path=db_path,
+        spec_lock_path=spec_lock_path,
+        topology_path=topology_path,
+        compat_symlink_mode="never",
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT term_text, term_target FROM fls_paragraph_defined_terms"
+        ).fetchall() == [("external function", "extern function")]
+        assert connection.execute(
+            "SELECT term_text, term_target FROM fls_paragraph_term_refs"
+        ).fetchall() == [("threads", "thread")]
+        assert connection.execute(
+            "SELECT ref_text, ref_target FROM fls_paragraph_refs"
+        ).fetchall() == [("17.2", "fls_threads002")]

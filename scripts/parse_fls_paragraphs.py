@@ -21,6 +21,7 @@ DEFAULT_SPEC_LOCK_PATH = DEFAULT_GUIDELINES_REPO / "src" / "spec.lock"
 DEFAULT_TOPOLOGY_PATH = Path(".cache/fls_source/current/paragraph-ids.json")
 
 ROLE_PATTERN = re.compile(r":(?P<role>dp|p|dt|t|ds|s|std):`(?P<content>[^`]*)`")
+DISPLAY_TARGET_PATTERN = re.compile(r"^(?P<display>.+?)\s*<(?P<target>[^>]+)>$")
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,8 @@ class FLSParagraph:
     chapter: str
     section: str
     subsection: str
-    text: str
+    raw_text: str
+    clean_text: str
     source_file: str
     document_link: str
     paragraph_link: str
@@ -43,6 +45,12 @@ class FLSParagraph:
     syntax_refs: tuple[str, ...]
     std_refs: tuple[str, ...]
     paragraph_refs: tuple[str, ...]
+    defined_term_targets: tuple[str, ...]
+    term_ref_targets: tuple[str, ...]
+    syntax_def_targets: tuple[str, ...]
+    syntax_ref_targets: tuple[str, ...]
+    std_ref_targets: tuple[str, ...]
+    paragraph_ref_targets: tuple[str, ...]
 
 
 def load_paragraph_numbers(spec_lock_path: Path = DEFAULT_SPEC_LOCK_PATH) -> dict[str, str]:
@@ -104,17 +112,27 @@ def _is_heading_underline(line: str) -> int | None:
 
 def _normalize_role_text(value: str) -> str:
     text = str(value or "").strip()
-    if "<" in text and text.endswith(">"):
-        text = text.split("<", 1)[0].strip()
-    text = text.replace("[", " ").replace("]", " ")
+    text = re.sub(r"\[([^\]]+)\]", r"\1", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _split_role_content(value: str) -> tuple[str, str]:
+    text = str(value or "").strip()
+    match = DISPLAY_TARGET_PATTERN.match(text)
+    if match:
+        display = _normalize_role_text(match.group("display"))
+        target = _normalize_role_text(match.group("target"))
+        return display, target
+    normalized = _normalize_role_text(text)
+    return normalized, ""
 
 
 def _strip_rst_markup(text: str) -> str:
     text = re.sub(r":[a-z_]+:`([^`]*)`", r"\1", text)
     text = re.sub(r"``([^`]*)``", r"\1", text)
     text = re.sub(r"`([^`]*)`", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]", r"\1", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -137,16 +155,25 @@ def _role_payloads(raw_text: str) -> dict[str, tuple[str, ...]]:
         "std": [],
         "p": [],
     }
+    targets: dict[str, list[str]] = {
+        "dt": [],
+        "t": [],
+        "ds": [],
+        "s": [],
+        "std": [],
+        "p": [],
+    }
     for match in ROLE_PATTERN.finditer(raw_text):
         role = str(match.group("role") or "").strip()
         if role == "dp":
             continue
-        normalized = _normalize_role_text(match.group("content"))
-        if not normalized:
+        normalized, target = _split_role_content(match.group("content"))
+        if not normalized and not target:
             continue
         bucket = buckets.get(role)
         if bucket is not None:
             bucket.append(normalized)
+            targets[role].append(target)
     return {
         "defined_terms": tuple(buckets["dt"]),
         "term_refs": tuple(buckets["t"]),
@@ -154,6 +181,12 @@ def _role_payloads(raw_text: str) -> dict[str, tuple[str, ...]]:
         "syntax_refs": tuple(buckets["s"]),
         "std_refs": tuple(buckets["std"]),
         "paragraph_refs": tuple(buckets["p"]),
+        "defined_term_targets": tuple(targets["dt"]),
+        "term_ref_targets": tuple(targets["t"]),
+        "syntax_def_targets": tuple(targets["ds"]),
+        "syntax_ref_targets": tuple(targets["s"]),
+        "std_ref_targets": tuple(targets["std"]),
+        "paragraph_ref_targets": tuple(targets["p"]),
     }
 
 
@@ -238,7 +271,8 @@ def parse_fls_rst(
                     chapter=headings[0],
                     section=headings[1],
                     subsection=headings[2],
-                    text=paragraph_text,
+                    raw_text=raw_paragraph_text,
+                    clean_text=paragraph_text,
                     source_file=source_file,
                     document_link=str(metadata.get("document_link") or default_document_link),
                     paragraph_link=str(metadata.get("paragraph_link") or default_paragraph_link),
@@ -251,6 +285,12 @@ def parse_fls_rst(
                     syntax_refs=role_payloads["syntax_refs"],
                     std_refs=role_payloads["std_refs"],
                     paragraph_refs=role_payloads["paragraph_refs"],
+                    defined_term_targets=role_payloads["defined_term_targets"],
+                    term_ref_targets=role_payloads["term_ref_targets"],
+                    syntax_def_targets=role_payloads["syntax_def_targets"],
+                    syntax_ref_targets=role_payloads["syntax_ref_targets"],
+                    std_ref_targets=role_payloads["std_ref_targets"],
+                    paragraph_ref_targets=role_payloads["paragraph_ref_targets"],
                 )
             )
 
