@@ -190,7 +190,18 @@ def build_fls_db(
                 section_link TEXT NOT NULL,
                 section_id TEXT NOT NULL DEFAULT '',
                 checksum TEXT NOT NULL DEFAULT '',
+                live_topology_present INTEGER NOT NULL DEFAULT 0,
+                retrieval_eligible INTEGER NOT NULL DEFAULT 0,
+                retrieval_status TEXT NOT NULL DEFAULT '',
                 snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id)
+            );
+
+            CREATE TABLE fls_paragraph_audit (
+                paragraph_id TEXT PRIMARY KEY,
+                live_topology_present INTEGER NOT NULL,
+                retrieval_eligible INTEGER NOT NULL,
+                retrieval_status TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE fls_documents (
@@ -387,6 +398,7 @@ def build_fls_db(
             CREATE INDEX idx_paragraphs_section ON paragraphs(section);
             CREATE INDEX idx_paragraphs_document_link ON paragraphs(document_link);
             CREATE INDEX idx_paragraphs_section_link ON paragraphs(section_link);
+            CREATE INDEX idx_paragraphs_retrieval_eligible ON paragraphs(retrieval_eligible, paragraph_id);
             CREATE INDEX idx_defined_terms_paragraph_id ON fls_paragraph_defined_terms(paragraph_id);
             CREATE INDEX idx_term_refs_paragraph_id ON fls_paragraph_term_refs(paragraph_id);
             CREATE INDEX idx_syntax_defs_paragraph_id ON fls_paragraph_syntax_defs(paragraph_id);
@@ -575,7 +587,7 @@ def build_fls_db(
 
         semantic_model_rows = [
             (
-                "semantic.embedder.primary",
+                DEFAULT_EMBED_MODEL_ID,
                 "embedder",
                 DEFAULT_EMBED_MODEL_ID,
                 DEFAULT_EMBED_MODEL_REVISION,
@@ -587,7 +599,7 @@ def build_fls_db(
                 source_fetched_at,
             ),
             (
-                "semantic.reranker.primary",
+                DEFAULT_RERANKER_MODEL_ID,
                 "reranker",
                 DEFAULT_RERANKER_MODEL_ID,
                 DEFAULT_RERANKER_MODEL_REVISION,
@@ -617,7 +629,32 @@ def build_fls_db(
             semantic_model_rows,
         )
 
-        for order_index, paragraph in enumerate(paragraphs, start=1):
+        retrieval_order_index = 0
+        retrieval_eligible_count = 0
+        audit_only_count = 0
+        live_paragraph_ids = topology_index["paragraphs_by_id"]
+        for paragraph in paragraphs:
+            live_topology_present = paragraph.paragraph_id in live_paragraph_ids
+            retrieval_status = "canonical-and-retrieval-eligible"
+            audit_note = ""
+            if not live_topology_present:
+                retrieval_status = (
+                    "canonical-but-non-retrieval-eligible-due-to-live-topology-absence"
+                )
+                audit_note = "parsed paragraph_id absent from live topology"
+            elif not str(paragraph.section_id).strip():
+                retrieval_status = "canonical-but-non-retrieval-eligible-due-to-missing-section-id"
+                audit_note = "live-topology paragraph metadata did not provide canonical section_id"
+
+            retrieval_eligible = int(
+                live_topology_present and bool(str(paragraph.section_id).strip())
+            )
+            if retrieval_eligible:
+                retrieval_eligible_count += 1
+                retrieval_order_index += 1
+            else:
+                audit_only_count += 1
+
             connection.execute(
                 """
                 INSERT INTO paragraphs(
@@ -635,8 +672,11 @@ def build_fls_db(
                     section_link,
                     section_id,
                     checksum,
+                    live_topology_present,
+                    retrieval_eligible,
+                    retrieval_status,
                     snapshot_id
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     paragraph.paragraph_id,
@@ -653,72 +693,94 @@ def build_fls_db(
                     paragraph.section_link,
                     paragraph.section_id,
                     paragraph.checksum,
+                    live_topology_present,
+                    retrieval_eligible,
+                    retrieval_status,
                     snapshot_id,
                 ),
             )
-            chunk_source_sha = paragraph.checksum or _sha256_text(paragraph.raw_text)
             connection.execute(
                 """
-                INSERT INTO chunks(
-                    chunk_uid,
-                    section_id,
-                    raw_text,
-                    clean_text,
-                    char_len,
-                    token_len,
-                    source_sha256,
-                    source_fetched_at,
-                    source_commit_sha,
-                    order_index
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    paragraph.paragraph_id,
-                    paragraph.section_id,
-                    paragraph.raw_text,
-                    paragraph.clean_text,
-                    len(paragraph.clean_text),
-                    _token_len(paragraph.clean_text),
-                    chunk_source_sha,
-                    source_fetched_at,
-                    commit_sha,
-                    order_index,
-                ),
-            )
-            connection.execute(
-                """
-                INSERT INTO chunk_spans(
-                    chunk_uid,
-                    source_anchor,
-                    start_offset,
-                    end_offset,
-                    span_order
+                INSERT INTO fls_paragraph_audit(
+                    paragraph_id,
+                    live_topology_present,
+                    retrieval_eligible,
+                    retrieval_status,
+                    note
                 ) VALUES(?, ?, ?, ?, ?)
                 """,
                 (
                     paragraph.paragraph_id,
-                    paragraph.paragraph_link,
-                    0,
-                    len(paragraph.clean_text),
-                    1,
+                    live_topology_present,
+                    retrieval_eligible,
+                    retrieval_status,
+                    audit_note,
                 ),
             )
-            connection.execute(
-                """
-                INSERT INTO chunks_fts(
-                    chunk_uid,
-                    section_id,
-                    section_heading,
-                    chunk_text
-                ) VALUES(?, ?, ?, ?)
-                """,
-                (
-                    paragraph.paragraph_id,
-                    paragraph.section_id,
-                    paragraph.section or paragraph.chapter,
-                    paragraph.clean_text,
-                ),
-            )
+            if retrieval_eligible:
+                chunk_source_sha = paragraph.checksum or _sha256_text(paragraph.raw_text)
+                connection.execute(
+                    """
+                    INSERT INTO chunks(
+                        chunk_uid,
+                        section_id,
+                        raw_text,
+                        clean_text,
+                        char_len,
+                        token_len,
+                        source_sha256,
+                        source_fetched_at,
+                        source_commit_sha,
+                        order_index
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        paragraph.paragraph_id,
+                        paragraph.section_id,
+                        paragraph.raw_text,
+                        paragraph.clean_text,
+                        len(paragraph.clean_text),
+                        _token_len(paragraph.clean_text),
+                        chunk_source_sha,
+                        source_fetched_at,
+                        commit_sha,
+                        retrieval_order_index,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO chunk_spans(
+                        chunk_uid,
+                        source_anchor,
+                        start_offset,
+                        end_offset,
+                        span_order
+                    ) VALUES(?, ?, ?, ?, ?)
+                    """,
+                    (
+                        paragraph.paragraph_id,
+                        paragraph.paragraph_link,
+                        0,
+                        len(paragraph.clean_text),
+                        1,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO chunks_fts(
+                        chunk_uid,
+                        section_id,
+                        section_heading,
+                        chunk_text
+                    ) VALUES(?, ?, ?, ?)
+                    """,
+                    (
+                        paragraph.paragraph_id,
+                        paragraph.section_id,
+                        paragraph.section or paragraph.chapter,
+                        paragraph.clean_text,
+                    ),
+                )
             _insert_ordered_text_rows(
                 connection,
                 table_name="fls_paragraph_defined_terms",
@@ -836,6 +898,8 @@ def build_fls_db(
         "db_path": str(db_path),
         "commit_sha": commit_sha,
         "paragraph_count": len(paragraphs),
+        "retrieval_eligible_count": retrieval_eligible_count,
+        "audit_only_count": audit_only_count,
         "chapter_count": len(chapters),
         "document_count": len(topology_index["documents_by_link"]),
         "section_count": len(topology_index["sections_by_link"]),
@@ -865,8 +929,9 @@ def main() -> None:
         compat_symlink_mode=args.compat_symlink_mode,
     )
     print(
-        f"FLS DB built: {stats['paragraph_count']} paragraphs from "
-        f"{stats['chapter_count']} chapters"
+        f"FLS DB built: {stats['paragraph_count']} paragraphs "
+        f"({stats['retrieval_eligible_count']} retrieval-eligible, {stats['audit_only_count']} audit-only) "
+        f"from {stats['chapter_count']} chapters"
     )
     print(f"Commit: {stats['commit_sha']}")
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 import os
 import re
@@ -31,8 +30,6 @@ GUIDELINES_REPO_ROOT = Path(
     )
 )
 SPEC_LOCK_PATH = GUIDELINES_REPO_ROOT / "src" / "spec.lock"
-EXEMPLAR_MANIFEST = PROJECT_ROOT / "data" / "exemplar_manifest.json"
-_EXEMPLAR_OVERRIDES: list[dict[str, Any]] | None = None
 TOPOLOGY_PATH = DEFAULT_TOPOLOGY_CACHE_PATH
 _TOPOLOGY_INDEX_CACHE: dict[str, Any] | None = None
 _TOPOLOGY_DRIFT_CACHE: dict[str, Any] | None = None
@@ -90,31 +87,6 @@ DEFAULT_POLICY: dict[str, Any] = {
     "high_trust_fields": ["title", "claim", "construct_terms"],
 }
 
-DOMAIN_TO_CHAPTERS: dict[str, set[str]] = {
-    "unsafe": {"Unsafety"},
-    "defect": {"Unsafety"},
-    "concurrency": {"Concurrency"},
-    "implementations": {"Implementations"},
-    "expressions": {"Expressions"},
-}
-
-DOMAIN_HINTS: dict[str, str] = {
-    "unsafe": "unsafe",
-    "undefined": "unsafe",
-    "ub": "unsafe",
-    "pointer": "unsafe",
-    "dereference": "unsafe",
-    "concurrency": "concurrency",
-    "atomic": "concurrency",
-    "thread": "concurrency",
-    "send": "concurrency",
-    "sync": "concurrency",
-    "impl": "implementations",
-    "implementation": "implementations",
-    "trait": "implementations",
-    "closure": "expressions",
-}
-
 
 def _bootstrap_scripts_path() -> None:
     scripts = PROJECT_ROOT / "scripts"
@@ -129,6 +101,59 @@ def _load_fls_runtime() -> tuple[Path, Path, Path]:
 
     defaults = load_corpus_runtime_defaults(root=PROJECT_ROOT, corpus="fls_spec")
     return defaults.db_path, defaults.contract_path, defaults.query_log_root
+
+
+def _load_fls_runtime_settings() -> dict[str, Any]:
+    _bootstrap_scripts_path()
+    from retrieval.corpora.config_loader import load_corpus_runtime_defaults
+
+    defaults = load_corpus_runtime_defaults(root=PROJECT_ROOT, corpus="fls_spec")
+    corpus_cfg = (
+        yaml.safe_load(
+            (PROJECT_ROOT / "config" / "corpora" / "fls_spec.yaml").read_text(encoding="utf-8")
+        )
+        or {}
+    )
+    profile_path = PROJECT_ROOT / "config" / "retrieval_profiles" / f"{defaults.profile_name}.yaml"
+    profile_cfg = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    runtime_cfg = corpus_cfg.get("runtime") or {}
+    semantic_cfg = runtime_cfg.get("semantic") or {}
+    retrieval_cfg = profile_cfg.get("retrieval") or {}
+    models_cfg = profile_cfg.get("models") or {}
+    hybrid_cfg = profile_cfg.get("hybrid") or {}
+    runtime_retrieval_cfg = runtime_cfg.get("retrieval") or {}
+    return {
+        "db_path": defaults.db_path,
+        "contract_path": defaults.contract_path,
+        "query_log_root": defaults.query_log_root,
+        "rewrite_rules_path": defaults.rewrite_rules_path,
+        "top_k": int(retrieval_cfg.get("top_k", runtime_retrieval_cfg.get("top_k", 10))),
+        "candidate_limit": int(
+            retrieval_cfg.get("candidate_limit", runtime_retrieval_cfg.get("candidate_limit", 5000))
+        ),
+        "semantic_base_url": str(semantic_cfg.get("base_url", "http://127.0.0.1:8080")),
+        "semantic_embed_base_url": str(
+            semantic_cfg.get(
+                "embed_base_url", semantic_cfg.get("base_url", "http://127.0.0.1:8080")
+            )
+        ),
+        "semantic_rerank_base_url": str(
+            semantic_cfg.get("rerank_base_url", "http://127.0.0.1:8081")
+        ),
+        "semantic_timeout_sec": float(semantic_cfg.get("timeout_sec", 120.0)),
+        "semantic_retries": int(semantic_cfg.get("retries", 0)),
+        "embed_model_id": str(models_cfg.get("embed_model_id", "Qwen/Qwen3-Embedding-4B")),
+        "reranker_model_id": str(models_cfg.get("reranker_model_id", "BAAI/bge-reranker-v2-m3")),
+        "hybrid_fusion_method": str(hybrid_cfg.get("fusion_method", "weighted-v1")),
+        "hybrid_candidate_policy": str(hybrid_cfg.get("candidate_policy", "legacy")),
+        "hybrid_rerank_pool_size": int(hybrid_cfg.get("rerank_pool_size", 0)),
+        "hybrid_lexical_min": int(hybrid_cfg.get("lexical_min", 0)),
+        "hybrid_semantic_min": int(hybrid_cfg.get("semantic_min", 0)),
+        "hybrid_lexical_floor_count": int(hybrid_cfg.get("lexical_floor_count", 0)),
+        "hybrid_lexical_floor_share": float(hybrid_cfg.get("lexical_floor_share", 0.0)),
+        "hybrid_rrf_k": int(hybrid_cfg.get("rrf_k", 60)),
+        "hybrid_rrf_window": int(hybrid_cfg.get("rrf_window", 0)),
+    }
 
 
 def _query_contract(
@@ -368,37 +393,9 @@ def _weighted_overlap_ratio(
     return numer / denom, len(hits)
 
 
-def _resolve_expected_domains(
-    *, construct_terms: list[str], expected_domains: list[str] | None
-) -> set[str]:
-    resolved: set[str] = set()
-    for raw in list(expected_domains or []):
-        value = str(raw).strip().lower()
-        if value in DOMAIN_TO_CHAPTERS:
-            resolved.add(value)
-    if resolved:
-        return resolved
-
-    hints = _tokenize_text(" ".join(construct_terms))
-    for hint in hints:
-        mapped = DOMAIN_HINTS.get(hint)
-        if mapped:
-            resolved.add(mapped)
-    return resolved
-
-
 def _candidate_chapter_match(*, chapter: str, domains: set[str]) -> bool:
-    if not domains:
-        return True
-    chapter_name = str(chapter).strip()
-    if not chapter_name:
-        return False
-    allowed: set[str] = set()
-    for domain in domains:
-        allowed.update(DOMAIN_TO_CHAPTERS.get(domain, set()))
-    if not allowed:
-        return True
-    return chapter_name in allowed
+    del chapter, domains
+    return True
 
 
 def _score_candidates(
@@ -522,124 +519,45 @@ def _db_has_paragraphs(db_path: Path) -> bool:
     if not db_path.exists():
         return False
     try:
-        result = _query_contract(query_id="fls_stats_v1", params={}, row_limit=1, db_path=db_path)
+        result = _query_contract(query_id="fls_stats_v2", params={}, row_limit=1, db_path=db_path)
         rows = list(result.get("rows") or [])
-        count = int(rows[0].get("paragraph_count", 0)) if rows else 0
+        count = (
+            int(rows[0].get("retrieval_eligible_count", rows[0].get("paragraph_count", 0)) or 0)
+            if rows
+            else 0
+        )
     except Exception:
         return False
     return count > 0
 
 
-def _preferred_chapters(tokens: list[str]) -> list[str]:
-    lower = {token.lower() for token in tokens}
-    preferred: list[str] = []
-
-    if lower & {"send", "sync", "thread", "atomic", "fence", "ordering"}:
-        preferred.append("Concurrency")
-    if lower & {"unsafe", "pointer", "dereference", "undefined"}:
-        preferred.append("Unsafety")
-    if lower & {"trait", "implementation", "impl"}:
-        preferred.append("Implementations")
-    if lower & {"closure", "capture", "move"}:
-        preferred.append("Expressions")
-
-    return preferred
-
-
-def _load_exemplar_overrides() -> list[dict[str, Any]]:
-    global _EXEMPLAR_OVERRIDES
-    if _EXEMPLAR_OVERRIDES is not None:
-        return _EXEMPLAR_OVERRIDES
-    if not EXEMPLAR_MANIFEST.exists():
-        _EXEMPLAR_OVERRIDES = []
-        return _EXEMPLAR_OVERRIDES
-
-    payload = json.loads(EXEMPLAR_MANIFEST.read_text(encoding="utf-8"))
-    rows = payload.get("exemplars") if isinstance(payload, dict) else []
-    if not isinstance(rows, list):
-        rows = []
-
-    overrides: list[dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        rel_path = str(row.get("path", "")).strip()
-        if not rel_path:
-            continue
-        rst_path = GUIDELINES_REPO_ROOT / rel_path
-        if not rst_path.exists():
-            continue
-        text = rst_path.read_text(encoding="utf-8")
-        title_match = re.search(r"^(.+)\n=+\n", text, re.MULTILINE)
-        fls_match = re.search(r":fls:\s+(fls_[A-Za-z0-9_]+)", text)
-        if not title_match or not fls_match:
-            continue
-        tokens = {
-            token.lower()
-            for token in re.findall(r"[A-Za-z0-9_]+", title_match.group(1))
-            if len(token) > 2
-        }
-        if not tokens:
-            continue
-        overrides.append(
-            {
-                "tokens": tokens,
-                "paragraph_id": fls_match.group(1),
-                "title": title_match.group(1).strip(),
-            }
-        )
-
-    _EXEMPLAR_OVERRIDES = overrides
-    return _EXEMPLAR_OVERRIDES
-
-
-def _match_exemplar_override(construct_terms: list[str]) -> str:
-    tokens = {
-        token.lower()
-        for token in re.findall(r"[A-Za-z0-9_]+", " ".join(construct_terms))
-        if len(token) > 2
-    }
-    if not tokens:
-        return ""
-    best_id = ""
-    best_score = 0.0
-    for entry in _load_exemplar_overrides():
-        exemplar_tokens = entry.get("tokens")
-        if not isinstance(exemplar_tokens, set) or not exemplar_tokens:
-            continue
-        overlap = len(tokens & exemplar_tokens)
-        if overlap == 0:
-            continue
-        score = overlap / float(len(exemplar_tokens))
-        if score > best_score:
-            best_score = score
-            best_id = str(entry.get("paragraph_id", ""))
-    return best_id if best_score >= 0.5 else ""
-
-
-def _fetch_paragraph(paragraph_id: str, db_path: Path) -> dict[str, Any] | None:
-    try:
-        result = _query_contract(
-            query_id="fls_paragraph_lookup_v2",
-            params={"statement_id": paragraph_id},
-            row_limit=1,
-            db_path=db_path,
-        )
-    except Exception:
-        return None
-    rows = list(result.get("rows") or [])
-    if not rows:
-        return None
-    row = rows[0]
+def _normalize_retrieval_row(row: dict[str, Any]) -> dict[str, Any]:
+    paragraph_id = str(
+        row.get("paragraph_id") or row.get("statement_id") or row.get("chunk_uid") or ""
+    ).strip()
     return {
-        "paragraph_id": str(row.get("paragraph_id", "")),
-        "text": str(row.get("text", "")),
-        "chapter": str(row.get("chapter", "")),
-        "section": str(row.get("section", "")),
+        "paragraph_id": paragraph_id,
         "paragraph_number": str(row.get("paragraph_number", "")),
+        "chapter": str(row.get("chapter", "")),
+        "section": str(row.get("section", row.get("section_heading", ""))),
+        "text": str(row.get("text") or row.get("statement_text") or row.get("chunk_text") or ""),
+        "source_file": str(row.get("source_file", "")),
         "document_link": str(row.get("document_link", "")),
         "section_link": str(row.get("section_link", "")),
         "paragraph_link": str(row.get("paragraph_link", "")),
+        "section_id": str(row.get("section_id", "")),
+        "chunk_uid": str(row.get("chunk_uid", paragraph_id)),
+        "source_anchor": str(row.get("source_anchor", "")),
+        "requested_mode": str(row.get("requested_mode", "")),
+        "executed_mode": str(row.get("executed_mode", "")),
+        "bm25_rank": float(row.get("bm25_rank", row.get("bm25_raw", 0.0)) or 0.0),
+        "lexical_score": float(row.get("lexical_score", 0.0) or 0.0),
+        "semantic_score": float(row.get("semantic_score", 0.0) or 0.0),
+        "reranker_score": float(row.get("reranker_score", 0.0) or 0.0),
+        "relevance_score": float(
+            row.get("relevance_score", row.get("semantic_score", row.get("lexical_score", 0.0)))
+            or 0.0
+        ),
     }
 
 
@@ -656,49 +574,77 @@ def search_fls_paragraphs(
     from retrieval.operations.query import execute_retrieval_query
     from semantic_backend_client import SemanticBackendConfig
 
-    runtime_db_path, contract_path, query_log_root = _load_fls_runtime()
-    result = execute_retrieval_query(
-        mode="lexical",
-        db_path=db_path if db_path.exists() else runtime_db_path,
-        contract_path=contract_path,
-        query_log_root=query_log_root,
-        query_text=query,
-        row_marker="",
-        top_k=max(1, int(limit)),
-        candidate_limit=max(250, int(limit) * 25),
-        allow_degraded=True,
-        semantic_config=SemanticBackendConfig(
-            base_url="http://127.0.0.1:8080",
-            embed_model_id="Qwen/Qwen3-Embedding-4B",
-            reranker_model_id="BAAI/bge-reranker-v2-m3",
-        ),
-        semantic_retries=0,
-        persist_semantic_cache=False,
-        allow_online_corpus_embedding=False,
-        corpus="fls_spec",
+    runtime = _load_fls_runtime_settings()
+    resolved_db_path = db_path if db_path.exists() else Path(runtime["db_path"])
+    top_k = max(int(limit), int(runtime["top_k"]))
+    candidate_limit = max(int(runtime["candidate_limit"]), top_k * 8)
+    semantic_config = SemanticBackendConfig(
+        base_url=str(runtime["semantic_base_url"]),
+        embed_model_id=str(runtime["embed_model_id"]),
+        reranker_model_id=str(runtime["reranker_model_id"]),
+        timeout_sec=float(runtime["semantic_timeout_sec"]),
+        embed_base_url=str(runtime["semantic_embed_base_url"]),
+        rerank_base_url=str(runtime["semantic_rerank_base_url"]),
     )
-    rows = list(result.get("rows") or [])
-    out: list[dict[str, Any]] = []
-    for row in rows[: max(1, int(limit))]:
-        paragraph_id = str(row.get("statement_id", "")).strip()
-        if not paragraph_id:
-            continue
-        details = _fetch_paragraph(paragraph_id, db_path)
-        if not details:
-            continue
-        out.append(
-            {
-                "paragraph_id": paragraph_id,
-                "paragraph_number": str(details.get("paragraph_number", "")),
-                "chapter": str(details.get("chapter", "")),
-                "section": str(details.get("section", "")),
-                "text": str(details.get("text", "")),
-                "source_file": "",
-                "bm25_rank": float(row.get("bm25_raw", 0.0)),
-                "lexical_score": float(row.get("lexical_score", 0.0)),
-            }
+    merged: dict[str, dict[str, Any]] = {}
+    for mode in ("lexical", "semantic", "hybrid"):
+        result = execute_retrieval_query(
+            mode=mode,
+            db_path=resolved_db_path,
+            contract_path=Path(runtime["contract_path"]),
+            query_log_root=Path(runtime["query_log_root"]),
+            query_text=query,
+            row_marker="",
+            top_k=top_k,
+            candidate_limit=candidate_limit,
+            allow_degraded=False,
+            semantic_config=semantic_config,
+            semantic_retries=int(runtime["semantic_retries"]),
+            persist_semantic_cache=False,
+            allow_online_corpus_embedding=False,
+            corpus="fls_spec",
+            rewrite_rules_path=Path(runtime["rewrite_rules_path"]),
+            hybrid_fusion_method=str(runtime["hybrid_fusion_method"]),
+            hybrid_rrf_k=int(runtime["hybrid_rrf_k"]),
+            hybrid_rrf_window=int(runtime["hybrid_rrf_window"]),
+            hybrid_lexical_floor_count=int(runtime["hybrid_lexical_floor_count"]),
+            hybrid_lexical_floor_share=float(runtime["hybrid_lexical_floor_share"]),
+            hybrid_candidate_policy=str(runtime["hybrid_candidate_policy"]),
+            hybrid_rerank_pool_size=int(runtime["hybrid_rerank_pool_size"]),
+            hybrid_lexical_min=int(runtime["hybrid_lexical_min"]),
+            hybrid_semantic_min=int(runtime["hybrid_semantic_min"]),
         )
-    return out
+        for row in list(result.get("rows") or [])[:top_k]:
+            normalized = _normalize_retrieval_row(
+                {
+                    **row,
+                    "requested_mode": str(result.get("requested_mode", mode)),
+                    "executed_mode": str(result.get("executed_mode", mode)),
+                }
+            )
+            paragraph_id = normalized["paragraph_id"]
+            if not paragraph_id:
+                continue
+            existing = merged.get(paragraph_id)
+            if existing is None or float(normalized.get("relevance_score", 0.0)) > float(
+                existing.get("relevance_score", 0.0)
+            ):
+                merged_modes = list(existing.get("retrieved_modes", [])) if existing else []
+                if mode not in merged_modes:
+                    merged_modes.append(mode)
+                normalized["retrieved_modes"] = merged_modes
+                merged[paragraph_id] = normalized
+            elif mode not in list(existing.get("retrieved_modes", [])):
+                existing.setdefault("retrieved_modes", []).append(mode)
+    rows = list(merged.values())
+    rows.sort(
+        key=lambda row: (
+            -float(row.get("relevance_score", 0.0)),
+            -float(row.get("lexical_score", 0.0)),
+            str(row.get("paragraph_id", "")),
+        )
+    )
+    return rows[: max(1, int(limit))]
 
 
 def validate_fls_id(paragraph_id: str, *, spec_lock_path: Path = SPEC_LOCK_PATH) -> bool:
@@ -709,29 +655,10 @@ def validate_fls_id(paragraph_id: str, *, spec_lock_path: Path = SPEC_LOCK_PATH)
 
 def _packet_query_variants(packet: dict[str, Any], *, construct_terms: list[str]) -> list[str]:
     _bootstrap_scripts_path()
-    from retrieval.writer_host.fls_candidate_search import build_query_variants
+    from retrieval.writer_host.fls_query_text import build_packet_query_text
 
-    variants = build_query_variants(packet)
-    out: list[str] = []
-    for row in variants:
-        if not isinstance(row, dict):
-            continue
-        query = str(row.get("query", "")).strip()
-        if query and query not in out:
-            out.append(query)
-
-    tokenized: list[str] = []
-    for term in construct_terms[:5]:
-        tokenized.extend(re.findall(r"[A-Za-z0-9_]+", term))
-    tokenized = tokenized[:8]
-    if tokenized:
-        strict_query = " AND ".join(f'"{token}"' for token in tokenized)
-        broad_query = " OR ".join(f'"{token}"' for token in tokenized)
-        if strict_query and strict_query not in out:
-            out.insert(0, strict_query)
-        if broad_query and broad_query not in out:
-            out.append(broad_query)
-    return out
+    packet_query = build_packet_query_text({**packet, "construct_terms": list(construct_terms)})
+    return [packet_query] if packet_query else []
 
 
 def _collect_packet_tokens(
@@ -783,23 +710,15 @@ def resolve_fls_for_guideline(
     if not terms:
         return _unresolved("no construct terms provided")
 
-    expected_domains = list(packet.get("expected_domains") or [])
-    domains = _resolve_expected_domains(construct_terms=terms, expected_domains=expected_domains)
+    requested_domains = [
+        str(value).strip().lower()
+        for value in list(packet.get("expected_domains") or [])
+        if str(value).strip()
+    ]
+    domains: set[str] = set()
 
     collected_rows: list[dict[str, Any]] = []
     query_variants: list[str] = []
-
-    exemplar_override = _match_exemplar_override(terms)
-    if exemplar_override and validate_fls_id(exemplar_override, spec_lock_path=spec_lock_path):
-        paragraph = _fetch_paragraph(exemplar_override, db_path)
-        if paragraph is not None:
-            collected_rows.append(
-                {
-                    **paragraph,
-                    "lexical_score": 1.0,
-                    "variant_name": "exemplar",
-                }
-            )
 
     if precomputed_candidates is not None:
         collected_rows.extend(list(precomputed_candidates))
@@ -856,7 +775,7 @@ def resolve_fls_for_guideline(
         "variant_coverage": float(best.get("variant_coverage", 0.0)),
         "variant_count": int(best.get("variant_count", 0) or 0),
         "chapter_match": bool(best.get("chapter_match", False)),
-        "expected_domains": sorted(domains),
+        "expected_domains": requested_domains,
         "thresholds": dict(thresholds),
         "review_thresholds": dict(review_thresholds),
         "publish_accept": False,

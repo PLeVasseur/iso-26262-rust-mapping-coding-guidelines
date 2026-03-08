@@ -27,9 +27,11 @@ def _resolve_fls_id(
     packet: dict[str, Any],
     report_root: Path | None = None,
 ) -> tuple[str, dict[str, Any], str | None, dict[str, Any]]:
-    candidates, variants = gather_candidates(packet=packet)
+    resolution_packet = dict(packet)
+    resolution_packet["expected_domains"] = []
+    candidates, variants = gather_candidates(packet=resolution_packet)
     paragraph = resolve_fls_for_guideline(
-        packet,
+        resolution_packet,
         precomputed_candidates=candidates,
         precomputed_variants=variants,
     )

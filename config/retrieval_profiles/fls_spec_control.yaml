@@ -12,7 +12,7 @@ semantic:
   retries: 0
 hybrid:
   fusion_method: weighted-v2
-  candidate_policy: lexical_semantic_union_v2
+  candidate_policy: v2
   rerank_pool_size: 128
   lexical_min: 24
   semantic_min: 24

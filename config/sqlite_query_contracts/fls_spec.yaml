@@ -77,11 +77,18 @@ queries:
       SELECT
         c.chunk_uid,
         c.clean_text AS chunk_text,
+        p.text AS statement_text,
+        p.text AS text,
         sec.heading AS section_heading,
         COALESCE(sp.source_anchor, p.paragraph_link, p.section_link, p.document_link, '') AS source_anchor,
         c.source_fetched_at,
         p.paragraph_id AS paragraph_id,
         p.paragraph_number AS paragraph_number,
+        p.chapter AS chapter,
+        p.section AS section,
+        p.subsection AS subsection,
+        p.source_file AS source_file,
+        p.section_id AS section_id,
         p.document_link AS document_link,
         p.section_link AS section_link,
         p.paragraph_link AS paragraph_link,
@@ -118,69 +125,6 @@ queries:
       WHERE chunks_fts MATCH :fts_query
       ORDER BY bm25_raw ASC, chunk_uid ASC
 
-  statement_corpus_v4_all:
-    description: Compatibility FLS paragraph retrieval corpus with topology fields
-    requires_order: true
-    row_limit: 5000
-    params:
-      - statement_id_after
-    sql: |
-      SELECT
-        p.paragraph_id AS statement_id,
-        p.text AS statement_text,
-        COALESCE(p.section, p.chapter, '') AS section_heading,
-        COALESCE(p.paragraph_link, p.section_link, p.document_link, '') AS source_anchor,
-        COALESCE(s.built_at, '') AS source_fetched_at,
-        p.paragraph_id AS paragraph_id,
-        p.document_link AS document_link,
-        p.section_link AS section_link,
-        p.paragraph_link AS paragraph_link,
-        '' AS row_markers,
-        '' AS mechanism_ids,
-        '' AS mechanism_families
-      FROM paragraphs AS p
-      LEFT JOIN snapshots AS s ON s.snapshot_id = p.snapshot_id
-      WHERE :statement_id_after = '' OR p.paragraph_id > :statement_id_after
-      ORDER BY p.paragraph_id ASC
-
-  fls_paragraph_lookup_v2:
-    description: Lookup a single FLS paragraph by statement_id with topology fields
-    requires_order: true
-    row_limit: 1
-    params:
-      - statement_id
-    sql: |
-      SELECT
-        p.paragraph_id AS statement_id,
-        p.paragraph_id AS paragraph_id,
-        p.text AS statement_text,
-        p.text AS text,
-        p.chapter AS chapter,
-        p.section AS section,
-        p.subsection AS subsection,
-        p.paragraph_number AS paragraph_number,
-        p.source_file AS source_file,
-        p.document_link AS document_link,
-        p.section_link AS section_link,
-        p.paragraph_link AS paragraph_link,
-        p.section_id AS section_id,
-        p.checksum AS checksum,
-        COALESCE(p.paragraph_link, p.section_link, p.document_link, '') AS source_anchor,
-        COALESCE(s.built_at, '') AS source_fetched_at,
-        COALESCE((SELECT json_group_array(json_object('text', term_text, 'target', term_target)) FROM fls_paragraph_defined_terms WHERE paragraph_id = p.paragraph_id ORDER BY term_order), '[]') AS defined_terms_json,
-        COALESCE((SELECT json_group_array(json_object('text', term_text, 'target', term_target)) FROM fls_paragraph_term_refs WHERE paragraph_id = p.paragraph_id ORDER BY term_order), '[]') AS term_refs_json,
-        COALESCE((SELECT json_group_array(json_object('text', symbol_text, 'target', symbol_target)) FROM fls_paragraph_syntax_defs WHERE paragraph_id = p.paragraph_id ORDER BY symbol_order), '[]') AS syntax_defs_json,
-        COALESCE((SELECT json_group_array(json_object('text', symbol_text, 'target', symbol_target)) FROM fls_paragraph_syntax_refs WHERE paragraph_id = p.paragraph_id ORDER BY symbol_order), '[]') AS syntax_refs_json,
-        COALESCE((SELECT json_group_array(json_object('text', symbol_text, 'target', symbol_target)) FROM fls_paragraph_std_refs WHERE paragraph_id = p.paragraph_id ORDER BY symbol_order), '[]') AS std_refs_json,
-        COALESCE((SELECT json_group_array(json_object('text', ref_text, 'target', ref_target)) FROM fls_paragraph_refs WHERE paragraph_id = p.paragraph_id ORDER BY ref_order), '[]') AS paragraph_refs_json,
-        '' AS row_markers,
-        '' AS mechanism_ids,
-        '' AS mechanism_families
-      FROM paragraphs AS p
-      LEFT JOIN snapshots AS s ON s.snapshot_id = p.snapshot_id
-      WHERE p.paragraph_id = :statement_id
-      ORDER BY p.paragraph_id ASC
-
   fls_stats_v2:
     description: Summary stats for rebuilt fls_spec corpus health checks
     requires_order: false
@@ -193,17 +137,7 @@ queries:
         (SELECT COUNT(*) FROM fls_documents) AS document_count,
         (SELECT COUNT(*) FROM fls_sections) AS section_count,
         (SELECT COUNT(*) FROM chunks) AS chunk_count,
-        COALESCE((SELECT commit_sha FROM snapshots ORDER BY snapshot_id DESC LIMIT 1), '') AS commit_sha,
-        COALESCE((SELECT built_at FROM snapshots ORDER BY snapshot_id DESC LIMIT 1), '') AS built_at
-
-  fls_stats_v1:
-    description: Compatibility summary stats for fls_spec corpus health checks
-    requires_order: false
-    row_limit: 1
-    params: []
-    sql: |
-      SELECT
-        (SELECT COUNT(*) FROM paragraphs) AS paragraph_count,
-        (SELECT COUNT(DISTINCT chapter) FROM paragraphs) AS chapter_count,
+        (SELECT COUNT(*) FROM paragraphs WHERE retrieval_eligible = 1) AS retrieval_eligible_count,
+        (SELECT COUNT(*) FROM paragraphs WHERE retrieval_eligible = 0) AS audit_only_count,
         COALESCE((SELECT commit_sha FROM snapshots ORDER BY snapshot_id DESC LIMIT 1), '') AS commit_sha,
         COALESCE((SELECT built_at FROM snapshots ORDER BY snapshot_id DESC LIMIT 1), '') AS built_at
