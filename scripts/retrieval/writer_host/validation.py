@@ -67,13 +67,16 @@ def _probe_rust_example(code: str) -> list[str]:
     if not rustc or not _should_probe_rust_example(code):
         return []
     with tempfile.TemporaryDirectory(prefix="writer_example_probe_") as tmpdir:
-        source_path = Path(tmpdir) / "probe.rs"
+        tmp_path = Path(tmpdir)
+        source_path = tmp_path / "probe.rs"
+        output_path = tmp_path / "probe"
         source_path.write_text(code, encoding="utf-8")
         completed = subprocess.run(
-            [rustc, "--edition=2021", "-Dwarnings", str(source_path)],
+            [rustc, "--edition=2021", "-Dwarnings", str(source_path), "-o", str(output_path)],
             text=True,
             capture_output=True,
             check=False,
+            cwd=tmpdir,
         )
     if completed.returncode == 0:
         return []

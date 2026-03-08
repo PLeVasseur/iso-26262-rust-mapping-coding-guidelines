@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import os
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "scripts"
@@ -141,6 +142,51 @@ def test_validate_example_author_flags_unstable_and_dead_code_probe_issues() -> 
     assert "non_compliant_code:unstable_api:core_hint_must_use" in violations
     assert "non_compliant_code:rustc_probe:unstable_api" in violations
     assert "compliant_code:rustc_probe:dead_code_warning" in violations
+
+
+def test_validate_example_author_probe_keeps_workspace_clean(tmp_path: Path) -> None:
+    contract = {
+        "required_output_schema": {
+            "required": [
+                "target_id",
+                "non_compliant_narrative",
+                "non_compliant_code",
+                "compliant_narrative",
+                "compliant_code",
+                "example_citation_keys",
+                "non_compliant_miri_intent",
+                "compliant_miri_intent",
+            ]
+        },
+        "forbidden_patterns": [],
+    }
+    output = {
+        "target_id": "RET-ISSUE-006",
+        "non_compliant_narrative": "bad",
+        "non_compliant_code": (
+            "fn helper() {}\nfn main() {\n    core::hint::must_use(helper());\n}\n"
+        ),
+        "compliant_narrative": "good",
+        "compliant_code": ("trait ProcessingRole {\n    fn process() -> u32;\n}\nfn main() {}\n"),
+        "example_citation_keys": ["rust_reference::chunk::e42c"],
+        "non_compliant_miri_intent": "check",
+        "compliant_miri_intent": "check",
+    }
+    cwd = Path.cwd()
+    try:
+        os.chdir(tmp_path)
+        violations = validate_role_output(
+            role_name="example_author",
+            output=output,
+            role_contract=contract,
+            evidence_ids={"rust_reference::chunk::e42c"},
+        )
+        assert "non_compliant_code:rustc_probe:unstable_api" in violations
+        assert "compliant_code:rustc_probe:dead_code_warning" in violations
+        assert not (tmp_path / "probe").exists()
+        assert not list(tmp_path.glob("probe.long-type-*.txt"))
+    finally:
+        os.chdir(cwd)
 
 
 def test_validate_metadata_curator_flags_inconsistent_duplicate_urls() -> None:
