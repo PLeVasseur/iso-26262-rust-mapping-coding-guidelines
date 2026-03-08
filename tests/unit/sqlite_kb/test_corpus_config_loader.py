@@ -52,8 +52,8 @@ class CorpusConfigLoaderTests(unittest.TestCase):
         self.assertTrue(cfg.supports_query)
         self.assertTrue(cfg.supports_materialize)
         self.assertEqual(cfg.ingest_strategy, "fls_spec_v1")
-        self.assertEqual(cfg.chunk_target_min_tokens, 80)
-        self.assertEqual(cfg.chunk_target_max_tokens, 260)
+        self.assertEqual(cfg.chunk_target_min_tokens, 1)
+        self.assertEqual(cfg.chunk_target_max_tokens, 4096)
         self.assertEqual(cfg.chunk_overlap_percent, 0.0)
         self.assertTrue(str(cfg.contract_path).endswith("fls_spec.yaml"))
 

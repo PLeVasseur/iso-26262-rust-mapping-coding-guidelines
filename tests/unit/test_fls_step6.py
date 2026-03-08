@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import sqlite3
 from pathlib import Path
 
@@ -16,6 +18,44 @@ from scripts.fetch_fls_source import fetch_fls_source
 from scripts.parse_fls_paragraphs import parse_fls_rst
 from scripts.retrieval.operations.query import execute_retrieval_query
 from semantic_backend_client import SemanticBackendConfig
+
+
+def _seed_chunk_embeddings(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            "SELECT chunk_uid, clean_text FROM chunks ORDER BY chunk_uid ASC"
+        ).fetchall()
+        payload = []
+        for chunk_uid, clean_text in rows:
+            vector = [0.1, 0.2, 0.3]
+            payload.append(
+                (
+                    str(chunk_uid),
+                    "Qwen/Qwen3-Embedding-4B",
+                    "chunk-v1",
+                    hashlib.sha256(str(clean_text).lower().encode("utf-8")).hexdigest(),
+                    json.dumps(vector),
+                    math.sqrt(sum(value * value for value in vector)),
+                    "2026-01-01T00:00:00Z",
+                    "2026-01-01T00:00:00Z",
+                )
+            )
+        connection.executemany(
+            """
+            INSERT INTO chunk_embeddings(
+                chunk_uid,
+                model_id,
+                embed_version,
+                text_sha256,
+                vector_json,
+                vector_norm,
+                embedded_at,
+                source_fetched_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            payload,
+        )
+        connection.commit()
 
 
 def _write_sample_fls_source(source_dir: Path) -> None:
@@ -275,6 +315,10 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert stats["commit_sha"] == "sample-sha"
     assert stats["document_count"] == 2
     assert stats["section_count"] == 2
+    assert stats["retrieval_eligible_count"] == 3
+    assert stats["audit_only_count"] == 0
+
+    _seed_chunk_embeddings(db_path)
 
     with sqlite3.connect(db_path) as connection:
         tables = {
@@ -323,11 +367,13 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         ).fetchone()
         assert span_row == ("concurrency.html#fls_atomic002", 0, 1)
 
+    query_log_root = tmp_path / "query_logs"
+
     retrieval_result = execute_retrieval_query(
         mode="lexical",
         db_path=db_path,
         contract_path=Path("config/sqlite_query_contracts/fls_spec.yaml"),
-        query_log_root=tmp_path / "query_logs",
+        query_log_root=query_log_root,
         query_text="atomic fence ordering",
         row_marker="",
         top_k=5,
@@ -348,9 +394,190 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert retrieval_result["rows"][0]["chunk_uid"] == "fls_atomic002"
     assert retrieval_result["rows"][0]["paragraph_id"] == "fls_atomic002"
 
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute(
+            "SELECT chunk_uid FROM chunks WHERE chunk_uid = ?",
+            ("fls_atomic002",),
+        ).fetchall() == [("fls_atomic002",)]
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM chunks c JOIN paragraphs p ON p.paragraph_id = c.chunk_uid WHERE c.clean_text != p.clean_text"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'statement_embeddings'"
+            ).fetchone()[0]
+            == 0
+        )
+
+    monkeypatch.setattr(
+        "retrieval.operations.query.check_semantic_backend",
+        lambda _config: {"ok": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        "scripts.retrieval.operations.query.check_semantic_backend",
+        lambda _config: {"ok": True, "checks": []},
+    )
+    monkeypatch.setattr(
+        "retrieval.query.semantic_pipeline.embed_texts",
+        lambda _config, texts: [[0.1, 0.2, 0.3] for _ in texts],
+    )
+    monkeypatch.setattr(
+        "scripts.retrieval.query.semantic_pipeline.embed_texts",
+        lambda _config, texts: [[0.1, 0.2, 0.3] for _ in texts],
+    )
+    monkeypatch.setattr(
+        "retrieval.query.semantic_pipeline.rerank_texts",
+        lambda config, query_text, documents: [
+            1.0 - (0.05 * idx) for idx, _ in enumerate(documents)
+        ],
+    )
+    monkeypatch.setattr(
+        "scripts.retrieval.query.semantic_pipeline.rerank_texts",
+        lambda config, query_text, documents: [
+            1.0 - (0.05 * idx) for idx, _ in enumerate(documents)
+        ],
+    )
+    monkeypatch.setattr(
+        "semantic_backend_client.rerank_texts",
+        lambda config, query_text, documents: [
+            1.0 - (0.05 * idx) for idx, _ in enumerate(documents)
+        ],
+    )
+    monkeypatch.setattr(
+        "scripts.semantic_backend_client.rerank_texts",
+        lambda config, query_text, documents: [
+            1.0 - (0.05 * idx) for idx, _ in enumerate(documents)
+        ],
+    )
+
+    semantic_result = execute_retrieval_query(
+        mode="semantic",
+        db_path=db_path,
+        contract_path=Path("config/sqlite_query_contracts/fls_spec.yaml"),
+        query_log_root=query_log_root,
+        query_text="atomic fence ordering",
+        row_marker="",
+        top_k=5,
+        candidate_limit=200,
+        allow_degraded=False,
+        semantic_config=SemanticBackendConfig(
+            base_url="http://127.0.0.1:8080",
+            embed_base_url="http://127.0.0.1:8080",
+            rerank_base_url="http://127.0.0.1:8081",
+            embed_model_id="Qwen/Qwen3-Embedding-4B",
+            reranker_model_id="BAAI/bge-reranker-v2-m3",
+            timeout_sec=0.2,
+        ),
+        semantic_retries=0,
+        persist_semantic_cache=False,
+        allow_online_corpus_embedding=False,
+        corpus="fls_spec",
+        rewrite_rules_path=Path("config/sqlite_query_rewrite/fls_spec_rewrite.yaml"),
+        hybrid_fusion_method="weighted-v2",
+        hybrid_candidate_policy="v2",
+        hybrid_rerank_pool_size=128,
+        hybrid_lexical_min=24,
+        hybrid_semantic_min=24,
+        hybrid_lexical_floor_count=24,
+        hybrid_lexical_floor_share=0.25,
+        hybrid_rrf_k=60,
+        hybrid_rrf_window=128,
+    )
+    hybrid_result = execute_retrieval_query(
+        mode="hybrid",
+        db_path=db_path,
+        contract_path=Path("config/sqlite_query_contracts/fls_spec.yaml"),
+        query_log_root=query_log_root,
+        query_text="atomic fence ordering",
+        row_marker="",
+        top_k=5,
+        candidate_limit=200,
+        allow_degraded=False,
+        semantic_config=SemanticBackendConfig(
+            base_url="http://127.0.0.1:8080",
+            embed_base_url="http://127.0.0.1:8080",
+            rerank_base_url="http://127.0.0.1:8081",
+            embed_model_id="Qwen/Qwen3-Embedding-4B",
+            reranker_model_id="BAAI/bge-reranker-v2-m3",
+            timeout_sec=0.2,
+        ),
+        semantic_retries=0,
+        persist_semantic_cache=False,
+        allow_online_corpus_embedding=False,
+        corpus="fls_spec",
+        rewrite_rules_path=Path("config/sqlite_query_rewrite/fls_spec_rewrite.yaml"),
+        hybrid_fusion_method="weighted-v2",
+        hybrid_candidate_policy="v2",
+        hybrid_rerank_pool_size=128,
+        hybrid_lexical_min=24,
+        hybrid_semantic_min=24,
+        hybrid_lexical_floor_count=24,
+        hybrid_lexical_floor_share=0.25,
+        hybrid_rrf_k=60,
+        hybrid_rrf_window=128,
+    )
+    assert semantic_result["rows"][0]["chunk_uid"] == "fls_atomic002"
+    assert hybrid_result["rows"][0]["chunk_uid"] == "fls_atomic002"
+    assert semantic_result["rows"][0]["term_refs_json"]
+    assert hybrid_result["rows"][0]["term_refs_json"]
+
+    alt_contract_path = tmp_path / "fls_spec_alt_contract.yaml"
+    alt_contract_path.write_text(
+        Path("config/sqlite_query_contracts/fls_spec.yaml")
+        .read_text(encoding="utf-8")
+        .replace("'' AS row_markers", "'marker-x' AS row_markers")
+        .replace("'' AS mechanism_ids", "'mechanism-x' AS mechanism_ids")
+        .replace("'' AS mechanism_families", "'family-x' AS mechanism_families"),
+        encoding="utf-8",
+    )
+    lexical_modified = execute_retrieval_query(
+        mode="lexical",
+        db_path=db_path,
+        contract_path=alt_contract_path,
+        query_log_root=query_log_root,
+        query_text="atomic fence ordering",
+        row_marker="",
+        top_k=5,
+        candidate_limit=200,
+        allow_degraded=True,
+        semantic_config=SemanticBackendConfig(
+            base_url="http://127.0.0.1:1",
+            embed_model_id="Qwen/Qwen3-Embedding-4B",
+            reranker_model_id="BAAI/bge-reranker-v2-m3",
+            timeout_sec=0.2,
+        ),
+        semantic_retries=0,
+        persist_semantic_cache=False,
+        allow_online_corpus_embedding=False,
+        corpus="fls_spec",
+    )
+    assert [row["chunk_uid"] for row in lexical_modified["rows"]] == [
+        row["chunk_uid"] for row in retrieval_result["rows"]
+    ]
+    assert [row["relevance_score"] for row in lexical_modified["rows"]] == [
+        row["relevance_score"] for row in retrieval_result["rows"]
+    ]
+
     search_results = search_fls_paragraphs("atomic fence ordering", db_path=db_path)
     assert search_results
     assert search_results[0]["chapter"] == "Concurrency"
+    assert set(search_results[0]["retrieved_modes"]) == {"lexical", "semantic", "hybrid"}
+
+    logged_query_ids: set[str] = set()
+    for path in query_log_root.glob("*.jsonl"):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            logged_query_ids.add(str(payload.get("query_id", "")))
+    assert {
+        "chunk_corpus_v1_all",
+        "lexical_chunk_search_v1",
+        "table1_row_requirements_v2",
+    }.issubset(logged_query_ids)
 
     resolved = resolve_fls_for_construct(
         ["atomic", "fence", "ordering"],
@@ -359,6 +586,18 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     )
     assert resolved["paragraph_id"] == "fls_atomic002"
     assert resolved["paragraph_number"].startswith("17")
+
+    resolved_with_domains = resolve_fls_for_construct(
+        ["atomic", "fence", "ordering"],
+        db_path=db_path,
+        spec_lock_path=spec_lock_path,
+        expected_domains=["unsafe", "concurrency"],
+    )
+    assert resolved_with_domains["paragraph_id"] == resolved["paragraph_id"]
+    assert (
+        resolved_with_domains["decision"]["top_candidates"]
+        == resolved["decision"]["top_candidates"]
+    )
 
     assert validate_fls_id("fls_atomic002", spec_lock_path=spec_lock_path)
     assert not validate_fls_id("fls_FABRICATED_ID", spec_lock_path=spec_lock_path)

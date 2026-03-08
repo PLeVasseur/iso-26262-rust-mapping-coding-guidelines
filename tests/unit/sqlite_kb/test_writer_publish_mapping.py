@@ -120,7 +120,7 @@ def test_map_publish_record_passes_multifield_packet(monkeypatch) -> None:
 
     packet = seen.get("packet")
     assert isinstance(packet, dict)
-    assert "unsafe" in list(packet.get("expected_domains") or [])
+    assert list(packet.get("expected_domains") or []) == []
     assert "get_unchecked" in str(packet.get("non_compliant_code", ""))
     assert packet.get("claim_phrases")
 

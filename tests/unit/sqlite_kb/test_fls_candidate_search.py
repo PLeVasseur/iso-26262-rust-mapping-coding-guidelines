@@ -11,7 +11,7 @@ if str(SCRIPTS) not in sys.path:
 from retrieval.writer_host import fls_candidate_search  # noqa: E402
 
 
-def test_build_query_variants_includes_multifield_channels() -> None:
+def test_build_query_variants_uses_single_packet_text_query() -> None:
     packet = {
         "title": "Unsafe error recovery can violate invariants",
         "amplification_text": "Safety invariants must hold on fault paths",
@@ -24,12 +24,18 @@ def test_build_query_variants_includes_multifield_channels() -> None:
     }
 
     variants = fls_candidate_search.build_query_variants(packet)
-    names = {row["name"] for row in variants}
-    assert "title_focus" in names
-    assert "rationale_focus" in names
-    assert "unsafe_code_focus" in names
-    assert "claim_focus" in names
-    assert "hybrid_focus" in names
+    assert variants == [
+        {
+            "name": "packet_text",
+            "query": (
+                "Unsafe error recovery can violate invariants "
+                "safe callers must not trigger UB "
+                "Safety invariants must hold on fault paths "
+                "Unchecked pointer use can trigger UB logs and continues "
+                "returns Result on invalid state unsafe ptr slice get idx"
+            ),
+        }
+    ]
 
 
 def test_gather_candidates_tags_variant_name(monkeypatch) -> None:
@@ -61,4 +67,5 @@ def test_gather_candidates_tags_variant_name(monkeypatch) -> None:
 
     assert variants
     assert rows
-    assert all(str(row.get("variant_name", "")).strip() for row in rows)
+    assert variants == [{"name": "packet_text", "query": "Unsafe paths"}]
+    assert all(str(row.get("variant_name", "")).strip() == "packet_text" for row in rows)
