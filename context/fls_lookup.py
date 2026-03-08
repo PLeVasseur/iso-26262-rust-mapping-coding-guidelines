@@ -12,6 +12,15 @@ from typing import Any
 
 import yaml
 
+from context.fls_topology import (
+    DEFAULT_TOPOLOGY_CACHE_PATH,
+    get_paragraph,
+    load_topology_index,
+    paragraph_ids_for_document,
+    paragraph_ids_for_section,
+    topology_drift_report,
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FLS_CANONICAL_DB_PATH = PROJECT_ROOT / ".cache" / "sqlite_kb" / "current" / "fls_spec.db"
 FLS_COMPAT_DB_PATH = PROJECT_ROOT / "data" / "fls_spec.db"
@@ -24,6 +33,9 @@ GUIDELINES_REPO_ROOT = Path(
 SPEC_LOCK_PATH = GUIDELINES_REPO_ROOT / "src" / "spec.lock"
 EXEMPLAR_MANIFEST = PROJECT_ROOT / "data" / "exemplar_manifest.json"
 _EXEMPLAR_OVERRIDES: list[dict[str, Any]] | None = None
+TOPOLOGY_PATH = DEFAULT_TOPOLOGY_CACHE_PATH
+_TOPOLOGY_INDEX_CACHE: dict[str, Any] | None = None
+_TOPOLOGY_DRIFT_CACHE: dict[str, Any] | None = None
 
 POLICY_PATH = PROJECT_ROOT / "config" / "fls_resolution_policy.yaml"
 _POLICY_CACHE: dict[str, Any] | None = None
@@ -193,6 +205,36 @@ def _resolve_fls_db_path(db_path: Path | None = None) -> Path:
     if FLS_CANONICAL_DB_PATH.exists():
         return FLS_CANONICAL_DB_PATH
     return FLS_COMPAT_DB_PATH
+
+
+def _load_live_topology_index(*, refresh: bool = False) -> dict[str, Any]:
+    global _TOPOLOGY_INDEX_CACHE, _TOPOLOGY_DRIFT_CACHE
+    if refresh or _TOPOLOGY_INDEX_CACHE is None:
+        _TOPOLOGY_INDEX_CACHE = load_topology_index(topology_path=TOPOLOGY_PATH, refresh=refresh)
+        db_path = _resolve_fls_db_path()
+        if db_path.exists():
+            _TOPOLOGY_DRIFT_CACHE = topology_drift_report(
+                db_path=db_path,
+                topology_index=_TOPOLOGY_INDEX_CACHE,
+            )
+    return _TOPOLOGY_INDEX_CACHE or {}
+
+
+def get_live_topology_membership(*, paragraph_id: str) -> dict[str, Any] | None:
+    topology_index = _load_live_topology_index()
+    paragraph = get_paragraph(topology_index, paragraph_id)
+    if paragraph is None:
+        return None
+    return {
+        "paragraph_id": paragraph.paragraph_id,
+        "paragraph_link": paragraph.paragraph_link,
+        "document_link": paragraph.document_link,
+        "section_link": paragraph.section_link,
+        "document_paragraph_ids": paragraph_ids_for_document(
+            topology_index, paragraph.document_link
+        ),
+        "section_paragraph_ids": paragraph_ids_for_section(topology_index, paragraph.section_link),
+    }
 
 
 def _unresolved(reason: str, *, decision: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -578,7 +620,7 @@ def _match_exemplar_override(construct_terms: list[str]) -> str:
 def _fetch_paragraph(paragraph_id: str, db_path: Path) -> dict[str, Any] | None:
     try:
         result = _query_contract(
-            query_id="fls_paragraph_lookup_v1",
+            query_id="fls_paragraph_lookup_v2",
             params={"statement_id": paragraph_id},
             row_limit=1,
             db_path=db_path,
@@ -595,6 +637,9 @@ def _fetch_paragraph(paragraph_id: str, db_path: Path) -> dict[str, Any] | None:
         "chapter": str(row.get("chapter", "")),
         "section": str(row.get("section", "")),
         "paragraph_number": str(row.get("paragraph_number", "")),
+        "document_link": str(row.get("document_link", "")),
+        "section_link": str(row.get("section_link", "")),
+        "paragraph_link": str(row.get("paragraph_link", "")),
     }
 
 
@@ -657,22 +702,9 @@ def search_fls_paragraphs(
 
 
 def validate_fls_id(paragraph_id: str, *, spec_lock_path: Path = SPEC_LOCK_PATH) -> bool:
-    if not spec_lock_path.exists():
-        return True
-
-    try:
-        lock_data = json.loads(spec_lock_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return True
-
-    for document in lock_data.get("documents", []):
-        for section in document.get("sections", []):
-            if section.get("id") == paragraph_id:
-                return True
-            for paragraph in section.get("paragraphs", []):
-                if paragraph.get("id") == paragraph_id:
-                    return True
-    return False
+    del spec_lock_path
+    topology_index = _load_live_topology_index()
+    return get_paragraph(topology_index, paragraph_id) is not None
 
 
 def _packet_query_variants(packet: dict[str, Any], *, construct_terms: list[str]) -> list[str]:
@@ -950,10 +982,11 @@ def resolve_fls_for_guideline(
         decision["reason_code"] = "LOW_CONFIDENCE_MARGIN"
         return _unresolved("top candidate confidence margin below threshold", decision=decision)
 
-    if not validate_fls_id(paragraph_id, spec_lock_path=spec_lock_path):
+    live_topology = get_live_topology_membership(paragraph_id=paragraph_id)
+    if live_topology is None:
         decision["reason_code"] = "INVALID_ID"
         unresolved = _unresolved(
-            f"ID {paragraph_id} not present in current spec.lock",
+            f"ID {paragraph_id} not present in live topology",
             decision=decision,
         )
         unresolved["stale_candidate"] = paragraph_id
@@ -969,6 +1002,13 @@ def resolve_fls_for_guideline(
         "chapter": str(best.get("chapter", "")),
         "section": str(best.get("section", "")),
         "paragraph_number": str(best.get("paragraph_number", "")),
+        "document_link": str(
+            best.get("document_link", "") or live_topology.get("document_link", "")
+        ),
+        "section_link": str(best.get("section_link", "") or live_topology.get("section_link", "")),
+        "paragraph_link": str(
+            best.get("paragraph_link", "") or live_topology.get("paragraph_link", "")
+        ),
         "decision": decision,
     }
 
@@ -1006,11 +1046,13 @@ def get_fls_db_stats(db_path: Path | None = None) -> dict[str, Any]:
     db_path = _resolve_fls_db_path(db_path)
     if not db_path.exists():
         return {"available": False, "source": "none"}
-    result = _query_contract(query_id="fls_stats_v1", params={}, row_limit=1, db_path=db_path)
+    result = _query_contract(query_id="fls_stats_v2", params={}, row_limit=1, db_path=db_path)
     rows = list(result.get("rows") or [])
     top = rows[0] if rows else {}
     paragraph_count = int(top.get("paragraph_count", 0) or 0)
     chapter_count = int(top.get("chapter_count", 0) or 0)
+    document_count = int(top.get("document_count", 0) or 0)
+    section_count = int(top.get("section_count", 0) or 0)
     commit_sha = str(top.get("commit_sha", "") or "")
     built_at = str(top.get("built_at", "") or "")
 
@@ -1019,6 +1061,8 @@ def get_fls_db_stats(db_path: Path | None = None) -> dict[str, Any]:
         "source": "fls_spec_db" if paragraph_count > 0 else "none",
         "paragraph_count": paragraph_count,
         "chapter_count": chapter_count,
+        "document_count": document_count,
+        "section_count": section_count,
     }
     if commit_sha:
         stats["commit_sha"] = commit_sha

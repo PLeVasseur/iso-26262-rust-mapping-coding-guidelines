@@ -3,10 +3,24 @@ from __future__ import annotations
 from context import fls_lookup
 
 
+def _live_membership(paragraph_id: str) -> dict[str, object] | None:
+    if paragraph_id.startswith("fls_"):
+        return {
+            "paragraph_id": paragraph_id,
+            "paragraph_link": f"test.html#{paragraph_id}",
+            "document_link": "test.html",
+            "section_link": "test.html#section",
+            "document_paragraph_ids": [paragraph_id],
+            "section_paragraph_ids": [paragraph_id],
+        }
+    return None
+
+
 def test_resolve_accepts_high_confidence_candidate(monkeypatch) -> None:
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
     monkeypatch.setattr(fls_lookup, "_match_exemplar_override", lambda _terms: "")
     monkeypatch.setattr(fls_lookup, "validate_fls_id", lambda _id, spec_lock_path=None: True)
+    monkeypatch.setattr(fls_lookup, "get_live_topology_membership", _live_membership)
     monkeypatch.setattr(
         fls_lookup,
         "search_fls_paragraphs",
@@ -46,6 +60,7 @@ def test_resolve_rejects_chapter_mismatch_even_when_id_valid(monkeypatch) -> Non
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
     monkeypatch.setattr(fls_lookup, "_match_exemplar_override", lambda _terms: "")
     monkeypatch.setattr(fls_lookup, "validate_fls_id", lambda _id, spec_lock_path=None: True)
+    monkeypatch.setattr(fls_lookup, "get_live_topology_membership", _live_membership)
     monkeypatch.setattr(
         fls_lookup,
         "search_fls_paragraphs",
@@ -75,6 +90,7 @@ def test_resolve_rejects_low_confidence_margin(monkeypatch) -> None:
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
     monkeypatch.setattr(fls_lookup, "_match_exemplar_override", lambda _terms: "")
     monkeypatch.setattr(fls_lookup, "validate_fls_id", lambda _id, spec_lock_path=None: True)
+    monkeypatch.setattr(fls_lookup, "get_live_topology_membership", _live_membership)
     monkeypatch.setattr(
         fls_lookup,
         "search_fls_paragraphs",
@@ -112,6 +128,7 @@ def test_multifield_resolution_uses_variant_coverage_and_accepts(monkeypatch) ->
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
     monkeypatch.setattr(fls_lookup, "_match_exemplar_override", lambda _terms: "")
     monkeypatch.setattr(fls_lookup, "validate_fls_id", lambda _id, spec_lock_path=None: True)
+    monkeypatch.setattr(fls_lookup, "get_live_topology_membership", _live_membership)
 
     packet = {
         "title": "Weak defensive handling can reach unsafe UB paths",
@@ -180,6 +197,7 @@ def test_multifield_resolution_rejects_low_variant_coverage(monkeypatch) -> None
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
     monkeypatch.setattr(fls_lookup, "_match_exemplar_override", lambda _terms: "")
     monkeypatch.setattr(fls_lookup, "validate_fls_id", lambda _id, spec_lock_path=None: True)
+    monkeypatch.setattr(fls_lookup, "get_live_topology_membership", _live_membership)
 
     packet = {
         "title": "Weak defensive handling can reach unsafe UB paths",
@@ -226,6 +244,7 @@ def test_policy_overrides_can_relax_confidence_for_offline_calibration(monkeypat
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
     monkeypatch.setattr(fls_lookup, "_match_exemplar_override", lambda _terms: "")
     monkeypatch.setattr(fls_lookup, "validate_fls_id", lambda _id, spec_lock_path=None: True)
+    monkeypatch.setattr(fls_lookup, "get_live_topology_membership", _live_membership)
 
     packet = {
         "title": "Unsafe behavior on fallback",

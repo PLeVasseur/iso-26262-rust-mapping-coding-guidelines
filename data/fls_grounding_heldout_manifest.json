@@ -1,0 +1,84 @@
+{
+  "manifest_version": 1,
+  "status": "frozen_pre_tuning",
+  "purpose": "Held-out validation set for v17.2 FLS grounding and live-topology resolution work.",
+  "runtime_use_prohibited": true,
+  "selection_constraints": {
+    "excluded_validation_sets": [
+      "Batch A",
+      "Batch C",
+      "Batch F",
+      "Batch G",
+      "v17.2 full 23-target batch"
+    ],
+    "minimum_coverage": [
+      "FFI / ABI / extern constructs",
+      "associated-item / self / method / trait constructs",
+      "unsafe / pointer / provenance-adjacent constructs",
+      "function-signature / variadic / return-type constructs",
+      "glossary-heavy concept chains"
+    ]
+  },
+  "entries": [
+    {
+      "stable_identifier": "heldout::guideline::gui_ZDLZzjeOwLSU",
+      "source_path": "src/coding-guidelines/attributes/gui_ZDLZzjeOwLSU.rst",
+      "short_construct_description": "unsafe extern blocks and unsafe attributes must remain visibly marked with `unsafe`",
+      "expected_fls_neighborhood_type": {
+        "document_family": "ffi",
+        "section_family": "external blocks / unsafe attributes"
+      },
+      "reason_for_inclusion": "Covers FFI / ABI / extern constructs without using a current validation-set draft and exercises non-glossary normative routing away from generic attribute matches."
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_ot2Zt3dd6of1",
+      "source_path": "src/coding-guidelines/associated-items/gui_ot2Zt3dd6of1.rst",
+      "short_construct_description": "functions should not recurse directly or indirectly",
+      "expected_fls_neighborhood_type": {
+        "document_family": "associated items",
+        "section_family": "functions / calls"
+      },
+      "reason_for_inclusion": "Covers associated-item and function behavior outside the current failing batches and provides a non-pointer normative control case."
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_xztNdXA2oFNC",
+      "source_path": "src/coding-guidelines/types-and-traits/gui_xztNdXA2oFNC.rst",
+      "short_construct_description": "traits and strong types should differentiate logically distinct values",
+      "expected_fls_neighborhood_type": {
+        "document_family": "types and traits",
+        "section_family": "traits / type relationships"
+      },
+      "reason_for_inclusion": "Covers the associated-item / trait construct area the plan requires and checks that type- and trait-oriented grounding does not collapse into unrelated chapters."
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_PM8Vpf7lZ51U",
+      "source_path": "src/coding-guidelines/expressions/gui_PM8Vpf7lZ51U.rst",
+      "short_construct_description": "integer values must not be converted into pointers via `as` or `transmute`",
+      "expected_fls_neighborhood_type": {
+        "document_family": "expressions",
+        "section_family": "casts / pointer conversions"
+      },
+      "reason_for_inclusion": "Covers unsafe / pointer / provenance-adjacent constructs outside the active validation batches and is a direct test of pointer-routing generality."
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_2jjWUoF1teOY",
+      "source_path": "src/coding-guidelines/macros/gui_2jjWUoF1teOY.rst",
+      "short_construct_description": "prefer functions over macros unless macros are required for variadic or signature-shaping behavior",
+      "expected_fls_neighborhood_type": {
+        "document_family": "macros",
+        "section_family": "macro invocations / function signatures"
+      },
+      "reason_for_inclusion": "Covers the function-signature / variadic / return-type area required by the plan using a held-out guideline that explicitly discusses variadic interfaces and function signatures."
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_0cuTYG8RVYjg",
+      "source_path": "src/coding-guidelines/types-and-traits/gui_0cuTYG8RVYjg.rst",
+      "short_construct_description": "union field reads must respect validity invariants before typed access",
+      "expected_fls_neighborhood_type": {
+        "document_family": "types and traits",
+        "section_family": "unions / validity invariant concepts"
+      },
+      "reason_for_inclusion": "Provides the glossary-heavy concept-chain case the plan requires because the rationale explicitly leans on glossary-linked validity-invariant concepts while still needing a non-glossary terminal paragraph."
+    }
+  ]
+}
