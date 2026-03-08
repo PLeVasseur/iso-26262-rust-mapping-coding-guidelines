@@ -56,9 +56,10 @@ def run_conformance(
 ) -> dict[str, Any]:
     report_dir.mkdir(parents=True, exist_ok=True)
     m15_code, m15_stdout, m15_stderr = run_m15_projection(repo_root, report_dir)
+    normalized_mode = str(mode).strip().lower()
     build_env = (
         {"OPENCODE_ALLOW_REVIEW_UNRESOLVED_FLS": "1"}
-        if str(mode).strip().lower() == "review"
+        if normalized_mode in {"review", "review-internal", "review-external"}
         else None
     )
     build_code, build_stdout, build_stderr, versions = run_guidelines_build(

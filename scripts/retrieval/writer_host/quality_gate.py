@@ -91,6 +91,14 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
             "entry_count": len(list(curation.get("entries") or [])),
             "report_path": str(curation_path),
         }
+    admissibility_path = run_dir / "writer_review_admissibility_report.json"
+    reviewer_admissibility = {"status": "not_evaluated", "report_path": ""}
+    if admissibility_path.exists():
+        admissibility = _load_json(admissibility_path)
+        reviewer_admissibility = {
+            "status": "pass" if str(admissibility.get("status", "")) == "pass" else "fail",
+            "report_path": str(admissibility_path),
+        }
     return {
         "status": status,
         "run_dir": str(run_dir),
@@ -101,6 +109,7 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
             "editorially_reviewable": editorial_status,
             "editorially_curated": curator_status,
             "review_ready": review_ready,
+            "reviewer_admissibility": reviewer_admissibility,
             "next_required_gate": "writer_conformance"
             if review_ready["status"] == "not_evaluated"
             else "none",

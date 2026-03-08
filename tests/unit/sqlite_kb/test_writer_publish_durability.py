@@ -165,6 +165,7 @@ def test_run_publish_from_run_preserves_snapshot_on_conformance_failure(
     assert snapshot_path.exists()
     assert (snapshot_path / "unsafety" / "gui_demo.rst").exists()
     assert (snapshot_path / "THIS_RUN_CHANGES.md").exists()
+    assert Path(str(report["export_delta"]["internal_rendered_candidate_manifest_path"])).exists()
     assert report["export_delta"]["created_files"] == ["unsafety/gui_demo.rst"]
     assert report["export_delta"]["modified_files"] == ["unsafety/index.rst"]
     assert report["cleanup"]["performed"] is False
@@ -229,6 +230,7 @@ def test_run_publish_from_run_reports_no_changes_and_keeps_artifacts(
     assert Path(str(report["export_snapshot"]["path"])).exists()
     assert Path(str(report["export_delta"]["manifest_path"])).exists()
     assert Path(str(report["export_delta"]["note_path"])).exists()
+    assert Path(str(report["export_delta"]["internal_rendered_candidate_manifest_path"])).exists()
     assert report["export_delta"]["unchanged_generated_files"] == [
         "unsafety/gui_demo.rst",
         "unsafety/index.rst",
@@ -302,6 +304,7 @@ def test_run_publish_from_run_cleans_worktree_after_success(monkeypatch, tmp_pat
     assert report["cleanup"]["reason"] == "success_cleanup"
     assert Path(str(report["export_delta"]["manifest_path"])).exists()
     assert Path(str(report["export_delta"]["note_path"])).exists()
+    assert (run_dir / "writer_conformance_report.json").exists()
     assert removed == [(repo_root, worktree_root)]
 
 
@@ -419,6 +422,7 @@ def test_run_publish_from_run_review_mode_exports_without_push(monkeypatch, tmp_
     assert report["commit"]["committed"] is False
     assert report["push"]["pushed"] is False
     assert Path(str(report["export_snapshot"]["path"])).exists()
+    assert (run_dir / "writer_conformance_report.json").exists()
     assert removed == [(repo_root, worktree_root)]
 
 
@@ -505,14 +509,12 @@ def test_run_publish_from_run_audit_only_blocks_before_worktree(
     assert report["cleanup"]["reason"] == "audit_only_no_worktree"
 
 
-def test_writer_publish_service_writes_run_scoped_report_and_packet(
+def test_writer_publish_service_writes_run_scoped_report(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
     run_dir = tmp_path / "writer_run_demo"
     run_dir.mkdir()
-    (run_dir / "writer_review_packet.zip").write_bytes(b"zip")
-    (run_dir / "writer_review_packet.manifest.json").write_text("{}\n", encoding="utf-8")
     publish_root = tmp_path / ".cache" / "sqlite_kb" / "reports" / "writer_publish" / run_dir.name
     publish_root.mkdir(parents=True)
 
@@ -555,13 +557,7 @@ def test_writer_publish_service_writes_run_scoped_report_and_packet(
     code = writer_publish_service.run(Namespace(output=""), root=tmp_path)
 
     report_path = publish_root / "writer_publish_report.json"
-    packet_path = publish_root / "writer_publish_review_packet.zip"
-    manifest_path = publish_root / "writer_publish_review_packet.manifest.json"
     assert code == 0
     assert report_path.exists()
-    assert packet_path.exists()
-    assert manifest_path.exists()
     payload = json.loads(report_path.read_text(encoding="utf-8"))
-    assert payload["review_packet"]["path"] == str(packet_path)
-    assert payload["review_packet"]["manifest_path"] == str(manifest_path)
     assert payload["export_delta"]["manifest_path"].endswith("exported_guidelines_changes.json")

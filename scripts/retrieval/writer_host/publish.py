@@ -41,7 +41,7 @@ def _build_record(row: dict[str, Any], mapping: dict[str, Any]) -> dict[str, Any
     rationale = row["rationale"]
     examples = row["examples"]
     metadata = row["metadata"]
-    draft = row.get("draft") if isinstance(row.get("draft"), dict) else {}
+    draft = dict(row.get("draft") or {})
     return {
         "target_id": mapping["target_id"],
         "atom_id": mapping.get("atom_id", ""),
@@ -271,6 +271,54 @@ def _write_export_delta_note(
         encoding="utf-8",
     )
     return note_path
+
+
+def _write_run_scoped_report(*, run_dir: Path, name: str, payload: dict[str, Any]) -> Path:
+    path = run_dir / name
+    path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return path
+
+
+def _write_internal_rendered_candidate_manifest(
+    *,
+    publish_root: Path,
+    source_root: Path,
+    mapped_records: list[dict[str, Any]],
+    delta_payload: dict[str, Any],
+) -> Path:
+    generated = set(str(value) for value in list(delta_payload.get("generated_files") or []))
+    rendered_candidates: list[dict[str, Any]] = []
+    for record in mapped_records:
+        chapter = str(record.get("chapter", "")).strip()
+        filename = str(record.get("filename", "")).strip()
+        relative = f"{chapter}/{filename}" if chapter and filename else ""
+        rendered_path = relative if relative and relative in generated else ""
+        rendered_candidates.append(
+            {
+                "draft_id": str(record.get("draft_id", "")).strip(),
+                "atom_id": str(record.get("atom_id", "")).strip(),
+                "target_id": str(record.get("target_id", "")).strip(),
+                "guideline_id": str(record.get("guideline_id", "")).strip(),
+                "rendered_path": rendered_path,
+                "chapter": chapter,
+                "title": str(record.get("title", "")).strip(),
+                "admissibility_status": "",
+            }
+        )
+    payload = {
+        "run_id": publish_root.name,
+        "internal_render_root": str(source_root),
+        "rendered_candidates": rendered_candidates,
+        "unrendered_candidates": [
+            row["draft_id"]
+            for row in rendered_candidates
+            if not str(row.get("rendered_path", "")).strip()
+        ],
+        "notes": "Rendered candidates remain visible internally even when later excluded from external reviewer packets.",
+    }
+    path = publish_root / "internal_rendered_candidate_manifest.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return path
 
 
 def _cleanup_report(*, requested: bool, performed: bool, reason: str) -> dict[str, Any]:
@@ -675,7 +723,7 @@ def run_publish_from_run(
     cleanup_performed = False
     cleanup_reason = "preserved_for_review"
     try:
-        if mode == "review":
+        if mode in {"review", "review-internal", "review-external"}:
             try:
                 report["review_mode_worktree"] = _prepare_review_mode_worktree(worktree_root)
             except Exception as exc:
@@ -732,11 +780,18 @@ def run_publish_from_run(
             snapshot_files.append(str(note_path))
             snapshot["files"] = sorted(dict.fromkeys(snapshot_files))
             snapshot["file_count"] = len(snapshot["files"])
+            internal_manifest_path = _write_internal_rendered_candidate_manifest(
+                publish_root=publish_root,
+                source_root=source_root,
+                mapped_records=mapped_records,
+                delta_payload=delta_payload,
+            )
             report["export_snapshot"] = snapshot
             report["export_delta"] = {
                 **delta_payload,
                 "manifest_path": str(manifest_path),
                 "note_path": str(note_path),
+                "internal_rendered_candidate_manifest_path": str(internal_manifest_path),
             }
         except Exception as exc:
             report["failure_code"] = "EXPORT_FAILED"
@@ -749,6 +804,11 @@ def run_publish_from_run(
             mode=mode,
         )
         report["conformance"] = conformance
+        _write_run_scoped_report(
+            run_dir=run_dir,
+            name="writer_conformance_report.json",
+            payload=conformance,
+        )
         if str(conformance.get("status", "")) != "pass":
             report["failure_code"] = "CONFORMANCE_FAILED"
             report["failure_message"] = f"{mode} mode requires passing conformance"
@@ -818,9 +878,8 @@ def write_publish_report(path: Path, report: dict[str, Any]) -> None:
 
 
 def run_conformance_command(*, root: Path, run_dir: Path, mode: str) -> dict[str, Any]:
-    _ = run_dir  # reserved for future report linkage
     repo_root = _load_guidelines_repo_root(root)
-    report_dir = root / ".cache" / "sqlite_kb" / "reports" / "writer_conformance" / run_dir.name
+    report_dir = run_dir
     report = run_conformance(repo_root=repo_root, report_dir=report_dir, mode=mode)
     return {
         "status": report.get("status", "fail"),
@@ -845,5 +904,7 @@ def namespace_from_args(args: Namespace, *, root: Path) -> tuple[Path, str, bool
     audit_only = bool(getattr(args, "audit_only", False))
     _ = root
     if mode == "exploratory":
-        mode = "review"
+        mode = "review-internal"
+    if mode == "review":
+        mode = "review-internal"
     return run_dir, mode, dry_run, keep_worktree, audit_only

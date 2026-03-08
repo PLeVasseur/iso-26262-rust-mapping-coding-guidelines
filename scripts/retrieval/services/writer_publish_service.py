@@ -9,7 +9,6 @@ from retrieval.writer_host.publish import (
     run_publish_from_run,
     write_publish_report,
 )
-from retrieval.writer_host.packet import build_publish_reviewer_packet
 
 
 def run(args: Namespace, *, root: Path) -> int:
@@ -31,21 +30,6 @@ def run(args: Namespace, *, root: Path) -> int:
     write_publish_report(default_output_path, report)
     if output_path != default_output_path:
         write_publish_report(output_path, report)
-    if str(report.get("publish_root", "")).strip():
-        packet_path = Path(str(report.get("publish_root"))) / "writer_publish_review_packet.zip"
-        manifest = build_publish_reviewer_packet(
-            publish_root=Path(str(report.get("publish_root"))),
-            output_zip=packet_path,
-            source_run_dir=run_dir,
-        )
-        report["review_packet"] = {
-            "path": str(packet_path),
-            "manifest_path": str(packet_path.with_suffix(".manifest.json")),
-            "artifact_count": int(manifest.get("artifact_count", 0)),
-        }
-        write_publish_report(default_output_path, report)
-        if output_path != default_output_path:
-            write_publish_report(output_path, report)
     print(output_path)
     status = str(report.get("status", ""))
     if status in {"pass", "dry_run", "no_changes", "review_export_pass", "publishability_pass"}:

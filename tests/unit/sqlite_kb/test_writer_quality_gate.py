@@ -90,6 +90,23 @@ def test_quality_gate_reports_editorial_review_status(tmp_path: Path) -> None:
     assert report["lifecycle"]["editorially_reviewable"]["blocked_count"] == 1
 
 
+def test_quality_gate_reports_reviewer_admissibility_status(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write(run_dir / "normalization_report.json", {"status": "pass"})
+    _write(run_dir / "evidence_synthesizer_gate_report.json", {"status": "pass"})
+    _write(run_dir / "writer_output_auditor_report.json", {"status": "pass", "blocked_count": 0})
+    _write(
+        run_dir / "writer_subagent_outputs" / "merge_validation_report.json",
+        {"status": "pass", "entries": []},
+    )
+    _write(run_dir / "writer_host_run_summary.json", {"status": "completed"})
+    _write(run_dir / "writer_review_admissibility_report.json", {"status": "pass"})
+
+    report = evaluate_run(run_dir)
+
+    assert report["lifecycle"]["reviewer_admissibility"]["status"] == "pass"
+
+
 def test_evidence_gate_fails_on_prompt_example_and_empty_semantics(tmp_path: Path) -> None:
     report_path = tmp_path / "evidence_synthesizer_gate_report.json"
     write_evidence_gate_report(

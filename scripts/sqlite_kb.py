@@ -41,6 +41,7 @@ from retrieval.services import (
     writer_host_service,
     writer_publish_service,
     writer_quality_gate_service,
+    writer_review_admissibility_service,
     writer_review_packet_service,
     writer_run_service,
     writer_targets_service,
@@ -70,6 +71,7 @@ RETRIEVAL_COMMANDS = {
 }
 ARTIFACT_COMMANDS = {
     "writer-quality-gate",
+    "writer-review-admissibility",
     "writer-review-packet",
     "writer-conformance",
     "writer-publish",
@@ -281,10 +283,17 @@ def parse_args() -> argparse.Namespace:
     writer_review_packet.add_argument("--run-dir", required=True)
     writer_review_packet.add_argument("--output", default="")
 
+    writer_review_admissibility = subparsers.add_parser("writer-review-admissibility")
+    _add_artifact_common(writer_review_admissibility)
+    writer_review_admissibility.add_argument("--run-dir", required=True)
+    writer_review_admissibility.add_argument("--output", default="")
+
     writer_publish = subparsers.add_parser("writer-publish")
     _add_artifact_common(writer_publish)
     writer_publish.add_argument(
-        "--mode", choices=("publishable", "review", "exploratory"), default="publishable"
+        "--mode",
+        choices=("publishable", "review", "review-internal", "review-external", "exploratory"),
+        default="publishable",
     )
     writer_publish.add_argument("--run-dir", required=True)
     writer_publish.add_argument("--dry-run", action="store_true")
@@ -296,8 +305,11 @@ def parse_args() -> argparse.Namespace:
     _add_artifact_common(writer_conformance)
     writer_conformance.add_argument("--run-dir", required=True)
     writer_conformance.add_argument(
-        "--mode", choices=("publishable", "exploratory"), default="publishable"
+        "--mode",
+        choices=("publishable", "review", "review-internal", "review-external", "exploratory"),
+        default="publishable",
     )
+    writer_conformance.add_argument("--output", default="")
 
     scaffold = subparsers.add_parser("scaffold-s0-config")
     scaffold.add_argument("--corpus-set", choices=("s0",), default="s0")
@@ -411,6 +423,8 @@ def main() -> int:
             return writer_run_service.run(args, root=root)
         if args.subcommand == "writer-quality-gate":
             return writer_quality_gate_service.run(args, root=root)
+        if args.subcommand == "writer-review-admissibility":
+            return writer_review_admissibility_service.run(args, root=root)
         if args.subcommand == "writer-review-packet":
             return writer_review_packet_service.run(args, root=root)
         if args.subcommand == "writer-publish":

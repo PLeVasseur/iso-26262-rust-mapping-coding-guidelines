@@ -3,6 +3,11 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from retrieval.writer_host.reviewer_taxonomy import (
+    expected_reviewer_chapter,
+    normalize_reviewer_chapter,
+)
+
 
 def _clean(value: Any) -> str:
     return str(value or "").strip().lower()
@@ -30,43 +35,18 @@ def route_chapter(
     primary_family = _clean(editorial.get("primary_construct_family"))
     text = " ".join([_clean(title), " ".join(tags), " ".join(constructs), primary_family])
 
-    if chapter_hint in {
-        "attributes",
-        "concurrency",
-        "exceptions-and-errors",
-        "macros",
-        "ownership-and-destruction",
-        "patterns",
-        "types-and-traits",
-        "unsafety",
-        "expressions",
-    }:
-        return {"chapter": chapter_hint, "reason": "editorial_metadata", "family": primary_family}
-
-    mapping = [
-        ("concurrency", ["atomic", "ordering", "fence", "thread", "unsafecell", "concurrency"]),
-        ("attributes", ["lint", "must_use", "diagnostic", "attribute", "forbid", "deny"]),
-        ("patterns", ["pattern", "or-pattern", "binding", "match"]),
-        (
-            "types-and-traits",
-            ["trait", "pin", "type", "generic", "self", "nominal", "interface", "strong typing"],
-        ),
-        (
-            "ownership-and-destruction",
-            ["lifetime", "borrow", "ownership", "alias", "drop", "destruction", "transmute"],
-        ),
-        ("exceptions-and-errors", ["panic", "result", "error", "catch_unwind", "infallible"]),
-        ("macros", ["macro", "macro_rules", "proc_macro"]),
-        ("unsafety", ["unsafe", "pointer", "provenance", "raw", "dereference", "union", "ffi"]),
-    ]
-    for chapter, keywords in mapping:
-        if any(keyword in text for keyword in keywords):
-            return {
-                "chapter": chapter,
-                "reason": f"keyword:{keywords[0]}",
-                "family": primary_family,
-            }
-    return {"chapter": "expressions", "reason": "fallback", "family": primary_family}
+    decision = expected_reviewer_chapter(
+        title=text,
+        tags=tags,
+        constructs=constructs,
+        primary_family=primary_family,
+        chapter_hint=chapter_hint,
+    )
+    return {
+        "chapter": normalize_reviewer_chapter(decision.get("chapter")),
+        "reason": str(decision.get("reason", "fallback")),
+        "family": primary_family,
+    }
 
 
 def normalized_tags_for_domains(

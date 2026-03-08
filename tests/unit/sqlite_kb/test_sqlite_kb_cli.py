@@ -272,6 +272,21 @@ class SqliteKbCliTests(unittest.TestCase):
         self.assertEqual(args.mode, "review")
         self.assertTrue(args.audit_only)
 
+    def test_parse_args_for_writer_review_admissibility(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "sqlite_kb.py",
+                "writer-review-admissibility",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ],
+        ):
+            args = sqlite_kb.parse_args()
+        self.assertEqual(args.subcommand, "writer-review-admissibility")
+        self.assertEqual(args.run_dir, ".cache/sqlite_kb/reports/demo")
+
     def test_parse_args_for_writer_review_packet(self) -> None:
         with patch.object(
             sys,
@@ -304,6 +319,18 @@ class SqliteKbCliTests(unittest.TestCase):
             [
                 "sqlite_kb.py",
                 "writer-review-packet",
+                "--corpus",
+                "rust_reference",
+                "--run-dir",
+                ".cache/sqlite_kb/reports/demo",
+            ]
+        )
+
+    def test_parse_args_rejects_corpus_for_writer_review_admissibility(self) -> None:
+        self._parse_fails(
+            [
+                "sqlite_kb.py",
+                "writer-review-admissibility",
                 "--corpus",
                 "rust_reference",
                 "--run-dir",

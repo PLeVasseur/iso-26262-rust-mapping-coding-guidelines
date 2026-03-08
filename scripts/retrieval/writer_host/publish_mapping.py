@@ -10,6 +10,10 @@ from retrieval.writer_host.chapter_routing import normalized_tags_for_domains, r
 from retrieval.writer_host.fls_candidate_search import gather_candidates
 from retrieval.writer_host.fls_resolution_packet import build_resolution_packet
 from retrieval.writer_host.fls_resolution_report import write_resolution_report
+from retrieval.writer_host.reviewer_taxonomy import (
+    classify_reviewer_family,
+    normalize_reviewer_chapter,
+)
 from retrieval.writer_host.title_policy import derive_title
 
 
@@ -75,6 +79,43 @@ def _resolve_fls_id(
     return (fls_id if valid else "fls_UNRESOLVED"), decision, report_path, publishability
 
 
+def _infer_scope(*, family_key: str, title: str, tags: list[str]) -> str:
+    text = " ".join([title.lower(), " ".join(value.lower() for value in tags)])
+    if any(token in text for token in ("lint", "must_use", "forbid", "deny", "policy")):
+        return "crate"
+    if any(token in text for token in ("target_feature", "function", "unsafe fn", "unsafe trait")):
+        return "function"
+    if family_key in {"ownership_aliasing", "unsafety_boundary", "exceptions_errors"}:
+        return "function"
+    if family_key == "architecture_types":
+        return "system"
+    return "module"
+
+
+def _infer_decidability(*, family_key: str, title: str, tags: list[str]) -> str:
+    text = " ".join([title.lower(), " ".join(value.lower() for value in tags)])
+    if any(
+        token in text
+        for token in ("must_use", "forbid", "deny", "target_feature", "expect", "raw pointer")
+    ):
+        return "decidable"
+    if family_key in {"strict_provenance", "architecture_types"}:
+        return "partially_decidable"
+    if family_key in {"ownership_aliasing", "unsafety_boundary"}:
+        return "partially_decidable"
+    return "undecidable"
+
+
+def _infer_category(*, category_raw: str, family_key: str, chapter: str) -> str:
+    if "required" in category_raw or "safety" in category_raw:
+        return "required"
+    if family_key in {"unsafety_boundary", "ownership_aliasing"}:
+        return "required"
+    if chapter in {"concurrency", "unsafety"} and family_key != "strict_provenance":
+        return "required"
+    return "advisory"
+
+
 def map_publish_record(
     row: dict[str, Any],
     *,
@@ -115,11 +156,18 @@ def map_publish_record(
         title=title,
         current_tags=tags,
     )
-    chapter = str(draft.get("chapter", "")).strip() or str(routing.get("chapter", "expressions"))
+    chapter = normalize_reviewer_chapter(
+        str(draft.get("chapter", "")).strip() or str(routing.get("chapter", "expressions"))
+    )
     normalized_tags = normalized_tags_for_domains(
         metadata=metadata if isinstance(metadata, dict) else {},
         synth=pseudo_synth,
         chapter=chapter,
+    )
+    family_key = classify_reviewer_family(
+        title=title,
+        tags=[str(value) for value in tags],
+        constructs=[str(value) for value in list(draft.get("construct_terms") or [])],
     )
     stable_seed = atom_id or draft_id or target_id
     stable = hashlib.sha1(stable_seed.encode("utf-8")).hexdigest()[:12]
@@ -139,7 +187,7 @@ def map_publish_record(
             f"failed to resolve valid fls id for title='{title}': {publishability.get('reason', 'UNRESOLVED')}"
         )
     category_raw = str(fls_candidate.get("category", "")).strip().lower()
-    category = "required" if "required" in category_raw or "safety" in category_raw else "advisory"
+    category = _infer_category(category_raw=category_raw, family_key=family_key, chapter=chapter)
     return {
         "target_id": target_id,
         "atom_id": atom_id,
@@ -150,12 +198,16 @@ def map_publish_record(
         "title": title,
         "category": category,
         "status": "draft",
-        "release": "1.85.1",
+        "release": str(metadata.get("release", "") or "1.85.1"),
         "fls_id": fls_id,
         "fls_resolution": fls_resolution,
         "fls_resolution_report": fls_resolution_report,
         "publishability": publishability,
-        "decidability": "undecidable",
-        "scope": "module",
+        "decidability": _infer_decidability(
+            family_key=family_key,
+            title=title,
+            tags=normalized_tags,
+        ),
+        "scope": _infer_scope(family_key=family_key, title=title, tags=normalized_tags),
         "tags": normalized_tags,
     }
