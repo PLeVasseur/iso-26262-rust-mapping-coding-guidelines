@@ -8,3 +8,6 @@ migrations:
     file: config/sqlite_migrations/20260224_003_core_docs_chunk_metadata.sql
   - id: 20260226_004_guidelines_repo_schema
     file: config/sqlite_migrations/20260226_004_guidelines_repo_schema.sql
+  - id: 20260309_005_chunk_fts_rowids
+    file: config/sqlite_migrations/20260309_005_chunk_fts_rowids.sql
+    backfill: chunk_fts_rowids_from_chunks_fts

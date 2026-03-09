@@ -30,6 +30,7 @@ from retrieval.operations.build import (  # noqa: E402
 from retrieval.operations.eval import evaluate_retrieval_prompts  # noqa: E402
 from retrieval.operations.materialize import main as materialize_main  # noqa: E402
 from retrieval.operations.query import execute_retrieval_query  # noqa: E402
+from retrieval.build.chunk_fts_validation import validate_chunk_fts_mapping_db  # noqa: E402
 from semantic_backend_client import SemanticBackendConfig  # noqa: E402
 
 
@@ -165,6 +166,7 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
         required = {
             "chunk_corpus_v1_all",
             "lexical_chunk_search_v1",
+            "lexical_chunk_search_v2_subset",
             "table1_row_requirements_v2",
             "snapshot_metadata",
             "semantic_model_metadata",
@@ -190,14 +192,25 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
                     connection.execute("SELECT COUNT(*) FROM chunk_spans").fetchone()[0]
                 )
                 docs_count = int(connection.execute("SELECT COUNT(*) FROM docs").fetchone()[0])
+                mapping_count = int(
+                    connection.execute("SELECT COUNT(*) FROM chunk_fts_rowids").fetchone()[0]
+                )
             finally:
                 connection.close()
 
-            self.assertEqual(user_version, 6)
-            self.assertTrue({"kb_metadata", "docs", "chunks", "chunk_spans"}.issubset(table_names))
+            mapping = validate_chunk_fts_mapping_db(db_path)
+
+            self.assertEqual(user_version, 7)
+            self.assertTrue(
+                {"kb_metadata", "docs", "chunks", "chunk_spans", "chunk_fts_rowids"}.issubset(
+                    table_names
+                )
+            )
             self.assertGreaterEqual(chunk_count, 1)
             self.assertGreaterEqual(span_count, chunk_count)
             self.assertGreaterEqual(docs_count, 1)
+            self.assertEqual(mapping_count, chunk_count)
+            self.assertTrue(mapping.get("passed"), mapping)
 
     def test_chunk_uids_are_stable_for_same_content(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -292,6 +305,103 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
                 }.intersection(query_ids),
                 set(),
             )
+
+    def test_bounded_lexical_query_uses_subset_query_id_and_scope_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = self._build_fixture_db(temp_root)
+            contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference_chunk.yaml"
+            query_log_root = temp_root / "query_logs_bounded"
+
+            baseline = execute_retrieval_query(
+                mode="lexical",
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                query_text="defensive error result option",
+                row_marker="",
+                top_k=5,
+                candidate_limit=200,
+                allow_degraded=False,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.2,
+                ),
+                semantic_retries=0,
+                persist_semantic_cache=False,
+            )
+            self.assertGreaterEqual(int(baseline.get("row_count", 0)), 1)
+            allowed_id = str(baseline["rows"][0]["statement_id"])
+
+            scoped = execute_retrieval_query(
+                mode="lexical",
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                query_text="defensive error result option",
+                row_marker="",
+                top_k=5,
+                candidate_limit=200,
+                allow_degraded=False,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.2,
+                ),
+                semantic_retries=0,
+                persist_semantic_cache=False,
+                allowed_statement_ids=[allowed_id, allowed_id, "", "   "],
+            )
+
+            self.assertEqual(scoped["scope"]["state"], "restricted_subset")
+            self.assertEqual(scoped["scope"]["scope_id_field"], "chunk_uid")
+            self.assertEqual(scoped["scope"]["requested_count"], 4)
+            self.assertEqual(scoped["scope"]["normalized_count"], 1)
+            self.assertEqual(scoped["scope"]["matched_count"], 1)
+            self.assertEqual(scoped["scope"]["allowed_scope_ids"], [allowed_id])
+            self.assertTrue(all(str(row["statement_id"]) == allowed_id for row in scoped["rows"]))
+
+            query_ids = self._query_ids_from_logs(query_log_root)
+            self.assertIn("lexical_chunk_search_v2_subset", query_ids)
+
+    def test_explicit_empty_scope_short_circuits_before_query_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = self._build_fixture_db(temp_root)
+            contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference_chunk.yaml"
+            query_log_root = temp_root / "query_logs_empty_scope"
+
+            result = execute_retrieval_query(
+                mode="hybrid",
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                query_text="defensive error result option",
+                row_marker="",
+                top_k=5,
+                candidate_limit=200,
+                allow_degraded=False,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.2,
+                ),
+                semantic_retries=0,
+                persist_semantic_cache=False,
+                allowed_statement_ids=[],
+            )
+
+            self.assertEqual(result["row_count"], 0)
+            self.assertEqual(result["scope"]["state"], "restricted_empty")
+            self.assertEqual(result["scope"]["scope_id_field"], "chunk_uid")
+            self.assertEqual(result["scope"]["requested_count"], 0)
+            self.assertEqual(result["scope"]["normalized_count"], 0)
+            self.assertEqual(result["rows"], [])
+            self.assertFalse(query_log_root.exists())
 
     def test_materialize_and_eval_execute_on_chunk_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -452,6 +562,97 @@ class ChunkFirstRunbookPrereqsTests(unittest.TestCase):
 
             self.assertEqual(chunk_cached, chunk_count)
             self.assertEqual(statement_cached, 0)
+
+    def test_full_materialize_fails_closed_when_chunk_mapping_is_corrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = self._build_fixture_db(temp_root)
+            contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference_chunk.yaml"
+
+            connection = sqlite3.connect(db_path)
+            try:
+                chunk_uid = str(
+                    connection.execute(
+                        "SELECT chunk_uid FROM chunk_fts_rowids ORDER BY chunk_uid ASC LIMIT 1"
+                    ).fetchone()[0]
+                )
+                connection.execute(
+                    "DELETE FROM chunk_fts_rowids WHERE chunk_uid = ?",
+                    (chunk_uid,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            mapping = validate_chunk_fts_mapping_db(db_path)
+            self.assertFalse(mapping.get("passed"), mapping)
+
+            with patch(
+                "retrieval.operations.materialize.embed_texts",
+                side_effect=lambda _config, texts: [[0.1, 0.2, 0.3] for _ in texts],
+            ):
+                with patch(
+                    "retrieval.operations.materialize._health_device",
+                    return_value="mps",
+                ):
+                    with patch.object(
+                        sys,
+                        "argv",
+                        [
+                            "materialize.py",
+                            "--db-path",
+                            str(db_path),
+                            "--contract-path",
+                            str(contract_path),
+                            "--query-log-root",
+                            str(temp_root / "query_logs_full_fail"),
+                            "--batch-size",
+                            "8",
+                            "--semantic-retries",
+                            "0",
+                        ],
+                    ):
+                        self.assertNotEqual(materialize_main(), 0)
+
+    def test_build_fails_closed_when_chunk_mapping_validation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path = temp_root / "current" / "rust_reference.sqlite"
+            snapshot_root = temp_root / "snapshots"
+            manifest_path = temp_root / "manifest.yaml"
+            reference_source_dir = create_reference_fixture(temp_root)
+
+            from retrieval.build.database_write import insert_payload as original_insert_payload
+
+            def _insert_payload_with_real_mapping_corruption(*args, **kwargs):
+                original_insert_payload(*args, **kwargs)
+                connection = kwargs["connection"]
+                chunk_uid_row = connection.execute(
+                    "SELECT chunk_uid FROM chunk_fts_rowids ORDER BY chunk_uid ASC LIMIT 1"
+                ).fetchone()
+                self.assertIsNotNone(chunk_uid_row)
+                connection.execute(
+                    "DELETE FROM chunk_fts_rowids WHERE chunk_uid = ?",
+                    (str(chunk_uid_row[0]),),
+                )
+
+            with patch(
+                "retrieval.build.database_write.insert_payload",
+                side_effect=_insert_payload_with_real_mapping_corruption,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "mapping coverage is incomplete"):
+                    build_rust_reference_db(
+                        db_path=db_path,
+                        snapshot_root=snapshot_root,
+                        manifest_path=manifest_path,
+                        extractor_db=DEFAULT_EXTRACTOR_DB,
+                        table_node_id=DEFAULT_TABLE_NODE_ID,
+                        reference_source_dir=reference_source_dir,
+                        reference_revision="fixture-001",
+                        min_sections=4,
+                        min_statements=8,
+                        min_mechanisms=4,
+                    )
 
     def test_row_metadata_report_and_profile_terms_exist(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from datetime import UTC, datetime
@@ -8,9 +9,114 @@ from typing import Any
 
 import yaml
 
+from retrieval.build.chunk_fts_validation import validate_chunk_fts_mapping_db
+
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def validate_chunk_first_db(db_path: Path, *, corpus: str) -> dict[str, Any]:
+    mapping = validate_chunk_fts_mapping_db(db_path)
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    connection = sqlite3.connect(db_path)
+    try:
+        chunk_count = int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+        chunks_fts_count = int(connection.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0])
+        schema_user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        latest_migration_id = ""
+        if _table_exists(connection, "schema_version"):
+            row = connection.execute(
+                "SELECT latest_migration_id FROM schema_version WHERE schema_id = ?",
+                ("sqlite_kb",),
+            ).fetchone()
+            latest_migration_id = str(row[0] or "") if row else ""
+        latest_snapshot_id = ""
+        if _table_exists(connection, "snapshots"):
+            row = connection.execute(
+                "SELECT snapshot_id FROM snapshots ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+            latest_snapshot_id = str(row[0] or "") if row else ""
+    finally:
+        connection.close()
+
+    if chunk_count == 0:
+        failures.append("No chunks materialized")
+    if chunks_fts_count == 0:
+        failures.append("No chunks_fts rows materialized")
+    if mapping.get("applicable") and not mapping.get("passed", False):
+        failures.append("chunk_fts_rowids mapping coverage is incomplete")
+    if mapping.get("applicable") and int(mapping.get("chunk_count", 0)) != chunk_count:
+        failures.append("chunk_fts_rowids chunk count disagrees with chunks table")
+    if mapping.get("applicable") and int(mapping.get("chunks_fts_count", 0)) != chunks_fts_count:
+        failures.append("chunk_fts_rowids chunk count disagrees with chunks_fts table")
+    if not mapping.get("applicable"):
+        warnings.append("chunk_fts_rowids mapping not applicable for this database")
+
+    return {
+        "corpus": str(corpus),
+        "db_path": str(db_path.resolve()),
+        "db_sha256": _sha256(db_path),
+        "checked_at": utc_now(),
+        "passed": not failures,
+        "failures": failures,
+        "warnings": warnings,
+        "chunk_count": chunk_count,
+        "chunks_fts_count": chunks_fts_count,
+        "schema_user_version": schema_user_version,
+        "latest_migration_id": latest_migration_id,
+        "latest_snapshot_id": latest_snapshot_id,
+        "chunk_fts_mapping": mapping,
+    }
+
+
+def write_chunk_first_validation_report(
+    *,
+    report_root: Path,
+    corpus: str,
+    snapshot_id: str,
+    payload: dict[str, Any],
+) -> Path:
+    report_root.mkdir(parents=True, exist_ok=True)
+    path = report_root / f"{snapshot_id}_chunk_first_validation.json"
+    output = {
+        "corpus": str(corpus),
+        "snapshot_id": str(snapshot_id),
+        **payload,
+    }
+    path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def write_current_chunk_first_validation_report(
+    *,
+    report_root: Path,
+    corpus: str,
+    payload: dict[str, Any],
+) -> Path:
+    report_root.mkdir(parents=True, exist_ok=True)
+    path = report_root / "current_chunk_first_validation.json"
+    output = {
+        "corpus": str(corpus),
+        "snapshot_id": str(payload.get("latest_snapshot_id", "") or "current"),
+        **payload,
+    }
+    path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
@@ -49,6 +155,7 @@ def validate_rust_reference_db(
 ) -> dict[str, Any]:
     failures: list[str] = []
     warnings: list[str] = []
+    chunk_mapping = validate_chunk_fts_mapping_db(db_path)
 
     connection = sqlite3.connect(db_path)
     try:
@@ -72,6 +179,8 @@ def validate_rust_reference_db(
         row_mechanism_score_count = int(
             connection.execute("SELECT COUNT(*) FROM row_mechanism_scores").fetchone()[0]
         )
+        chunk_count = int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+        chunks_fts_count = int(connection.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0])
 
         if section_count < int(min_sections):
             failures.append("Too few sections extracted from Rust Reference")
@@ -87,6 +196,13 @@ def validate_rust_reference_db(
             failures.append("FTS statement index coverage does not match statements table")
         if row_mechanism_score_count < 9:
             failures.append("Row mechanism score coverage is incomplete")
+        if chunk_mapping.get("applicable") and not chunk_mapping.get("passed", False):
+            failures.append("chunk_fts_rowids mapping coverage is incomplete")
+        elif chunk_mapping.get("applicable") and (
+            int(chunk_mapping.get("chunk_count", 0)) != chunk_count
+            or int(chunk_mapping.get("chunks_fts_count", 0)) != chunks_fts_count
+        ):
+            failures.append("chunk_fts_rowids diagnostics disagree with chunk coverage counts")
         if statement_embedding_count == 0:
             warnings.append(
                 "No statement embeddings materialized yet; "
@@ -224,6 +340,7 @@ def validate_rust_reference_db(
         "checked_at": utc_now(),
         "failures": failures,
         "warnings": warnings,
+        "chunk_fts_mapping": chunk_mapping,
     }
 
 
@@ -275,6 +392,7 @@ def update_manifest(
     source_url: str,
     report_path: Path,
     row_metadata_report_path: Path,
+    chunk_first_report_path: Path,
     counts: dict[str, int],
     chunk_count: int,
     chunk_overlap_percent: float,
@@ -283,6 +401,7 @@ def update_manifest(
     semantic_profile_version: str,
     embedding_model_id: str,
     reranker_model_id: str,
+    chunk_fts_mapping: dict[str, Any] | None = None,
 ) -> None:
     base_dir = manifest_path.resolve().parent
 
@@ -315,6 +434,7 @@ def update_manifest(
         "query_contract": query_contract_path,
         "validation_report": _repo_relative(report_path),
         "row_metadata_report": _repo_relative(row_metadata_report_path),
+        "chunk_first_validation_report": _repo_relative(chunk_first_report_path),
         "semantic_retrieval": {
             "retrieval_mode": retrieval_mode,
             "retrieval_corpus": retrieval_corpus,
@@ -332,6 +452,8 @@ def update_manifest(
             "chunk_overlap_percent": float(chunk_overlap_percent),
         },
     }
+    if chunk_fts_mapping is not None:
+        manifest["databases"]["rust_reference"]["chunk_fts_mapping"] = chunk_fts_mapping
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     with manifest_path.open("w", encoding="utf-8") as handle:

@@ -37,6 +37,7 @@ def finalize_semantic_mode(
     lexical_weight: float,
     semantic_weight: float,
     rerank_weight: float,
+    scope: dict[str, Any],
 ) -> dict[str, Any]:
     for row in semantic_rows:
         apply_component_scores(
@@ -79,6 +80,7 @@ def finalize_semantic_mode(
         row_projection=row_projection,
         row_projection_all=row_projection_all,
         abstain=abstain,
+        scope=scope,
         preflight=preflight,
     )
 
@@ -126,6 +128,7 @@ def finalize_hybrid_mode(
         [list[dict[str, Any]], Any], tuple[list[dict[str, Any]], dict[str, Any]]
     ],
     row_projection_policy: Any,
+    scope: dict[str, Any],
 ) -> dict[str, Any]:
     hybrid_rows, fusion_debug, union_pool_size = run_hybrid_pipeline(
         lexical_rows=lexical_rows,
@@ -178,6 +181,7 @@ def finalize_hybrid_mode(
         row_projection=row_projection,
         row_projection_all=row_projection_all,
         abstain=abstain,
+        scope=scope,
         preflight=preflight,
         extras={
             "fusion_method": normalized_fusion_method,

@@ -1,6 +1,5 @@
 profile: fls_spec_control
 corpus: fls_spec
-query_mode_default: hybrid
 retrieval:
   top_k: 12
   candidate_limit: 4000

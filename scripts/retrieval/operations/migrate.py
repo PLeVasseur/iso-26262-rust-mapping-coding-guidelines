@@ -9,6 +9,11 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from retrieval.build.chunk_fts_validation import (
+    enforce_chunk_fts_mapping,
+    refresh_chunk_fts_rowids,
+)
+
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
 
@@ -62,6 +67,12 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
         migrated_docs = 0
         migrated_chunks = 0
         migrated_row_profile_terms = 0
+        chunk_mapping_refreshed = False
+        chunk_mapping_diagnostics: dict[str, object] = {
+            "applicable": False,
+            "scope": "not_chunk_first",
+            "passed": True,
+        }
 
         if _ensure_column(
             connection, "snapshots", "commit_sha TEXT NOT NULL DEFAULT 'unknown'", "commit_sha"
@@ -286,6 +297,14 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
             )
             refreshed_chunk_fts = True
 
+        if _table_exists(connection, "chunks") and _table_exists(connection, "chunks_fts"):
+            refresh_chunk_fts_rowids(connection)
+            chunk_mapping_refreshed = True
+            chunk_mapping_diagnostics = enforce_chunk_fts_mapping(
+                connection,
+                context="rust_reference schema migrate",
+            )
+
         if _table_exists(connection, "table1_row_profile_terms") and _table_exists(
             connection, "table1_rows"
         ):
@@ -324,7 +343,7 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
                     )
                     migrated_row_profile_terms = len(payload)
 
-        connection.execute("PRAGMA user_version = 6")
+        connection.execute("PRAGMA user_version = 7")
         connection.commit()
     finally:
         connection.close()
@@ -334,10 +353,12 @@ def migrate_schema(db_path: Path) -> dict[str, object]:
         "added_columns": added_columns,
         "refreshed_statements_fts": refreshed_fts,
         "refreshed_chunks_fts": refreshed_chunk_fts,
+        "refreshed_chunk_fts_rowids": chunk_mapping_refreshed,
         "migrated_docs": migrated_docs,
         "migrated_chunks": migrated_chunks,
         "migrated_row_profile_terms": migrated_row_profile_terms,
-        "target_user_version": 6,
+        "chunk_fts_mapping": chunk_mapping_diagnostics,
+        "target_user_version": 7,
     }
 
 

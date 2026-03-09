@@ -18,7 +18,10 @@ from retrieval.build.reports import (
     load_manifest as _load_manifest,
     read_previous_snapshot_path as _read_previous_snapshot_path,
     update_manifest as _update_manifest,
+    validate_chunk_first_db,
     validate_rust_reference_db,
+    write_current_chunk_first_validation_report as _write_current_chunk_first_validation_report,
+    write_chunk_first_validation_report as _write_chunk_first_validation_report,
     write_row_metadata_report as _write_row_metadata_report,
     write_validation_report as _write_validation_report,
 )
@@ -38,6 +41,7 @@ from retrieval.core.provenance import (
 )
 from retrieval.ingest.contracts import CleanInput
 from retrieval.ingest.registry import resolve_ingest_strategy
+from retrieval.services.ws7_prework_closure import maybe_refresh_ws7_prework_closure_packet
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
@@ -254,6 +258,22 @@ def build_rust_reference_db(
     report_path = _write_validation_report(
         report_root=report_root, snapshot_id=snapshot_id, payload=validation_report
     )
+    chunk_first_report = validate_chunk_first_db(db_path, corpus="rust_reference")
+    chunk_first_report_path = _write_chunk_first_validation_report(
+        report_root=report_root,
+        corpus="rust_reference",
+        snapshot_id=snapshot_id,
+        payload=chunk_first_report,
+    )
+    _write_current_chunk_first_validation_report(
+        report_root=report_root,
+        corpus="rust_reference",
+        payload=chunk_first_report,
+    )
+    maybe_refresh_ws7_prework_closure_packet(
+        root=Path(__file__).resolve().parents[3],
+        deferred_items=["WS7 staged runtime implementation"],
+    )
     row_metadata_report_path = _write_row_metadata_report(
         report_root=report_root,
         snapshot_id=snapshot_id,
@@ -262,6 +282,11 @@ def build_rust_reference_db(
     if not validation_report["passed"]:
         raise RuntimeError(
             f"Validation failed for rust_reference.sqlite: {validation_report['failures']}"
+        )
+    if not chunk_first_report["passed"]:
+        raise RuntimeError(
+            "Chunk-first validation failed for rust_reference.sqlite: "
+            f"{chunk_first_report['failures']}"
         )
 
     _update_manifest(
@@ -274,6 +299,7 @@ def build_rust_reference_db(
         source_url=DEFAULT_REFERENCE_SOURCE_URL,
         report_path=report_path,
         row_metadata_report_path=row_metadata_report_path,
+        chunk_first_report_path=chunk_first_report_path,
         counts=counts,
         chunk_count=len(chunks),
         chunk_overlap_percent=float(chunk_overlap_percent),
@@ -282,6 +308,7 @@ def build_rust_reference_db(
         semantic_profile_version=semantic_profile_version,
         embedding_model_id=embedding_model_id,
         reranker_model_id=reranker_model_id,
+        chunk_fts_mapping=validation_report.get("chunk_fts_mapping"),
     )
 
     source_state = compute_source_state_from_db(db_path)
@@ -319,6 +346,7 @@ def build_rust_reference_db(
         "snapshot_db_path": str(snapshot_db_path),
         "validation_report": str(report_path),
         "row_metadata_report": str(row_metadata_report_path),
+        "chunk_first_report_path": str(chunk_first_report_path),
         "documents": len(documents),
         "chapters": len(chapters),
         "sections": len(sections),

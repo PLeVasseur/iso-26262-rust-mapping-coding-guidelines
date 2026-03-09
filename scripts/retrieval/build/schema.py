@@ -123,6 +123,11 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
             tokenize='unicode61 remove_diacritics 2'
         );
 
+        CREATE TABLE IF NOT EXISTS chunk_fts_rowids (
+            chunk_uid TEXT PRIMARY KEY,
+            fts_rowid INTEGER NOT NULL UNIQUE
+        );
+
         CREATE VIRTUAL TABLE IF NOT EXISTS statements_fts
         USING fts5(
             statement_id UNINDEXED,
@@ -280,6 +285,8 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_sections_chapter ON sections(chapter_id, order_index);
         CREATE INDEX IF NOT EXISTS idx_statements_section ON statements(section_id, sentence_index);
         CREATE INDEX IF NOT EXISTS idx_chunks_section ON chunks(section_id, order_index);
+        CREATE INDEX IF NOT EXISTS idx_chunk_fts_rowids_fts_rowid
+            ON chunk_fts_rowids(fts_rowid);
         CREATE INDEX IF NOT EXISTS idx_chunk_spans_anchor ON chunk_spans(source_anchor, chunk_uid);
         CREATE INDEX IF NOT EXISTS idx_mechanism_evidence_mech ON mechanism_evidence(mechanism_id);
         CREATE INDEX IF NOT EXISTS idx_table1_rows_marker ON table1_rows(row_marker);
@@ -299,6 +306,6 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_row_mechanism_scores_row
             ON row_mechanism_scores(row_node_id, hybrid_score DESC);
 
-        PRAGMA user_version = 6;
+        PRAGMA user_version = 7;
         """
     )

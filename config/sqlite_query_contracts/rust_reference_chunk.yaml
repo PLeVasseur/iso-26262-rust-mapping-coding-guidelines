@@ -109,3 +109,26 @@ queries:
       FROM chunks_fts
       WHERE chunks_fts MATCH :fts_query
       ORDER BY bm25_raw ASC, chunk_uid ASC
+
+  lexical_chunk_search_v2_subset:
+    description: Bounded lexical chunk candidates using FTS5, BM25, and scoped ids
+    requires_order: true
+    row_limit: 500
+    params:
+      - fts_query
+      - allowed_scope_ids_json
+    sql: |
+      WITH allowed_ids AS (
+        SELECT value AS chunk_uid
+        FROM json_each(:allowed_scope_ids_json)
+      )
+      SELECT
+        m.chunk_uid,
+        bm25(chunks_fts) AS bm25_raw
+      FROM allowed_ids AS a
+      JOIN chunk_fts_rowids AS m
+        ON m.chunk_uid = a.chunk_uid
+      JOIN chunks_fts
+        ON chunks_fts.rowid = m.fts_rowid
+      WHERE chunks_fts MATCH :fts_query
+      ORDER BY bm25_raw ASC, m.chunk_uid ASC

@@ -64,6 +64,7 @@ from retrieval.query.policy_resolution import (
     resolve_row_projection_policy,
     row_projection_policy_from_globals as _row_projection_policy_from_globals,
 )
+from retrieval.query.result_payload import build_retrieval_result
 from retrieval.query.rewrite_rules import rewrite_query_text as _rewrite_query_text
 from retrieval.query.semantic_pipeline import semantic_candidates as core_semantic_candidates
 from retrieval.query.review_artifacts import (
@@ -132,6 +133,119 @@ def _row_identity(row: dict[str, Any]) -> str:
     return str(row.get("statement_id", "")).strip()
 
 
+def _normalize_allowed_scope_ids(
+    allowed_scope_ids: list[str] | tuple[str, ...] | set[str] | None,
+) -> tuple[str, int, list[str]]:
+    if allowed_scope_ids is None:
+        return "global", 0, []
+    raw_values = [str(value) for value in allowed_scope_ids]
+    requested_count = len(raw_values)
+    normalized = sorted({value.strip() for value in raw_values if value.strip()})
+    if normalized:
+        return "restricted_subset", requested_count, normalized
+    return "restricted_empty", requested_count, []
+
+
+def _filter_rows_to_allowed_ids(
+    rows: list[dict[str, Any]],
+    *,
+    allowed_scope_ids: set[str],
+    scope_id_field: str,
+) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    return [row for row in rows if str(row.get(scope_id_field, "")).strip() in allowed_scope_ids]
+
+
+def _resolve_scope_id_field(rows: list[dict[str, Any]]) -> str:
+    if any(str(row.get("paragraph_id", "")).strip() for row in rows):
+        return "paragraph_id"
+    if any(str(row.get("chunk_uid", "")).strip() for row in rows):
+        return "chunk_uid"
+    return "statement_id"
+
+
+def _default_scope_id_field(retrieval_contract: RetrievalContractProfile, *, corpus: str) -> str:
+    if str(corpus).strip() == "fls_spec":
+        return "paragraph_id"
+    if retrieval_contract.corpus_query_id == "chunk_corpus_v1_all":
+        return retrieval_contract.lexical_id_column
+    return "statement_id"
+
+
+def _build_scope_payload(
+    *,
+    scope_state: str,
+    requested_count: int,
+    scope_id_field: str,
+    allowed_scope_ids: list[str],
+    scoped_corpus_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    matched_ids = {
+        str(row.get(scope_id_field, "")).strip()
+        for row in scoped_corpus_rows
+        if str(row.get(scope_id_field, "")).strip()
+    }
+    payload = {
+        "state": scope_state,
+        "scope_id_field": scope_id_field,
+        "requested_count": int(requested_count),
+        "normalized_count": int(len(allowed_scope_ids)),
+        "matched_count": int(len(matched_ids)),
+        "unmatched_count": int(max(0, len(allowed_scope_ids) - len(matched_ids))),
+        "allowed_scope_ids": list(allowed_scope_ids),
+    }
+    return payload
+
+
+def _build_empty_scope_result(
+    *,
+    mode: str,
+    query_text: str,
+    effective_query_text: str,
+    query_rewrite: dict[str, Any],
+    row_marker: str,
+    score_definitions: dict[str, str],
+    workload: dict[str, int],
+    timing: dict[str, float],
+    timing_payload: Any,
+    started: float,
+    scope: dict[str, Any],
+    preflight: dict[str, Any] | None = None,
+    fusion_params: dict[str, Any] | None = None,
+    normalized_fusion_method: str | None = None,
+) -> dict[str, Any]:
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    extras: dict[str, Any] | None = None
+    if mode == "hybrid":
+        extras = {
+            "fusion_method": normalized_fusion_method,
+            "fusion_params": fusion_params or {},
+            "fusion_debug": {},
+        }
+    return build_retrieval_result(
+        requested_mode=mode,
+        executed_mode=mode,
+        degraded=False,
+        semantic_retry_events=[],
+        score_definitions=score_definitions,
+        workload=workload,
+        query_text=query_text,
+        effective_query_text=effective_query_text,
+        query_rewrite=query_rewrite,
+        row_marker=row_marker,
+        rows=[],
+        duration_ms=duration_ms,
+        timing=timing_payload(duration_ms),
+        row_projection=[],
+        row_projection_all=[],
+        abstain={"should_abstain": False, "reason": "restricted_empty_scope", "threshold": None},
+        preflight=preflight,
+        extras=extras,
+        scope=scope,
+    )
+
+
 def _run_lexical_query(
     *,
     contract_path: Path,
@@ -143,6 +257,7 @@ def _run_lexical_query(
     query_text: str,
     row_marker: str,
     row_limit: int,
+    allowed_scope_ids: set[str] | None,
 ) -> list[dict[str, Any]]:
     return core_run_lexical_query(
         contract_path=contract_path,
@@ -155,6 +270,7 @@ def _run_lexical_query(
         row_marker=row_marker,
         row_limit=row_limit,
         row_identity=_row_identity,
+        allowed_scope_ids=allowed_scope_ids,
     )
 
 
@@ -277,6 +393,7 @@ def execute_retrieval_query(
     hybrid_semantic_min: int = 0,
     corpus: str = "",
     row_projection_policy: RowProjectionPolicy | None = None,
+    allowed_statement_ids: list[str] | tuple[str, ...] | set[str] | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     semantic_retry_events: list[dict[str, Any]] = []
@@ -331,34 +448,12 @@ def execute_retrieval_query(
     except ValueError as exc:
         raise GuardrailError(str(exc)) from exc
     effective_query_text = str(rewrite.get("rewritten_query", query_text)).strip() or query_text
+    scope_state, requested_scope_count, normalized_allowed_scope_ids = _normalize_allowed_scope_ids(
+        allowed_statement_ids
+    )
+    allowed_scope_id_set = set(normalized_allowed_scope_ids)
 
     retrieval_contract = _resolve_retrieval_contract_profile(contract_path)
-
-    corpus_rows = _load_statement_corpus(
-        db_path=db_path,
-        contract_path=contract_path,
-        query_log_root=query_log_root,
-        retrieval_contract=retrieval_contract,
-    )
-    row_profiles = _load_table1_row_requirements(
-        db_path=db_path,
-        contract_path=contract_path,
-        query_log_root=query_log_root,
-        retrieval_contract=retrieval_contract,
-    )
-
-    def _run_lexical() -> list[dict[str, Any]]:
-        return _run_lexical_query(
-            db_path=db_path,
-            contract_path=contract_path,
-            query_log_root=query_log_root,
-            retrieval_contract=retrieval_contract,
-            corpus_rows=corpus_rows,
-            row_profiles=row_profiles,
-            query_text=effective_query_text,
-            row_marker=row_marker,
-            row_limit=candidate_limit,
-        )
 
     score_definitions, fusion_params = build_fusion_metadata(
         normalized_fusion_method=normalized_fusion_method,
@@ -377,7 +472,92 @@ def execute_retrieval_query(
         weighted_v2_semantic_weight=WEIGHTED_V2_SEMANTIC_WEIGHT,
         weighted_v2_rerank_weight=WEIGHTED_V2_RERANK_WEIGHT,
     )
-    fusion_debug: dict[str, Any] = {}
+
+    if scope_state == "restricted_empty":
+        return _build_empty_scope_result(
+            mode=mode,
+            query_text=query_text,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
+            row_marker=row_marker,
+            score_definitions=score_definitions,
+            workload=workload,
+            timing=timing,
+            timing_payload=_timing_payload,
+            started=started,
+            scope=_build_scope_payload(
+                scope_state=scope_state,
+                requested_count=requested_scope_count,
+                scope_id_field=_default_scope_id_field(retrieval_contract, corpus=corpus),
+                allowed_scope_ids=normalized_allowed_scope_ids,
+                scoped_corpus_rows=[],
+            ),
+            fusion_params=fusion_params,
+            normalized_fusion_method=normalized_fusion_method,
+        )
+
+    corpus_rows_all = _load_statement_corpus(
+        db_path=db_path,
+        contract_path=contract_path,
+        query_log_root=query_log_root,
+        retrieval_contract=retrieval_contract,
+    )
+    row_profiles = _load_table1_row_requirements(
+        db_path=db_path,
+        contract_path=contract_path,
+        query_log_root=query_log_root,
+        retrieval_contract=retrieval_contract,
+    )
+    corpus_rows = corpus_rows_all
+    if scope_state == "restricted_subset":
+        scope_id_field = _resolve_scope_id_field(corpus_rows_all)
+        corpus_rows = _filter_rows_to_allowed_ids(
+            corpus_rows_all,
+            allowed_scope_ids=allowed_scope_id_set,
+            scope_id_field=scope_id_field,
+        )
+    else:
+        scope_id_field = _resolve_scope_id_field(corpus_rows)
+    scope = _build_scope_payload(
+        scope_state=scope_state,
+        requested_count=requested_scope_count,
+        scope_id_field=scope_id_field,
+        allowed_scope_ids=normalized_allowed_scope_ids,
+        scoped_corpus_rows=corpus_rows,
+    )
+
+    if scope_state == "restricted_subset" and not corpus_rows:
+        return _build_empty_scope_result(
+            mode=mode,
+            query_text=query_text,
+            effective_query_text=effective_query_text,
+            query_rewrite=rewrite,
+            row_marker=row_marker,
+            score_definitions=score_definitions,
+            workload=workload,
+            timing=timing,
+            timing_payload=_timing_payload,
+            started=started,
+            scope=scope,
+            fusion_params=fusion_params,
+            normalized_fusion_method=normalized_fusion_method,
+        )
+
+    def _run_lexical() -> list[dict[str, Any]]:
+        return _run_lexical_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_log_root=query_log_root,
+            retrieval_contract=retrieval_contract,
+            corpus_rows=corpus_rows,
+            row_profiles=row_profiles,
+            query_text=effective_query_text,
+            row_marker=row_marker,
+            row_limit=candidate_limit,
+            allowed_scope_ids=(
+                allowed_scope_id_set if scope_state == "restricted_subset" else None
+            ),
+        )
 
     if mode == "lexical":
         lexical_started = time.perf_counter()
@@ -415,6 +595,7 @@ def execute_retrieval_query(
             lexical_weight=LEXICAL_WEIGHT,
             semantic_weight=SEMANTIC_WEIGHT,
             rerank_weight=RERANK_WEIGHT,
+            scope=scope,
         )
 
     preflight_started = time.perf_counter()
@@ -468,6 +649,7 @@ def execute_retrieval_query(
             semantic_weight=SEMANTIC_WEIGHT,
             rerank_weight=RERANK_WEIGHT,
             preflight=preflight,
+            scope=scope,
         )
 
     ensure_embedding_cache_table(db_path, retrieval_contract)
@@ -535,6 +717,7 @@ def execute_retrieval_query(
             semantic_weight=SEMANTIC_WEIGHT,
             rerank_weight=RERANK_WEIGHT,
             preflight=preflight,
+            scope=scope,
         )
 
     _annotate_rows_with_row_markers(semantic_rows, row_profiles)
@@ -573,6 +756,7 @@ def execute_retrieval_query(
             lexical_weight=LEXICAL_WEIGHT,
             semantic_weight=SEMANTIC_WEIGHT,
             rerank_weight=RERANK_WEIGHT,
+            scope=scope,
         )
 
     lexical_started = time.perf_counter()
@@ -643,6 +827,7 @@ def execute_retrieval_query(
             policy=policy,
         ),
         row_projection_policy=resolved_row_projection_policy,
+        scope=scope,
     )
 
 

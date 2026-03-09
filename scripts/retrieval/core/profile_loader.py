@@ -11,6 +11,11 @@ def load_retrieval_profile(profile_path: Path) -> dict[str, Any]:
         payload = yaml.safe_load(handle) or {}
     if not isinstance(payload, dict):
         raise RuntimeError(f"Retrieval profile must be a mapping: {profile_path}")
+    if "query_mode_default" in payload:
+        raise RuntimeError(
+            "Retrieval profile field 'query_mode_default' is not supported by the shared runtime; "
+            "remove it or wire the runtime to honor it before use"
+        )
     return payload
 
 

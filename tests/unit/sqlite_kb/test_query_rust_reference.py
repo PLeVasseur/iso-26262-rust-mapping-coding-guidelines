@@ -93,13 +93,21 @@ class QueryRustReferenceTests(unittest.TestCase):
         thread.start()
         return server, thread, f"http://{host}:{port}"
 
-    def _build_fixture_db(self, temp_root: Path) -> tuple[Path, Path, Path]:
+    def _build_fixture_db(
+        self,
+        temp_root: Path,
+        *,
+        retrieval_corpus: str = "statement",
+    ) -> tuple[Path, Path, Path]:
         db_path = temp_root / "current" / "rust_reference.sqlite"
         snapshot_root = temp_root / "snapshots"
         manifest_path = temp_root / "manifest.yaml"
         query_log_root = temp_root / "query_logs"
         reference_source_dir = create_reference_fixture(temp_root)
-        contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference.yaml"
+        contract_name = (
+            "rust_reference_chunk.yaml" if retrieval_corpus == "chunk" else "rust_reference.yaml"
+        )
+        contract_path = ROOT / "config" / "sqlite_query_contracts" / contract_name
 
         build_rust_reference_db(
             db_path=db_path,
@@ -112,6 +120,7 @@ class QueryRustReferenceTests(unittest.TestCase):
             min_sections=4,
             min_statements=8,
             min_mechanisms=4,
+            retrieval_corpus=retrieval_corpus,
         )
         return db_path, contract_path, query_log_root
 
@@ -765,6 +774,199 @@ class QueryRustReferenceTests(unittest.TestCase):
 
             final_scores = [float(row.get("final_score", 0.0)) for row in rows]
             self.assertEqual(final_scores, sorted(final_scores, reverse=True))
+
+    def test_chunk_subset_semantics_hold_for_lexical_semantic_and_hybrid(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path, contract_path, query_log_root = self._build_fixture_db(
+                temp_root,
+                retrieval_corpus="chunk",
+            )
+
+            baseline = execute_retrieval_query(
+                mode="lexical",
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                query_text="defensive error result option",
+                row_marker="",
+                top_k=5,
+                candidate_limit=200,
+                allow_degraded=False,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.2,
+                ),
+                semantic_retries=0,
+                persist_semantic_cache=False,
+            )
+            self.assertGreaterEqual(int(baseline.get("row_count", 0)), 1)
+            allowed_id = str(baseline["rows"][0]["statement_id"])
+
+            server, thread, base_url = self._start_mock_backend()
+            try:
+                lexical = execute_retrieval_query(
+                    mode="lexical",
+                    db_path=db_path,
+                    contract_path=contract_path,
+                    query_log_root=query_log_root,
+                    query_text="defensive error result option",
+                    row_marker="",
+                    top_k=5,
+                    candidate_limit=200,
+                    allow_degraded=False,
+                    semantic_config=SemanticBackendConfig(
+                        base_url=base_url,
+                        embed_model_id="Qwen/Qwen3-Embedding-4B",
+                        reranker_model_id="BAAI/bge-reranker-v2-m3",
+                        timeout_sec=1.0,
+                    ),
+                    semantic_retries=0,
+                    persist_semantic_cache=True,
+                    allow_online_corpus_embedding=True,
+                    allowed_statement_ids=[allowed_id, allowed_id, "", "   "],
+                )
+                semantic = execute_retrieval_query(
+                    mode="semantic",
+                    db_path=db_path,
+                    contract_path=contract_path,
+                    query_log_root=query_log_root,
+                    query_text="defensive error result option",
+                    row_marker="",
+                    top_k=5,
+                    candidate_limit=200,
+                    allow_degraded=False,
+                    semantic_config=SemanticBackendConfig(
+                        base_url=base_url,
+                        embed_model_id="Qwen/Qwen3-Embedding-4B",
+                        reranker_model_id="BAAI/bge-reranker-v2-m3",
+                        timeout_sec=1.0,
+                    ),
+                    semantic_retries=0,
+                    persist_semantic_cache=True,
+                    allow_online_corpus_embedding=True,
+                    allowed_statement_ids=[allowed_id, allowed_id, "", "   "],
+                )
+                hybrid = execute_retrieval_query(
+                    mode="hybrid",
+                    db_path=db_path,
+                    contract_path=contract_path,
+                    query_log_root=query_log_root,
+                    query_text="defensive error result option",
+                    row_marker="",
+                    top_k=5,
+                    candidate_limit=200,
+                    allow_degraded=False,
+                    semantic_config=SemanticBackendConfig(
+                        base_url=base_url,
+                        embed_model_id="Qwen/Qwen3-Embedding-4B",
+                        reranker_model_id="BAAI/bge-reranker-v2-m3",
+                        timeout_sec=1.0,
+                    ),
+                    semantic_retries=0,
+                    persist_semantic_cache=True,
+                    allow_online_corpus_embedding=True,
+                    allowed_statement_ids=[allowed_id, allowed_id, "", "   "],
+                )
+            finally:
+                server.shutdown()
+                thread.join(timeout=2.0)
+                server.server_close()
+
+            for result in (lexical, semantic, hybrid):
+                self.assertEqual(result["scope"]["state"], "restricted_subset")
+                self.assertEqual(result["scope"]["scope_id_field"], "chunk_uid")
+                self.assertEqual(result["scope"]["requested_count"], 4)
+                self.assertEqual(result["scope"]["normalized_count"], 1)
+                self.assertEqual(result["scope"]["matched_count"], 1)
+                self.assertEqual(result["scope"]["allowed_scope_ids"], [allowed_id])
+                self.assertTrue(
+                    all(str(row["statement_id"]) == allowed_id for row in result["rows"])
+                )
+
+    def test_chunk_subset_explicit_empty_and_degraded_fallback_stay_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            db_path, contract_path, query_log_root = self._build_fixture_db(
+                temp_root,
+                retrieval_corpus="chunk",
+            )
+
+            empty_query_log_root = temp_root / "query_logs_explicit_empty"
+            empty = execute_retrieval_query(
+                mode="semantic",
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=empty_query_log_root,
+                query_text="defensive error result option",
+                row_marker="",
+                top_k=5,
+                candidate_limit=200,
+                allow_degraded=False,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.2,
+                ),
+                semantic_retries=0,
+                persist_semantic_cache=False,
+                allowed_statement_ids=[],
+            )
+            self.assertEqual(empty["scope"]["state"], "restricted_empty")
+            self.assertEqual(empty["scope"]["scope_id_field"], "chunk_uid")
+            self.assertEqual(empty["scope"]["requested_count"], 0)
+            self.assertEqual(empty["scope"]["normalized_count"], 0)
+            self.assertEqual(empty["row_count"], 0)
+            self.assertFalse(empty_query_log_root.exists())
+
+            baseline = execute_retrieval_query(
+                mode="lexical",
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                query_text="defensive error result option",
+                row_marker="",
+                top_k=5,
+                candidate_limit=200,
+                allow_degraded=False,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.2,
+                ),
+                semantic_retries=0,
+                persist_semantic_cache=False,
+            )
+            allowed_id = str(baseline["rows"][0]["statement_id"])
+
+            degraded = execute_retrieval_query(
+                mode="hybrid",
+                db_path=db_path,
+                contract_path=contract_path,
+                query_log_root=query_log_root,
+                query_text="defensive error result option",
+                row_marker="",
+                top_k=5,
+                candidate_limit=200,
+                allow_degraded=True,
+                semantic_config=SemanticBackendConfig(
+                    base_url="http://127.0.0.1:1",
+                    embed_model_id="unused",
+                    reranker_model_id="unused",
+                    timeout_sec=0.2,
+                ),
+                semantic_retries=0,
+                persist_semantic_cache=False,
+                allowed_statement_ids=[allowed_id, allowed_id, "", "   "],
+            )
+            self.assertTrue(degraded["degraded"])
+            self.assertEqual(degraded["executed_mode"], "lexical")
+            self.assertEqual(degraded["scope"]["state"], "restricted_subset")
+            self.assertTrue(all(str(row["statement_id"]) == allowed_id for row in degraded["rows"]))
 
     def test_guardrails_reject_forbidden_write_sql(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

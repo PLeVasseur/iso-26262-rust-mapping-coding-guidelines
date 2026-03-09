@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -43,22 +45,5 @@ def test_gather_candidates_tags_variant_name(monkeypatch) -> None:
         "code_tokens": [],
     }
 
-    def fake_search(query: str, *, db_path=None, limit=5):
-        return [
-            {
-                "paragraph_id": "fls_x",
-                "text": f"hit for {query}",
-                "chapter": "Unsafety",
-                "section": "Raw Pointers",
-                "paragraph_number": "19:2",
-                "lexical_score": 0.77,
-            }
-        ]
-
-    monkeypatch.setattr(fls_candidate_search, "search_fls_paragraphs", fake_search)
-    rows, variants = fls_candidate_search.gather_candidates(packet=packet, limit_per_variant=2)
-
-    assert variants
-    assert rows
-    assert variants == [{"name": "packet_text", "query": "Unsafe paths"}]
-    assert all(str(row.get("variant_name", "")).strip() == "packet_text" for row in rows)
+    with pytest.raises(RuntimeError, match="legacy compatibility helper is retired"):
+        fls_candidate_search.gather_candidates(packet=packet, limit_per_variant=2)

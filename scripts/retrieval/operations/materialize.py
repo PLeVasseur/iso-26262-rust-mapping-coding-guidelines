@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.request import urlopen
 
+from retrieval.build.chunk_fts_validation import validate_chunk_fts_mapping_db
 from retrieval.operations.query import (
     _load_statement_corpus,
     _load_table1_row_requirements,
@@ -90,6 +91,12 @@ def main() -> int:
     cached_after: dict[str, list[float]] = {}
     created = 0
     corpus_rows: list[dict[str, Any]] = []
+    chunk_mapping_validation: dict[str, Any] = {
+        "applicable": False,
+        "scope": "not_chunk_first",
+        "passed": True,
+        "validator_status": "not_chunk_first",
+    }
     try:
         progress_log_path = _resolve_progress_log_path(root, str(args.progress_log_path))
 
@@ -177,6 +184,24 @@ def main() -> int:
                 "Check corpus contract and paging logic."
             )
 
+        if retrieval_contract.corpus_query_id == "chunk_corpus_v1_all":
+            scoped_chunk_ids = None
+            if not require_full_corpus:
+                scoped_chunk_ids = {
+                    str(row.get("chunk_uid") or row.get("statement_id") or "").strip()
+                    for row in corpus_rows
+                    if str(row.get("chunk_uid") or row.get("statement_id") or "").strip()
+                }
+            chunk_mapping_validation = validate_chunk_fts_mapping_db(
+                db_path,
+                scoped_chunk_ids=scoped_chunk_ids,
+            )
+            if require_full_corpus and not bool(chunk_mapping_validation.get("passed", False)):
+                raise GuardrailError(
+                    "Full corpus materialization requires valid chunk_fts_rowids mapping: "
+                    + json.dumps(chunk_mapping_validation, sort_keys=True)
+                )
+
         cached = _load_embedding_cache(
             db_path=db_path,
             retrieval_contract=retrieval_contract,
@@ -226,6 +251,7 @@ def main() -> int:
                 "corpus_query_id": retrieval_contract.corpus_query_id,
                 "effective_embed_device": effective_embed_device,
                 "effective_rerank_device": effective_rerank_device,
+                "chunk_fts_mapping": chunk_mapping_validation,
             },
         )
 
@@ -333,6 +359,7 @@ def main() -> int:
                     "target_statement_rows": max(target_corpus_count, len(corpus_rows)),
                     "target_corpus_rows": max(target_corpus_count, len(corpus_rows)),
                     "error": str(exc),
+                    "chunk_fts_mapping": chunk_mapping_validation,
                     **metrics,
                 },
             )
@@ -382,6 +409,7 @@ def main() -> int:
         "embed_calls_made": embed_calls_made,
         "effective_embed_device": effective_embed_device,
         "effective_rerank_device": effective_rerank_device,
+        "chunk_fts_mapping": chunk_mapping_validation,
         "duration_ms": round(duration_ms, 3),
         "progress_log_path": str(progress_log_path) if progress_log_path is not None else "",
     }

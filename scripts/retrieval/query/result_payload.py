@@ -31,6 +31,7 @@ def build_retrieval_result(
     row_projection: list[dict[str, Any]],
     row_projection_all: list[dict[str, Any]],
     abstain: dict[str, Any],
+    scope: dict[str, Any],
     degraded_reason: str | None = None,
     preflight: dict[str, Any] | None = None,
     extras: dict[str, Any] | None = None,
@@ -52,6 +53,7 @@ def build_retrieval_result(
         "row_projection": row_projection,
         "row_projection_all": row_projection_all,
         "abstain": abstain,
+        "scope": scope,
         "rows": rows,
     }
     if degraded_reason is not None:

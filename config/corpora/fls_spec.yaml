@@ -39,7 +39,7 @@ capabilities:
   eval: true
   build: true
   materialize: true
-  smoke: true
+  smoke: false
   capture: true
   verify: true
   validate: true

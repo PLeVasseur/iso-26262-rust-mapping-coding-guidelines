@@ -24,6 +24,7 @@ class RetrievalContractProfile:
     corpus_query_id: str
     corpus_cursor_param: str
     lexical_query_id: str
+    lexical_subset_query_id: str | None
     lexical_id_column: str
     row_requirements_query_id: str
     embedding_table: str
@@ -57,6 +58,11 @@ def resolve_retrieval_contract_profile(contract_path: Path) -> RetrievalContract
             corpus_query_id="chunk_corpus_v1_all",
             corpus_cursor_param="chunk_uid_after",
             lexical_query_id="lexical_chunk_search_v1",
+            lexical_subset_query_id=(
+                "lexical_chunk_search_v2_subset"
+                if "lexical_chunk_search_v2_subset" in query_ids
+                else None
+            ),
             lexical_id_column="chunk_uid",
             row_requirements_query_id="table1_row_requirements_v2",
             embedding_table="chunk_embeddings",
@@ -75,6 +81,7 @@ def resolve_retrieval_contract_profile(contract_path: Path) -> RetrievalContract
         corpus_query_id="statement_corpus_v3_all",
         corpus_cursor_param="statement_id_after",
         lexical_query_id="lexical_statement_search_v2",
+        lexical_subset_query_id=None,
         lexical_id_column="statement_id",
         row_requirements_query_id="table1_row_requirements_v1",
         embedding_table="statement_embeddings",

@@ -5,6 +5,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 import sqlite3
 
+from retrieval.build.reports import (
+    validate_chunk_first_db,
+    write_current_chunk_first_validation_report,
+)
+from retrieval.build.chunk_fts_validation import validate_chunk_fts_mapping_db
 from retrieval.core.provenance import (
     apply_pending_migrations,
     canonical_json_hash,
@@ -15,6 +20,7 @@ from retrieval.corpora.config_loader import load_corpus_runtime_defaults
 from retrieval.corpora.registry import get_corpus_adapter
 from retrieval.services._invoke import run_main
 from retrieval.services.capability import emit_unsupported
+from retrieval.services.ws7_prework_closure import maybe_refresh_ws7_prework_closure_packet
 from sqlite_migrate_schema import main as migrate_main
 
 
@@ -56,6 +62,11 @@ def run(args: Namespace, *, root: Path) -> int:
             connection.close()
 
     latest_migration_id, _ = apply_pending_migrations(defaults.db_path, root=root)
+    mapping = validate_chunk_fts_mapping_db(defaults.db_path)
+    if mapping.get("applicable") and not mapping.get("passed", False):
+        raise RuntimeError(
+            f"migrate service refuses success for stale chunk_fts_rowids mapping: {mapping}"
+        )
     latest_run = read_latest_pipeline_run(defaults.db_path, corpus=defaults.corpus)
     source_state = get_corpus_adapter(defaults.corpus).compute_source_state(defaults.db_path)
     model_fingerprint = canonical_json_hash(
@@ -66,9 +77,10 @@ def run(args: Namespace, *, root: Path) -> int:
         }
     )
     run_suffix = "bootstrap" if latest_run is None else "refresh"
+    run_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     record_pipeline_run(
         db_path=defaults.db_path,
-        run_id=f"migrate::{defaults.corpus}::{run_suffix}",
+        run_id=f"migrate::{defaults.corpus}::{run_suffix}::{run_stamp}",
         corpus=defaults.corpus,
         source_state=source_state,
         schema_migration_id=latest_migration_id,
@@ -84,4 +96,15 @@ def run(args: Namespace, *, root: Path) -> int:
         model_fingerprint=model_fingerprint,
         allow_provenance_mismatch=False,
     )
+    if mapping.get("applicable"):
+        current_report = validate_chunk_first_db(defaults.db_path, corpus=defaults.corpus)
+        write_current_chunk_first_validation_report(
+            report_root=defaults.report_root,
+            corpus=defaults.corpus,
+            payload=current_report,
+        )
+        maybe_refresh_ws7_prework_closure_packet(
+            root=root,
+            deferred_items=["WS7 staged runtime implementation"],
+        )
     return status

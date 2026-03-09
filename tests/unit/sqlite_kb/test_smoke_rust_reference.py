@@ -38,7 +38,7 @@ class SmokeRustReferenceTests(unittest.TestCase):
             snapshot_root = temp_root / "snapshots"
             manifest_path = temp_root / "manifest.yaml"
             query_log_root = temp_root / "query_logs"
-            contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference.yaml"
+            contract_path = ROOT / "config" / "sqlite_query_contracts" / "rust_reference_chunk.yaml"
             reference_source_dir = create_reference_fixture(temp_root)
 
             ok, message = run_smoke(

@@ -5,6 +5,10 @@ import json
 import sqlite3
 from typing import Any
 
+from retrieval.build.chunk_fts_validation import (
+    enforce_chunk_fts_mapping,
+    refresh_chunk_fts_rowids,
+)
 from retrieval.build.reference_parsing import SectionRecord, SourceDocument, StatementRecord
 
 
@@ -264,6 +268,9 @@ def insert_payload(
                 chunk.clean_text,
             ),
         )
+
+    refresh_chunk_fts_rowids(connection)
+    enforce_chunk_fts_mapping(connection, context="shared build payload insert")
 
     for chunk_span in chunk_spans:
         connection.execute(

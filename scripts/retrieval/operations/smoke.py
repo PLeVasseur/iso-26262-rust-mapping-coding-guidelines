@@ -6,6 +6,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from retrieval.build.chunk_fts_validation import validate_chunk_fts_mapping_db
 from retrieval.operations.build import (
     DEFAULT_EMBEDDING_DIM,
     DEFAULT_EMBEDDING_MODEL_ID,
@@ -22,6 +23,7 @@ from retrieval.operations.build import (
     DEFAULT_TABLE_NODE_ID,
     build_rust_reference_db,
 )
+from retrieval.query.contracts import load_contract_query_ids
 from sqlite_query_guardrails import GuardrailError, execute_contract_query
 
 EXIT_SUCCESS = 0
@@ -34,6 +36,14 @@ def _count_statements(db_path: Path) -> int:
     connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
     try:
         return int(connection.execute("SELECT COUNT(*) FROM statements").fetchone()[0])
+    finally:
+        connection.close()
+
+
+def _count_chunks(db_path: Path) -> int:
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    try:
+        return int(connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
     finally:
         connection.close()
 
@@ -221,6 +231,80 @@ def run_smoke(
             reranker_model_revision=reranker_model_revision,
             reranker_model_license=reranker_model_license,
         )
+
+    query_ids = load_contract_query_ids(contract_path)
+    if "chunk_corpus_v1_all" in query_ids:
+        mapping = validate_chunk_fts_mapping_db(db_path)
+        if mapping.get("applicable") and not mapping.get("passed", False):
+            return False, f"chunk_fts_rowids mapping invalid: {mapping}"
+
+        snapshot_query = execute_contract_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_id="snapshot_metadata",
+            params={},
+            query_log_root=query_log_root,
+        )
+        if snapshot_query["row_count"] < 1:
+            return False, "snapshot_metadata returned no rows"
+
+        semantic_models = execute_contract_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_id="semantic_model_metadata",
+            params={},
+            query_log_root=query_log_root,
+        )
+        if semantic_models["row_count"] < 1:
+            return False, "semantic_model_metadata returned no rows"
+
+        row_requirements = execute_contract_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_id="table1_row_requirements_v2",
+            params={"row_marker": ""},
+            query_log_root=query_log_root,
+        )
+        if row_requirements["row_count"] < 1:
+            return False, "table1_row_requirements_v2 returned no rows"
+
+        lexical = execute_contract_query(
+            db_path=db_path,
+            contract_path=contract_path,
+            query_id="lexical_chunk_search_v1",
+            params={"fts_query": "defensive OR error OR handling"},
+            query_log_root=query_log_root,
+        )
+        if lexical["row_count"] < 1:
+            return False, "lexical_chunk_search_v1 returned no rows"
+
+        chunk_count = _count_chunks(db_path)
+        corpus_count = 0
+        chunk_uid_after = ""
+        while True:
+            corpus_page = execute_contract_query(
+                db_path=db_path,
+                contract_path=contract_path,
+                query_id="chunk_corpus_v1_all",
+                params={"chunk_uid_after": chunk_uid_after},
+                row_limit=FULL_CORPUS_PAGE_LIMIT,
+                query_log_root=query_log_root,
+            )
+            page_rows = list(corpus_page["rows"])
+            if not page_rows:
+                break
+            corpus_count += len(page_rows)
+            next_after = str(page_rows[-1].get("chunk_uid", ""))
+            if not next_after or next_after == chunk_uid_after:
+                return False, "chunk_corpus_v1_all pagination did not advance"
+            chunk_uid_after = next_after
+            if len(page_rows) < FULL_CORPUS_PAGE_LIMIT:
+                break
+
+        if corpus_count != chunk_count:
+            return False, f"chunk_corpus_v1_all coverage mismatch: {corpus_count} != {chunk_count}"
+
+        return True, "chunk-first smoke checks passed"
 
     snapshot_query = execute_contract_query(
         db_path=db_path,

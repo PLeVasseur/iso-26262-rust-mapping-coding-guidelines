@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from retrieval.build.chunk_fts_validation import enforce_chunk_fts_mapping
+
 SCHEMA_ID = "sqlite_kb"
 TOOL_VERSION = "sqlite-kb-clean-slate-v1"
 
@@ -42,7 +44,11 @@ def _read_migration_manifest(root: Path) -> list[dict[str, str]]:
         if migration_id in seen:
             raise RuntimeError(f"Duplicate migration id: {migration_id}")
         seen.add(migration_id)
-        normalized.append({"id": migration_id, "file": migration_file})
+        normalized_entry = {"id": migration_id, "file": migration_file}
+        backfill = str(entry.get("backfill", "") or "").strip()
+        if backfill:
+            normalized_entry["backfill"] = backfill
+        normalized.append(normalized_entry)
     return normalized
 
 
@@ -61,6 +67,41 @@ def _applied_migrations(connection: sqlite3.Connection) -> dict[str, str]:
         "SELECT migration_id, checksum_sha256 FROM migration_history"
     ).fetchall()
     return {str(row[0]): str(row[1]) for row in rows}
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def _enforce_chunk_mapping_if_applicable(connection: sqlite3.Connection) -> dict[str, Any] | None:
+    if not (_table_exists(connection, "chunks") and _table_exists(connection, "chunks_fts")):
+        return None
+    diagnostics = enforce_chunk_fts_mapping(connection, context="manifest-driven migration apply")
+    return {"diagnostics": diagnostics}
+
+
+def _backfill_chunk_fts_rowids_from_chunks_fts(connection: sqlite3.Connection) -> None:
+    if not _table_exists(connection, "chunk_fts_rowids"):
+        raise RuntimeError("chunk_fts_rowids table missing during migration backfill")
+    if not _table_exists(connection, "chunks_fts"):
+        return
+    connection.execute("DELETE FROM chunk_fts_rowids")
+    connection.execute(
+        """
+        INSERT INTO chunk_fts_rowids(chunk_uid, fts_rowid)
+        SELECT chunk_uid, rowid
+        FROM chunks_fts
+        """
+    )
+
+
+BACKFILL_HANDLERS: dict[str, Any] = {
+    "chunk_fts_rowids_from_chunks_fts": _backfill_chunk_fts_rowids_from_chunks_fts,
+}
 
 
 def apply_pending_migrations(db_path: Path, *, root: Path) -> tuple[str, int]:
@@ -89,6 +130,13 @@ def apply_pending_migrations(db_path: Path, *, root: Path) -> tuple[str, int]:
 
             with connection:
                 connection.executescript(sql_text)
+                backfill_name = str(migration.get("backfill", "") or "").strip()
+                if backfill_name:
+                    handler = BACKFILL_HANDLERS.get(backfill_name)
+                    if handler is None:
+                        raise RuntimeError(f"Unknown migration backfill handler: {backfill_name}")
+                    handler(connection)
+                    _enforce_chunk_mapping_if_applicable(connection)
                 connection.execute(
                     """
                     INSERT INTO migration_history(

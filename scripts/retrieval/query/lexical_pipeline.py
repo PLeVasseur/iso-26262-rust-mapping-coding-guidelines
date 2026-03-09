@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Callable
 from pathlib import Path
@@ -21,6 +22,9 @@ class RetrievalContractProfileLike(Protocol):
 
     @property
     def lexical_id_column(self) -> str: ...
+
+    @property
+    def lexical_subset_query_id(self) -> str | None: ...
 
     @property
     def corpus_query_id(self) -> str: ...
@@ -83,16 +87,30 @@ def run_lexical_query(
     row_marker: str,
     row_limit: int,
     row_identity: Callable[[dict[str, Any]], str],
+    allowed_scope_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     query_tokens = tokenize(query_text)
     fts_query = to_fts_query(query_text)
+    bounded_scope = allowed_scope_ids is not None
+    query_id = retrieval_contract.lexical_query_id
+    params: dict[str, Any] = {"fts_query": fts_query}
+    if bounded_scope:
+        if not retrieval_contract.lexical_subset_query_id:
+            raise GuardrailError(
+                "Bounded lexical retrieval requested but contract does not define a subset query id"
+            )
+        query_id = retrieval_contract.lexical_subset_query_id
+        params["allowed_scope_ids_json"] = json.dumps(
+            sorted(allowed_scope_ids),
+            separators=(",", ":"),
+        )
 
     corpus_by_statement_id = {str(row["statement_id"]): row for row in corpus_rows}
     result = execute_contract_query(
         db_path=db_path,
         contract_path=contract_path,
-        query_id=retrieval_contract.lexical_query_id,
-        params={"fts_query": fts_query},
+        query_id=query_id,
+        params=params,
         row_limit=row_limit,
         query_log_root=query_log_root,
     )
@@ -101,11 +119,13 @@ def run_lexical_query(
         fallback_tokens = sorted(tokenize_raw(query_text))
         fallback_query = " OR ".join(fallback_tokens)
         if fallback_query and fallback_query != fts_query:
+            fallback_params = dict(params)
+            fallback_params["fts_query"] = fallback_query
             result = execute_contract_query(
                 db_path=db_path,
                 contract_path=contract_path,
-                query_id=retrieval_contract.lexical_query_id,
-                params={"fts_query": fallback_query},
+                query_id=query_id,
+                params=fallback_params,
                 row_limit=row_limit,
                 query_log_root=query_log_root,
             )

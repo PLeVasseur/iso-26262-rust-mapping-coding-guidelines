@@ -36,6 +36,7 @@ def finalize_lexical_like_result(
     lexical_weight: float,
     semantic_weight: float,
     rerank_weight: float,
+    scope: dict[str, Any],
     preflight: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     workload["lexical_pool_size"] = int(len(lexical_rows))
@@ -74,5 +75,6 @@ def finalize_lexical_like_result(
         row_projection=row_projection,
         row_projection_all=row_projection_all,
         abstain=abstain,
+        scope=scope,
         preflight=preflight,
     )

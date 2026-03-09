@@ -29,6 +29,15 @@ from retrieval.core.provenance import (
     compute_source_state_from_db,
     record_pipeline_run,
 )
+from retrieval.build.chunk_fts_validation import (
+    enforce_chunk_fts_mapping,
+    refresh_chunk_fts_rowids,
+)
+from retrieval.build.reports import (
+    validate_chunk_first_db,
+    write_chunk_first_validation_report,
+    write_current_chunk_first_validation_report,
+)
 from retrieval.build.schema import initialize_schema
 from retrieval.build.table1_rows import resolve_table1_rows as _resolve_table1_rows
 from retrieval.ingest.contracts import CleanInput
@@ -40,6 +49,7 @@ from retrieval.operations.build import (
     DEFAULT_RERANKER_MODEL_ID,
     DEFAULT_TABLE_NODE_ID,
 )
+from retrieval.services.ws7_prework_closure import maybe_refresh_ws7_prework_closure_packet
 
 
 def _insert_table1_rows(
@@ -406,6 +416,8 @@ def run_core_docs_build(*, args: Namespace, root: Path) -> dict[str, object]:
             ORDER BY c.chunk_uid ASC
             """
         )
+        refresh_chunk_fts_rowids(connection)
+        enforce_chunk_fts_mapping(connection, context="core_docs build")
         connection.commit()
     finally:
         connection.close()
@@ -435,11 +447,32 @@ def run_core_docs_build(*, args: Namespace, root: Path) -> dict[str, object]:
         model_fingerprint=model_fingerprint,
         allow_provenance_mismatch=bool(getattr(args, "allow_provenance_mismatch", False)),
     )
+    chunk_first_report = validate_chunk_first_db(db_path, corpus="core_docs")
+    chunk_first_report_path = write_chunk_first_validation_report(
+        report_root=report_root,
+        corpus="core_docs",
+        snapshot_id=snapshot_id,
+        payload=chunk_first_report,
+    )
+    write_current_chunk_first_validation_report(
+        report_root=report_root,
+        corpus="core_docs",
+        payload=chunk_first_report,
+    )
+    maybe_refresh_ws7_prework_closure_packet(
+        root=root,
+        deferred_items=["WS7 staged runtime implementation"],
+    )
+    if not chunk_first_report["passed"]:
+        raise RuntimeError(
+            f"Chunk-first validation failed for core_docs.sqlite: {chunk_first_report['failures']}"
+        )
 
     return {
         "corpus": "core_docs",
         "snapshot_id": snapshot_id,
         "db_path": str(db_path),
+        "chunk_first_report_path": str(chunk_first_report_path),
         "targets": list(TARGET_MATRIX),
         "items": len(all_items),
         "rows": len(table_rows),

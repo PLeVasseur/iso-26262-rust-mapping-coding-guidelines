@@ -18,6 +18,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from context.fls_topology import DEFAULT_TOPOLOGY_CACHE_PATH, load_topology_index
+from retrieval.build.chunk_fts_validation import enforce_chunk_fts_mapping, refresh_chunk_fts_rowids
+from retrieval.build.reports import (
+    validate_chunk_first_db,
+    write_chunk_first_validation_report,
+    write_current_chunk_first_validation_report,
+)
+from retrieval.services.ws7_prework_closure import maybe_refresh_ws7_prework_closure_packet
 
 try:
     from scripts.parse_fls_paragraphs import (
@@ -36,6 +43,7 @@ except ModuleNotFoundError:  # pragma: no cover - script-entry fallback
 
 FLS_SOURCE_DIR = Path(".cache/fls_source/current")
 DB_PATH = Path(".cache/sqlite_kb/current/fls_spec.db")
+REPORT_ROOT = Path(".cache/sqlite_kb/reports/fls_spec")
 COMPAT_DB_PATH = Path("data/fls_spec.db")
 FLS_SOURCE_URL = "https://rust-lang.github.io/fls/index.html"
 DEFAULT_EMBED_MODEL_ID = "Qwen/Qwen3-Embedding-4B"
@@ -128,6 +136,7 @@ def build_fls_db(
     spec_lock_path: Path = DEFAULT_SPEC_LOCK_PATH,
     topology_path: Path = DEFAULT_TOPOLOGY_PATH,
     compat_symlink_mode: Literal["auto", "always", "never"] = "auto",
+    report_root: Path = REPORT_ROOT,
 ) -> dict[str, Any]:
     paragraph_numbers = load_paragraph_numbers(spec_lock_path=spec_lock_path)
     resolved_topology_path = topology_path or DEFAULT_TOPOLOGY_CACHE_PATH
@@ -157,6 +166,12 @@ def build_fls_db(
     if db_path.exists():
         db_path.unlink()
 
+    chunk_mapping: dict[str, Any] = {"applicable": False, "refreshed_rows": 0}
+    chunk_mapping_diagnostics: dict[str, Any] = {
+        "applicable": False,
+        "scope": "not_chunk_first",
+        "passed": True,
+    }
     connection = sqlite3.connect(str(db_path))
     try:
         connection.executescript(
@@ -331,6 +346,11 @@ def build_fls_db(
                 tokenize='unicode61 remove_diacritics 2'
             );
 
+            CREATE TABLE chunk_fts_rowids (
+                chunk_uid TEXT PRIMARY KEY,
+                fts_rowid INTEGER NOT NULL UNIQUE
+            );
+
             CREATE TABLE semantic_models (
                 model_id TEXT PRIMARY KEY,
                 model_role TEXT NOT NULL,
@@ -407,6 +427,7 @@ def build_fls_db(
             CREATE INDEX idx_paragraph_refs_paragraph_id ON fls_paragraph_refs(paragraph_id);
             CREATE INDEX idx_sections_document ON sections(document_id, order_index);
             CREATE INDEX idx_chunks_section ON chunks(section_id, order_index);
+            CREATE INDEX idx_chunk_fts_rowids_fts_rowid ON chunk_fts_rowids(fts_rowid);
             CREATE INDEX idx_chunk_spans_anchor ON chunk_spans(source_anchor, chunk_uid);
             CREATE INDEX idx_chunk_embeddings_model ON chunk_embeddings(model_id, chunk_uid, embed_version);
             """
@@ -887,12 +908,41 @@ def build_fls_db(
                     (paragraph.paragraph_id, ref_text, ref_target, ordinal),
                 )
 
+        chunk_mapping = refresh_chunk_fts_rowids(connection)
+        chunk_mapping_diagnostics = enforce_chunk_fts_mapping(
+            connection,
+            context="fls_spec build",
+        )
+
         connection.commit()
     finally:
         connection.close()
 
     if _should_update_compat_symlink(db_path=db_path, compat_symlink_mode=compat_symlink_mode):
         _ensure_compat_symlink(db_path)
+
+    report_root.mkdir(parents=True, exist_ok=True)
+    snapshot_id = f"fls-spec-{commit_sha}"
+    chunk_first_report = validate_chunk_first_db(db_path, corpus="fls_spec")
+    chunk_first_report_path = write_chunk_first_validation_report(
+        report_root=report_root,
+        corpus="fls_spec",
+        snapshot_id=snapshot_id,
+        payload=chunk_first_report,
+    )
+    write_current_chunk_first_validation_report(
+        report_root=report_root,
+        corpus="fls_spec",
+        payload=chunk_first_report,
+    )
+    maybe_refresh_ws7_prework_closure_packet(
+        root=Path(__file__).resolve().parents[1],
+        deferred_items=["WS7 staged runtime implementation"],
+    )
+    if not chunk_first_report["passed"]:
+        raise RuntimeError(
+            f"Chunk-first validation failed for fls_spec.db: {chunk_first_report['failures']}"
+        )
 
     return {
         "db_path": str(db_path),
@@ -904,6 +954,11 @@ def build_fls_db(
         "document_count": len(topology_index["documents_by_link"]),
         "section_count": len(topology_index["sections_by_link"]),
         "chapters": chapters,
+        "chunk_first_report_path": str(chunk_first_report_path),
+        "chunk_fts_mapping": {
+            **chunk_mapping,
+            **chunk_mapping_diagnostics,
+        },
     }
 
 

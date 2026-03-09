@@ -88,6 +88,26 @@
   `WS7_REQUIRED` abstention with structurally valid packets; do not treat it as
   ranked matching quality evidence.
 
+## WS7 Prework Operational Checks
+
+- Treat `.cache/sqlite_kb/reports/<corpus>/current_chunk_first_validation.json` as the
+  operational chunk-first health surface for `fls_spec`, `core_docs`, and
+  `rust_reference`.
+- Confirm each current report includes non-empty `db_path`, `db_sha256`,
+  `latest_migration_id`, and `schema_user_version`, plus passing
+  `chunk_fts_mapping` diagnostics.
+- If `sqlite_kb migrate` or corpus build workflows have been run recently, expect
+  those current reports to refresh automatically; do not trust older ad hoc JSON
+  files in unrelated temp/report directories as current-state evidence.
+- Treat `.cache/sqlite_kb/reports/ws7_prework_current/ws7_prework_closure_report.json`
+  as the workflow-backed prework status packet.
+- A `fail` status there is expected until the required proof JUnit artifacts are
+  present; do not hand-wave it away.
+- Only treat a strict closure packet such as
+  `.cache/sqlite_kb/reports/ws7_prework_20260309_v3/ws7_prework_closure_report.json`
+  as valid when it references the same converged current DB identities (or an
+  explicitly named snapshot set) that review is certifying.
+
 ## Step 8 Per-Role Validation + Retry Triage
 
 - Verify `<run_dir>/role_validation_report.json` exists and includes
