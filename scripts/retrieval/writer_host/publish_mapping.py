@@ -7,7 +7,6 @@ from typing import Any
 from context.fls_lookup import resolve_fls_for_guideline, validate_fls_id
 
 from retrieval.writer_host.chapter_routing import normalized_tags_for_domains, route_chapter
-from retrieval.writer_host.fls_candidate_search import gather_candidates
 from retrieval.writer_host.fls_resolution_packet import build_resolution_packet
 from retrieval.writer_host.fls_resolution_report import write_resolution_report
 from retrieval.writer_host.reviewer_taxonomy import (
@@ -25,34 +24,20 @@ def _metadata_fls_candidate(metadata: dict[str, Any]) -> dict[str, Any]:
 def _resolve_fls_id(
     *,
     packet: dict[str, Any],
+    title: str,
+    target_id: str,
     report_root: Path | None = None,
 ) -> tuple[str, dict[str, Any], str | None, dict[str, Any]]:
-    resolution_packet = dict(packet)
-    resolution_packet["expected_domains"] = []
-    candidates, variants = gather_candidates(packet=resolution_packet)
-    paragraph = resolve_fls_for_guideline(
-        resolution_packet,
-        precomputed_candidates=candidates,
-        precomputed_variants=variants,
-    )
-    title = str(packet.get("title", "")).strip()
-    target_id = str(packet.get("target_id", "")).strip() or "unknown"
+    paragraph = resolve_fls_for_guideline(packet)
+    title = str(title).strip()
+    target_id = str(target_id).strip() or "unknown"
     fls_id = str(paragraph.get("paragraph_id", "")).strip()
     decision = dict(paragraph.get("decision") or {})
     report_path: str | None = None
     if report_root is not None:
         report = {
-            "variants": list(variants),
-            "candidate_count": len(candidates),
-            "candidate_preview": [
-                {
-                    "paragraph_id": str(row.get("paragraph_id", "")),
-                    "chapter": str(row.get("chapter", "")),
-                    "lexical_score": float(row.get("lexical_score", 0.0) or 0.0),
-                    "variant_name": str(row.get("variant_name", "")),
-                }
-                for row in candidates[:15]
-            ],
+            "runtime_mode": "grounding_only_ws6",
+            "grounding_packet": packet,
             "decision": decision,
             "resolved_paragraph_id": fls_id,
             "unresolved_reason": str(paragraph.get("unresolved_reason", "")),
@@ -177,11 +162,11 @@ def map_publish_record(
     filename = f"{guideline_id}.rst"
     fls_candidate = _metadata_fls_candidate(metadata)
     packet = build_resolution_packet(row)
-    title = title or str(packet.get("title", "")).strip() or f"Guideline {target_id}"
-    packet["title"] = title
-    packet["expected_domains"] = normalized_tags
+    title = title or f"Guideline {target_id}"
     fls_id, fls_resolution, fls_resolution_report, publishability = _resolve_fls_id(
         packet=packet,
+        title=title,
+        target_id=target_id,
         report_root=resolution_report_root,
     )
     if not bool(publishability.get("publishable", False)) and not allow_unresolved:

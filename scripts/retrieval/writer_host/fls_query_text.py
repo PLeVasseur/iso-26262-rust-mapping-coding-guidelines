@@ -21,15 +21,10 @@ def _list_text(values: Any) -> list[str]:
 
 def build_packet_query_text(packet: dict[str, Any]) -> str:
     fields = [
-        _text(packet.get("title")),
-        " ".join(_list_text(packet.get("claim_phrases"))),
-        _text(packet.get("amplification_text")),
-        _text(packet.get("rationale_text")),
-        _text(packet.get("non_compliant_narrative")),
-        _text(packet.get("compliant_narrative")),
-        _text(packet.get("non_compliant_code")),
-        _text(packet.get("compliant_code")),
+        _text(packet.get("governing_obligation")),
+        " ".join(_list_text(packet.get("supporting_phrases"))),
         " ".join(_list_text(packet.get("construct_terms"))),
+        " ".join(_list_text(packet.get("code_tokens"))),
     ]
     merged = " ".join(value for value in fields if value)
     return " ".join(re.findall(r"[A-Za-z0-9_]+", merged)).strip()

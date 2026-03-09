@@ -41,7 +41,7 @@ def run_enforce_calibration_quality(args: Namespace, *, root: Path) -> int:
         "convention_spec.json",
         "lookup_status.json",
         "convention_spec_validation.json",
-        "fls_matching_validation.json",
+        "fls_grounding_runtime_validation.json",
         "role_validation_report.json",
         "guideline_manifest.json",
     ]

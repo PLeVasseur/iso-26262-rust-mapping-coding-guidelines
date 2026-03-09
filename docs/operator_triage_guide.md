@@ -83,8 +83,10 @@
   a plan-path mismatch unless bibliography resolution behavior is also missing.
 - Inspect `writer_subagent_outputs/subagent_invocation_trace.json` and verify
   each invocation has `injected_context` budgets recorded.
-- Run `uv run python scripts/validate_fls_matching.py` and confirm
-  `<run_dir>/fls_matching_validation.json` has `top1_accuracy >= 7`.
+- Run `uv run python scripts/validate_fls_matching.py --run-dir <run_dir>` and confirm
+  `<run_dir>/fls_grounding_runtime_validation.json` reports grounding-only
+  `WS7_REQUIRED` abstention with structurally valid packets; do not treat it as
+  ranked matching quality evidence.
 
 ## Step 8 Per-Role Validation + Retry Triage
 

@@ -2,10 +2,23 @@ from __future__ import annotations
 
 import json
 import re
+import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from context.fls_lookup import resolve_fls_for_guideline
+from retrieval.writer_host.fls_grounding import build_grounding_artifact
+
+
+EXPECTED_GROUNDING_FIELDS = {
+    "governing_obligation",
+    "construct_terms",
+    "code_tokens",
+    "supporting_phrases",
+    "prior_documents",
+    "prior_sections",
+    "ambiguity_notes",
+}
 
 
 def extract_fls_ids_from_rst(rst_path: Path) -> list[str]:
@@ -34,30 +47,129 @@ def extract_topic_from_rst(rst_path: Path) -> str:
     return ""
 
 
+def _body_lines_after_title(*, content: str, title: str) -> list[str]:
+    body_lines: list[str] = []
+    capture = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not capture and title and stripped == title:
+            capture = True
+            continue
+        if capture and stripped and set(stripped) <= {"=", "-", "~", "^"}:
+            continue
+        if capture:
+            body_lines.append(line)
+    return body_lines
+
+
+def _extract_rust_example_blocks(lines: list[str]) -> tuple[list[str], list[str]]:
+    code_blocks: list[str] = []
+    kept_lines: list[str] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.strip().startswith(".. rust-example::"):
+            directive_indent = len(line) - len(line.lstrip(" "))
+            index += 1
+            raw_body: list[str] = []
+            while index < len(lines):
+                current = lines[index]
+                current_indent = len(current) - len(current.lstrip(" "))
+                if current.strip() and current_indent <= directive_indent:
+                    break
+                raw_body.append(current)
+                index += 1
+            while raw_body and not raw_body[0].strip():
+                raw_body.pop(0)
+            while raw_body and raw_body[0].lstrip().startswith(":"):
+                raw_body.pop(0)
+            while raw_body and not raw_body[0].strip():
+                raw_body.pop(0)
+            code = textwrap.dedent("\n".join(raw_body)).strip()
+            if code:
+                code_blocks.append(code)
+            continue
+        kept_lines.append(line)
+        index += 1
+    return kept_lines, code_blocks
+
+
+def _prose_before_example_sections(lines: list[str]) -> list[str]:
+    kept: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(".. non_compliant_example::") or stripped.startswith(
+            ".. compliant_example::"
+        ):
+            break
+        kept.append(line)
+    return kept
+
+
+def _normalize_prose_block(block: str) -> str:
+    cleaned_lines: list[str] = []
+    for raw_line in block.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(".. ") or line.startswith(":"):
+            continue
+        line = re.sub(r"^[|*\-]+\s*", "", line)
+        line = line.replace("**", "").replace("``", "")
+        line = re.sub(r"\s+", " ", line).strip()
+        if line:
+            cleaned_lines.append(line)
+    return " ".join(cleaned_lines).strip()
+
+
 def build_resolution_packet_from_rst(rst_path: Path) -> dict[str, Any]:
     content = rst_path.read_text(encoding="utf-8")
     title = extract_topic_from_rst(rst_path)
-    tags_match = re.search(r":tags:\s+(.+)", content)
-    tags = []
-    if tags_match:
-        tags = [value.strip().lower() for value in tags_match.group(1).split(",") if value.strip()]
-    code_blocks = re.findall(r"\.\. rust-example::\n(?:\s+:[^\n]+\n)*\n((?:\n|\s+.+\n)+)", content)
-    non_compliant_code = code_blocks[0].strip() if code_blocks else ""
-    compliant_code = code_blocks[1].strip() if len(code_blocks) > 1 else ""
-    return {
-        "target_id": rst_path.stem,
-        "title": title,
-        "construct_terms": title.split(),
-        "expected_domains": tags,
-        "amplification_text": content,
-        "rationale_text": content,
-        "non_compliant_narrative": content,
-        "non_compliant_code": non_compliant_code,
-        "compliant_narrative": content,
-        "compliant_code": compliant_code,
-        "claim_phrases": [title],
-        "min_variant_coverage": 1,
-    }
+    body_lines = _body_lines_after_title(content=content, title=title)
+    prose_lines, code_blocks = _extract_rust_example_blocks(body_lines)
+    prose_lines = _prose_before_example_sections(prose_lines)
+    prose_blocks = [
+        block.strip() for block in re.split(r"\n\s*\n", "\n".join(prose_lines)) if block.strip()
+    ]
+    cleaned_blocks: list[str] = []
+    for block in prose_blocks:
+        cleaned = _normalize_prose_block(block)
+        if not cleaned:
+            continue
+        cleaned_blocks.append(cleaned)
+    amplification_text = cleaned_blocks[0] if cleaned_blocks else ""
+    rationale_text = " ".join(cleaned_blocks[1:])
+    aggregated_code = "\n\n".join(block.strip() for block in code_blocks if block.strip())
+    return build_grounding_artifact(
+        {
+            "draft": {
+                "target_id": rst_path.stem,
+                "title": title,
+                "construct_terms": [],
+                "claim_to_evidence_map": [{"claim_text": title}] if title else [],
+            },
+            "amplification": {"guideline_amplification_text": amplification_text},
+            "rationale": {"rationale_text": rationale_text},
+            "examples": {
+                "non_compliant_code": aggregated_code,
+                "compliant_code": "",
+            },
+            "metadata": {},
+        }
+    )
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _assert_runtime_allowed_dataset(dataset_path: Path) -> None:
+    payload = _load_json(dataset_path)
+    if bool(payload.get("runtime_use_prohibited", False)):
+        raise RuntimeError(
+            f"dataset {dataset_path} is marked runtime_use_prohibited and cannot be used for calibration"
+        )
 
 
 def load_calibration_items(
@@ -67,7 +179,8 @@ def load_calibration_items(
     dataset_path: Path | None = None,
 ) -> list[dict[str, Any]]:
     if dataset_path is not None and dataset_path.exists():
-        payload = json.loads(dataset_path.read_text(encoding="utf-8"))
+        _assert_runtime_allowed_dataset(dataset_path)
+        payload = _load_json(dataset_path)
         rows = payload.get("items") if isinstance(payload, dict) else []
         if not isinstance(rows, list):
             rows = []
@@ -136,102 +249,94 @@ def load_calibration_items(
 def evaluate_calibration_items(
     *,
     items: list[dict[str, Any]],
-    policy_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     total = 0
-    strict_top1 = 0
-    topk_match = 0
-    chapter_match = 0
-    unresolved = 0
-    false_accept = 0
-    false_reject = 0
+    ws7_required = 0
+    grounding_only_runtime = 0
+    structurally_valid = 0
+    no_legacy_fields = 0
+    abstention_correct = 0
+    publish_accept_violations = 0
     rows: list[dict[str, Any]] = []
 
     for item in items:
-        packet = item.get("packet") if isinstance(item.get("packet"), dict) else {}
+        raw_packet = item.get("packet")
+        packet: dict[str, Any] = (
+            cast(dict[str, Any], dict(raw_packet)) if isinstance(raw_packet, dict) else {}
+        )
         acceptable_ids = [
             str(value).strip()
             for value in list(item.get("acceptable_ids") or [])
             if str(value).strip()
         ]
-        acceptable_chapters = {
-            str(value).strip()
-            for value in list(item.get("acceptable_chapters") or [])
-            if str(value).strip()
-        }
-        should_abstain = bool(item.get("should_abstain", False))
+        packet_fields_exact = set(packet) == EXPECTED_GROUNDING_FIELDS
+        packet_has_no_legacy = all(
+            key not in packet for key in ("expected_domains", "field_terms", "code_symbols")
+        )
 
         try:
-            predicted = resolve_fls_for_guideline(packet, policy_overrides=policy_overrides)
+            predicted: dict[str, Any] = resolve_fls_for_guideline(
+                packet,
+            )
         except RuntimeError:
             predicted = {
                 "paragraph_id": "fls_UNRESOLVED",
                 "decision": {"reason_code": "RUNTIME_ERROR"},
             }
 
-        decision = predicted.get("decision") if isinstance(predicted.get("decision"), dict) else {}
+        raw_decision = predicted.get("decision")
+        decision: dict[str, Any] = (
+            cast(dict[str, Any], dict(raw_decision)) if isinstance(raw_decision, dict) else {}
+        )
         predicted_id = str(predicted.get("paragraph_id", "fls_UNRESOLVED"))
-        predicted_chapter = str(predicted.get("chapter", ""))
-        top_candidates = list(decision.get("top_candidates") or [])
-        top_candidate_ids = [
-            str(row.get("paragraph_id", "")).strip()
-            for row in top_candidates
-            if isinstance(row, dict) and str(row.get("paragraph_id", "")).strip()
-        ]
+        reason_code = str(decision.get("reason_code", ""))
+        is_grounding_only = bool(decision.get("grounding_only_runtime", False))
+        publish_accept = bool(decision.get("publish_accept", False))
 
         total += 1
-        if predicted_id == "fls_UNRESOLVED":
-            unresolved += 1
-
-        strict_match = bool(acceptable_ids) and predicted_id in acceptable_ids
-        if strict_match:
-            strict_top1 += 1
-
-        topk_contains = bool(acceptable_ids) and any(
-            value in acceptable_ids for value in top_candidate_ids
-        )
-        if topk_contains:
-            topk_match += 1
-
-        chapter_ok = bool(acceptable_chapters) and predicted_chapter in acceptable_chapters
-        if chapter_ok:
-            chapter_match += 1
-
-        publish_accept = bool(decision.get("publish_accept", False))
-        if should_abstain and publish_accept:
-            false_accept += 1
-        if (not should_abstain) and (predicted_id == "fls_UNRESOLVED"):
-            false_reject += 1
+        if packet_fields_exact:
+            structurally_valid += 1
+        if packet_has_no_legacy:
+            no_legacy_fields += 1
+        if reason_code == "WS7_REQUIRED":
+            ws7_required += 1
+        if is_grounding_only:
+            grounding_only_runtime += 1
+        if (
+            predicted_id == "fls_UNRESOLVED"
+            and reason_code == "WS7_REQUIRED"
+            and not publish_accept
+        ):
+            abstention_correct += 1
+        if publish_accept:
+            publish_accept_violations += 1
 
         rows.append(
             {
                 "path": str(item.get("path", "")),
                 "predicted_id": predicted_id,
-                "predicted_chapter": predicted_chapter,
                 "acceptable_ids": acceptable_ids,
-                "acceptable_chapters": sorted(acceptable_chapters),
-                "should_abstain": should_abstain,
-                "strict_top1_match": strict_match,
-                "topk_contains_match": topk_contains,
-                "chapter_match": chapter_ok,
-                "reason_code": str(decision.get("reason_code", "")),
+                "packet_fields_exact": packet_fields_exact,
+                "packet_has_no_legacy_fields": packet_has_no_legacy,
+                "reason_code": reason_code,
                 "publish_accept": publish_accept,
-                "review_candidate": bool(decision.get("review_candidate", False)),
+                "grounding_only_runtime": is_grounding_only,
             }
         )
 
     return {
         "total": total,
-        "strict_top1": strict_top1,
-        "topk_contains": topk_match,
-        "chapter_match": chapter_match,
-        "unresolved": unresolved,
-        "false_accept": false_accept,
-        "false_reject": false_reject,
-        "strict_top1_ratio": (strict_top1 / total) if total else 0.0,
-        "topk_ratio": (topk_match / total) if total else 0.0,
-        "chapter_ratio": (chapter_match / total) if total else 0.0,
-        "unresolved_ratio": (unresolved / total) if total else 0.0,
+        "ws7_required": ws7_required,
+        "grounding_only_runtime": grounding_only_runtime,
+        "structurally_valid": structurally_valid,
+        "no_legacy_fields": no_legacy_fields,
+        "abstention_correct": abstention_correct,
+        "publish_accept_violations": publish_accept_violations,
+        "ws7_required_ratio": (ws7_required / total) if total else 0.0,
+        "grounding_only_ratio": (grounding_only_runtime / total) if total else 0.0,
+        "structurally_valid_ratio": (structurally_valid / total) if total else 0.0,
+        "no_legacy_fields_ratio": (no_legacy_fields / total) if total else 0.0,
+        "abstention_correct_ratio": (abstention_correct / total) if total else 0.0,
         "rows": rows,
     }
 
@@ -241,47 +346,10 @@ def run_threshold_sweep(
     items: list[dict[str, Any]],
     base_policy: dict[str, Any],
 ) -> dict[str, Any]:
-    scores = [0.44, 0.48, 0.52]
-    overlaps = [0.10, 0.12, 0.14]
-    margins = [0.03, 0.05]
-    summaries: list[dict[str, Any]] = []
-    for score in scores:
-        for overlap in overlaps:
-            for margin in margins:
-                override = {
-                    "thresholds": {
-                        "min_confidence_score": score,
-                        "min_weighted_overlap": overlap,
-                        "min_confidence_margin": margin,
-                    }
-                }
-                merged = {key: value for key, value in base_policy.items()}
-                merged = _deep_merge(merged, override)
-                report = evaluate_calibration_items(items=items, policy_overrides=merged)
-                summaries.append(
-                    {
-                        "thresholds": override["thresholds"],
-                        "metrics": {
-                            "strict_top1_ratio": report["strict_top1_ratio"],
-                            "topk_ratio": report["topk_ratio"],
-                            "unresolved_ratio": report["unresolved_ratio"],
-                            "false_accept": report["false_accept"],
-                        },
-                    }
-                )
-    summaries.sort(
-        key=lambda row: (
-            int(row["metrics"].get("false_accept", 0)),
-            -float(row["metrics"].get("topk_ratio", 0.0)),
-            -float(row["metrics"].get("strict_top1_ratio", 0.0)),
-            float(row["metrics"].get("unresolved_ratio", 1.0)),
-        )
+    del items, base_policy
+    raise RuntimeError(
+        "WS7_REQUIRED: threshold sweep is disabled while runtime remains grounding-only"
     )
-    return {
-        "candidate_count": len(summaries),
-        "best": summaries[0] if summaries else {},
-        "candidates": summaries,
-    }
 
 
 def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:

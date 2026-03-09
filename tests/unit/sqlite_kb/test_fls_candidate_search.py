@@ -13,14 +13,13 @@ from retrieval.writer_host import fls_candidate_search  # noqa: E402
 
 def test_build_query_variants_uses_single_packet_text_query() -> None:
     packet = {
-        "title": "Unsafe error recovery can violate invariants",
-        "amplification_text": "Safety invariants must hold on fault paths",
-        "rationale_text": "Unchecked pointer use can trigger UB",
-        "non_compliant_narrative": "logs and continues",
-        "non_compliant_code": "unsafe { *ptr }",
-        "compliant_narrative": "returns Result on invalid state",
-        "compliant_code": "slice.get(idx)",
-        "claim_phrases": ["safe callers must not trigger UB"],
+        "governing_obligation": "Unsafe error recovery can violate invariants",
+        "supporting_phrases": [
+            "safe callers must not trigger UB",
+            "Safety invariants must hold on fault paths",
+        ],
+        "construct_terms": ["unsafe", "invariants"],
+        "code_tokens": ["ptr", "slice", "idx"],
     }
 
     variants = fls_candidate_search.build_query_variants(packet)
@@ -30,9 +29,7 @@ def test_build_query_variants_uses_single_packet_text_query() -> None:
             "query": (
                 "Unsafe error recovery can violate invariants "
                 "safe callers must not trigger UB "
-                "Safety invariants must hold on fault paths "
-                "Unchecked pointer use can trigger UB logs and continues "
-                "returns Result on invalid state unsafe ptr slice get idx"
+                "Safety invariants must hold on fault paths unsafe invariants ptr slice idx"
             ),
         }
     ]
@@ -40,14 +37,10 @@ def test_build_query_variants_uses_single_packet_text_query() -> None:
 
 def test_gather_candidates_tags_variant_name(monkeypatch) -> None:
     packet = {
-        "title": "Unsafe paths",
-        "amplification_text": "",
-        "rationale_text": "",
-        "non_compliant_narrative": "",
-        "non_compliant_code": "",
-        "compliant_narrative": "",
-        "compliant_code": "",
-        "claim_phrases": [],
+        "governing_obligation": "Unsafe paths",
+        "supporting_phrases": [],
+        "construct_terms": [],
+        "code_tokens": [],
     }
 
     def fake_search(query: str, *, db_path=None, limit=5):

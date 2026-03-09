@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from context.fls_lookup import search_fls_paragraphs
+from context.fls_search_runtime import search_fls_paragraphs
 from retrieval.writer_host.fls_query_text import build_packet_query_text
 
 

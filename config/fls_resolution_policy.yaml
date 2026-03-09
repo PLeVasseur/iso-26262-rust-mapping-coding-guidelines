@@ -1,44 +1,16 @@
-thresholds:
-  min_confidence_score: 0.52
-  min_confidence_margin: 0.05
-  min_weighted_overlap: 0.14
-  min_term_hits: 2
-  min_variant_coverage: 2
-  min_high_trust_field_match: 1
-  min_high_trust_field_overlap: 0.08
+runtime_mode: grounding_only_ws6
 
-review_thresholds:
-  min_confidence_score: 0.38
-  min_weighted_overlap: 0.10
-  min_variant_coverage: 1
-  min_high_trust_field_match: 1
+ws6_policy:
+  active_truth:
+    paragraph_resolution: WS7_REQUIRED
+    candidate_competition: disabled
+    ranking_thresholds: dormant
+    ranking_weights: dormant
+  notes:
+    - WS6 grounding may build only deterministic grounding artifacts and soft priors.
+    - WS6 runtime must not treat any ranking-era score threshold or weight as active decision truth.
+    - WS7 will replace this dormant placeholder with the declared staged score contract.
 
-weights:
-  lexical: 0.20
-  weighted_overlap: 0.40
-  variant_coverage: 0.15
-  code_overlap: 0.15
-  chapter_bonus: 0.10
-
-field_weights:
-  title: 1.00
-  claim: 1.00
-  rationale: 0.75
-  amplification: 0.65
-  non_compliant_narrative: 0.55
-  compliant_narrative: 0.45
-  construct_terms: 0.70
-
-field_top_k_terms:
-  title: 12
-  claim: 16
-  rationale: 20
-  amplification: 20
-  non_compliant_narrative: 16
-  compliant_narrative: 16
-  construct_terms: 12
-
-high_trust_fields:
-  - title
-  - claim
-  - construct_terms
+ws7_ranking_dormant:
+  status: inactive_until_ws7
+  prior_config_source: plan_only

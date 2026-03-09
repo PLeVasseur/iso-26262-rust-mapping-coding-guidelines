@@ -50,13 +50,8 @@ def _row_fixture() -> dict[str, object]:
 def test_map_publish_record_raises_on_unresolved_fls(monkeypatch) -> None:
     monkeypatch.setattr(
         publish_mapping,
-        "gather_candidates",
-        lambda packet: ([], []),
-    )
-    monkeypatch.setattr(
-        publish_mapping,
         "resolve_fls_for_guideline",
-        lambda packet, precomputed_candidates=None, precomputed_variants=None: {
+        lambda packet: {
             "paragraph_id": "fls_UNRESOLVED",
             "unresolved_reason": "top candidate confidence score below threshold",
             "decision": {"reason_code": "LOW_CONFIDENCE_SCORE"},
@@ -70,16 +65,8 @@ def test_map_publish_record_raises_on_unresolved_fls(monkeypatch) -> None:
 def test_map_publish_record_attaches_fls_resolution_decision(monkeypatch) -> None:
     monkeypatch.setattr(
         publish_mapping,
-        "gather_candidates",
-        lambda packet: (
-            [{"paragraph_id": "fls_unsafe003"}],
-            [{"name": "title_focus", "query": "unsafe"}],
-        ),
-    )
-    monkeypatch.setattr(
-        publish_mapping,
         "resolve_fls_for_guideline",
-        lambda packet, precomputed_candidates=None, precomputed_variants=None: {
+        lambda packet: {
             "paragraph_id": "fls_unsafe003",
             "decision": {
                 "accepted": True,
@@ -101,28 +88,32 @@ def test_map_publish_record_attaches_fls_resolution_decision(monkeypatch) -> Non
 def test_map_publish_record_passes_multifield_packet(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_gather(packet):
+    def fake_resolve(packet):
         seen["packet"] = packet
-        return [], []
-
-    monkeypatch.setattr(publish_mapping, "gather_candidates", fake_gather)
-    monkeypatch.setattr(
-        publish_mapping,
-        "resolve_fls_for_guideline",
-        lambda packet, precomputed_candidates=None, precomputed_variants=None: {
+        return {
             "paragraph_id": "fls_unsafe003",
             "decision": {"reason_code": "ACCEPTED", "accepted": True},
-        },
-    )
+        }
+
+    monkeypatch.setattr(publish_mapping, "resolve_fls_for_guideline", fake_resolve)
     monkeypatch.setattr(publish_mapping, "validate_fls_id", lambda value: value == "fls_unsafe003")
 
     publish_mapping.map_publish_record(_row_fixture())
 
     packet = seen.get("packet")
     assert isinstance(packet, dict)
-    assert list(packet.get("expected_domains") or []) == []
-    assert "get_unchecked" in str(packet.get("non_compliant_code", ""))
-    assert packet.get("claim_phrases")
+    assert set(packet) == {
+        "governing_obligation",
+        "construct_terms",
+        "code_tokens",
+        "supporting_phrases",
+        "prior_documents",
+        "prior_sections",
+        "ambiguity_notes",
+    }
+    assert "get_unchecked" in list(packet.get("code_tokens") or [])
+    assert packet.get("supporting_phrases")
+    assert "expected_domains" not in packet
 
 
 def test_map_publish_record_writes_resolution_report_when_root_provided(
@@ -131,13 +122,8 @@ def test_map_publish_record_writes_resolution_report_when_root_provided(
 ) -> None:
     monkeypatch.setattr(
         publish_mapping,
-        "gather_candidates",
-        lambda packet: ([{"paragraph_id": "fls_unsafe003", "variant_name": "title_focus"}], []),
-    )
-    monkeypatch.setattr(
-        publish_mapping,
         "resolve_fls_for_guideline",
-        lambda packet, precomputed_candidates=None, precomputed_variants=None: {
+        lambda packet: {
             "paragraph_id": "fls_unsafe003",
             "decision": {"accepted": True, "reason_code": "ACCEPTED"},
         },
@@ -159,6 +145,73 @@ def test_map_publish_record_writes_resolution_report_when_root_provided(
     assert str(mapped["fls_resolution_report"]).endswith("ret_issue_001.json")
 
 
+def test_map_publish_record_passes_title_and_target_to_report_writer(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        publish_mapping,
+        "resolve_fls_for_guideline",
+        lambda packet: {
+            "paragraph_id": "fls_unsafe003",
+            "decision": {"accepted": True, "reason_code": "ACCEPTED"},
+        },
+    )
+    monkeypatch.setattr(publish_mapping, "validate_fls_id", lambda value: value == "fls_unsafe003")
+
+    def fake_write_resolution_report(*, report_root, target_id, title, payload):
+        seen["target_id"] = target_id
+        seen["title"] = title
+        seen["payload"] = payload
+        return tmp_path / "ret_issue_001.json"
+
+    monkeypatch.setattr(publish_mapping, "write_resolution_report", fake_write_resolution_report)
+
+    publish_mapping.map_publish_record(_row_fixture(), resolution_report_root=tmp_path)
+
+    assert seen["target_id"] == "RET-ISSUE-001"
+    assert seen["title"] == "Preserve safety invariants on error paths"
+    payload = cast(dict[str, Any], seen["payload"])
+    assert payload["runtime_mode"] == "grounding_only_ws6"
+    assert "grounding_packet" in payload
+    assert "candidate_count" not in payload
+    assert "candidate_preview" not in payload
+
+
+def test_map_publish_record_metadata_routing_fields_do_not_change_fls_packet(monkeypatch) -> None:
+    packets: list[dict[str, object]] = []
+
+    def fake_resolve(packet: dict[str, object]):
+        packets.append(dict(packet))
+        return {
+            "paragraph_id": "fls_unsafe003",
+            "decision": {"accepted": True, "reason_code": "ACCEPTED"},
+        }
+
+    monkeypatch.setattr(publish_mapping, "resolve_fls_for_guideline", fake_resolve)
+    monkeypatch.setattr(publish_mapping, "validate_fls_id", lambda value: value == "fls_unsafe003")
+
+    base = _row_fixture()
+    altered = _row_fixture()
+    altered["draft"] = dict(cast(dict[str, Any], altered["draft"]))
+    altered["metadata"] = {
+        "tags": ["concurrency", "ffi", "macros"],
+        "editorial_metadata": {"proposed_title": "Editorial override should stay inert"},
+        "fls_candidate": {
+            "statement": "Metadata should not influence grounding",
+            "category": "mandatory",
+        },
+    }
+
+    publish_mapping.map_publish_record(base)
+    publish_mapping.map_publish_record(altered)
+
+    assert len(packets) == 2
+    assert packets[0] == packets[1]
+
+
 @pytest.mark.parametrize("fls_candidate", [True, False, "subset-candidate"])
 def test_map_publish_record_tolerates_non_dict_fls_candidate(
     monkeypatch,
@@ -170,13 +223,8 @@ def test_map_publish_record_tolerates_non_dict_fls_candidate(
     row["metadata"] = metadata
     monkeypatch.setattr(
         publish_mapping,
-        "gather_candidates",
-        lambda packet: ([{"paragraph_id": "fls_unsafe003"}], []),
-    )
-    monkeypatch.setattr(
-        publish_mapping,
         "resolve_fls_for_guideline",
-        lambda packet, precomputed_candidates=None, precomputed_variants=None: {
+        lambda packet: {
             "paragraph_id": "fls_unsafe003",
             "decision": {"accepted": True, "reason_code": "ACCEPTED"},
         },
@@ -192,11 +240,10 @@ def test_map_publish_record_tolerates_non_dict_fls_candidate(
 
 
 def test_map_publish_record_allows_unresolved_in_review_mode(monkeypatch) -> None:
-    monkeypatch.setattr(publish_mapping, "gather_candidates", lambda packet: ([], []))
     monkeypatch.setattr(
         publish_mapping,
         "resolve_fls_for_guideline",
-        lambda packet, precomputed_candidates=None, precomputed_variants=None: {
+        lambda packet: {
             "paragraph_id": "fls_UNRESOLVED",
             "unresolved_reason": "top candidate chapter mismatches expected domain",
             "decision": {"reason_code": "CHAPTER_MISMATCH", "accepted": False},
@@ -208,3 +255,13 @@ def test_map_publish_record_allows_unresolved_in_review_mode(monkeypatch) -> Non
     assert mapped["fls_id"] == "fls_UNRESOLVED"
     assert mapped["publishability"]["publishable"] is False
     assert mapped["publishability"]["reason_code"] == "CHAPTER_MISMATCH"
+
+
+def test_map_publish_record_uses_grounding_only_runtime_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(publish_mapping, "validate_fls_id", lambda value: value.startswith("fls_"))
+
+    mapped = publish_mapping.map_publish_record(_row_fixture(), allow_unresolved=True)
+
+    assert mapped["fls_id"] == "fls_UNRESOLVED"
+    assert mapped["fls_resolution"]["reason_code"] == "WS7_REQUIRED"
+    assert mapped["publishability"]["publishable"] is False

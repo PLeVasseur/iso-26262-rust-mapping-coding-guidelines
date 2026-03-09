@@ -10,9 +10,9 @@ import pytest
 from context.fls_lookup import (
     get_live_topology_membership,
     resolve_fls_for_construct,
-    search_fls_paragraphs,
     validate_fls_id,
 )
+from context.fls_search_runtime import search_fls_paragraphs
 from scripts.build_fls_db import build_fls_db
 from scripts.fetch_fls_source import fetch_fls_source
 from scripts.parse_fls_paragraphs import parse_fls_rst
@@ -584,8 +584,8 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         db_path=db_path,
         spec_lock_path=spec_lock_path,
     )
-    assert resolved["paragraph_id"] == "fls_atomic002"
-    assert resolved["paragraph_number"].startswith("17")
+    assert resolved["paragraph_id"] == "fls_UNRESOLVED"
+    assert resolved["decision"]["reason_code"] == "WS7_REQUIRED"
 
     resolved_with_domains = resolve_fls_for_construct(
         ["atomic", "fence", "ordering"],
@@ -593,11 +593,7 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         spec_lock_path=spec_lock_path,
         expected_domains=["unsafe", "concurrency"],
     )
-    assert resolved_with_domains["paragraph_id"] == resolved["paragraph_id"]
-    assert (
-        resolved_with_domains["decision"]["top_candidates"]
-        == resolved["decision"]["top_candidates"]
-    )
+    assert resolved_with_domains == resolved
 
     assert validate_fls_id("fls_atomic002", spec_lock_path=spec_lock_path)
     assert not validate_fls_id("fls_FABRICATED_ID", spec_lock_path=spec_lock_path)
