@@ -6,32 +6,33 @@ from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from retrieval.core_docs.rustdoc_extract import (
-    CANONICAL_TARGET,
-    OVERLAY_ITEM_CAP,
-    TARGET_MATRIX,
-    ParsedItem,
-    TargetCfg,
-    generate_rustdoc_json as _generate_rustdoc_json,
-    load_parsed_items as _load_parsed_items,
-    sha256_text as _sha256_text,
-    split_chunks as _split_chunks,
-    target_cfg as _target_cfg,
-    token_len as _token_len,
-    toolchain_version as _toolchain_version,
-    utc_now as _utc_now,
-    write_manifest as _write_manifest,
+from retrieval.build.core_docs_incremental import (
+    build_core_docs_materialized_view,
+    delete_core_docs_documents,
+    refresh_core_docs_fts,
+    upsert_core_docs_document,
 )
-
-from retrieval.core.provenance import (
-    apply_pending_migrations,
-    canonical_json_hash,
-    compute_source_state_from_db,
-    record_pipeline_run,
-)
-from retrieval.build.chunk_fts_validation import (
-    enforce_chunk_fts_mapping,
-    refresh_chunk_fts_rowids,
+from retrieval.build.incremental_refresh import (
+    audit_preserved_chunk_embeddings,
+    capture_cross_db_baseline,
+    embedding_reuse_key,
+    ensure_incremental_tables,
+    estimate_embedding_impact,
+    load_source_inventory_documents,
+    plan_inventory_delta,
+    prepare_staged_db,
+    promote_staged_db,
+    record_embedding_reuse_audit,
+    record_materialization_delta,
+    replace_source_inventory,
+    require_force_rebuild,
+    utc_now,
+    validate_cross_db_non_regression,
+    validate_staged_corpus,
+    write_delta_report,
+    write_operator_summary,
+    write_promotion_provenance,
+    write_refresh_contract_report,
 )
 from retrieval.build.reports import (
     validate_chunk_first_db,
@@ -40,7 +41,42 @@ from retrieval.build.reports import (
 )
 from retrieval.build.schema import initialize_schema
 from retrieval.build.table1_rows import resolve_table1_rows as _resolve_table1_rows
-from retrieval.ingest.contracts import CleanInput
+from retrieval.core.provenance import (
+    apply_pending_migrations,
+    canonical_json_hash,
+    compute_source_state_from_db,
+    record_pipeline_run,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    CANONICAL_TARGET,
+    OVERLAY_ITEM_CAP,
+    TARGET_MATRIX,
+    ParsedItem,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    generate_rustdoc_json as _generate_rustdoc_json,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    load_parsed_items as _load_parsed_items,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    sha256_text as _sha256_text,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    split_chunks as _split_chunks,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    target_cfg as _target_cfg,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    toolchain_version as _toolchain_version,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    utc_now as _utc_now,
+)
+from retrieval.core_docs.rustdoc_extract import (
+    write_manifest as _write_manifest,
+)
 from retrieval.ingest.registry import resolve_ingest_strategy
 from retrieval.operations.build import (
     DEFAULT_EMBEDDING_DIM,
@@ -81,6 +117,13 @@ def _insert_table1_rows(
                 """,
                 (row_node_id, idx, term, "core-docs-rustdoc-v1"),
             )
+
+
+def _read_latest_snapshot_id(connection: sqlite3.Connection) -> str:
+    row = connection.execute(
+        "SELECT snapshot_id FROM snapshots ORDER BY rowid DESC LIMIT 1"
+    ).fetchone()
+    return str(row[0]) if row and row[0] is not None else ""
 
 
 def run_core_docs_build(*, args: Namespace, root: Path) -> dict[str, object]:
@@ -133,24 +176,96 @@ def run_core_docs_build(*, args: Namespace, root: Path) -> dict[str, object]:
     if not all_items:
         raise RuntimeError("No rustdoc items extracted for core_docs build")
 
-    if db_path.exists():
-        db_path.unlink()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
-    connection = sqlite3.connect(db_path)
-    try:
-        initialize_schema(connection)
-        connection.commit()
-    finally:
-        connection.close()
-
-    latest_migration_id, _ = apply_pending_migrations(db_path, root=root)
     strategy = resolve_ingest_strategy(
         str(getattr(args, "ingest_strategy", "core_docs_rustdoc_v1"))
     )
+    run_id = f"core_docs_incremental::{snapshot_id}"
+    staged_root = (
+        root / str(getattr(args, "staged_output_root", ".cache/sqlite_kb/staged"))
+    ).resolve()
+    promotion_root = (
+        root / str(getattr(args, "promotion_root", ".cache/sqlite_kb/promotions"))
+    ).resolve()
+    use_incremental = bool(getattr(args, "incremental", False))
+    force_rebuild = bool(getattr(args, "force_rebuild", False))
+    fallback_in_progress = bool(getattr(args, "_fallback_in_progress", False))
+    cross_db_baseline = capture_cross_db_baseline(root=root) if use_incremental else {}
+    if bool(getattr(args, "refresh_derived_only", False)):
+        raise RuntimeError("core_docs builder does not yet support --refresh-derived-only")
 
-    connection = sqlite3.connect(db_path)
+    materialized = build_core_docs_materialized_view(
+        all_items=all_items,
+        strategy=strategy,
+        snapshot_id=snapshot_id,
+        fetched_at=fetched_at,
+        source_revision=source_revision,
+        chunk_target_min_tokens=int(getattr(args, "chunk_target_min_tokens", 150)),
+        chunk_target_max_tokens=int(getattr(args, "chunk_target_max_tokens", 500)),
+        split_chunks=_split_chunks,
+    )
+
+    target_db_path = db_path
+    promotion: dict[str, str] = {}
+    if use_incremental:
+        target_db_path, _ = prepare_staged_db(
+            live_db_path=db_path,
+            staged_root=staged_root,
+            corpus="core_docs",
+            run_id=run_id,
+        )
+
+    if not target_db_path.exists():
+        target_db_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(target_db_path)
+        try:
+            initialize_schema(connection)
+            connection.commit()
+        finally:
+            connection.close()
+
+    latest_migration_id, _ = apply_pending_migrations(target_db_path, root=root)
+
+    connection = sqlite3.connect(target_db_path)
     try:
+        ensure_incremental_tables(connection)
+        base_snapshot_id = _read_latest_snapshot_id(connection)
+        current_inventory = load_source_inventory_documents(connection, corpus="core_docs")
+        planned_delta = plan_inventory_delta(
+            current=current_inventory,
+            incoming=materialized["document_inventory"],
+        )
+        unchanged_docs = set(planned_delta.unchanged)
+        unchanged_sections = {
+            section_id
+            for section_id, entry in materialized["section_inventory"].items()
+            if entry.parent_id in unchanged_docs
+        }
+        unchanged_chunk_ids = [
+            unit_id
+            for (unit_kind, unit_id), entry in materialized["unit_inventory"].items()
+            if unit_kind == "chunk" and entry.parent_id in unchanged_sections
+        ]
+        dry_run_report_path = write_delta_report(
+            report_root=report_root,
+            corpus="core_docs",
+            run_id=run_id,
+            phase="pre_apply",
+            payload={
+                **planned_delta.as_dict(),
+                "snapshot_id": snapshot_id,
+                "db_path": str(target_db_path),
+                "staged": use_incremental,
+                "embedding_impact": estimate_embedding_impact(
+                    planned_delta=planned_delta,
+                    unchanged_chunk_ids=unchanged_chunk_ids,
+                    changed_chunk_ids=[
+                        unit_id
+                        for (unit_kind, unit_id), entry in materialized["unit_inventory"].items()
+                        if unit_kind == "chunk" and entry.parent_id not in unchanged_sections
+                    ],
+                ),
+            },
+        )
         snapshot_sha = _sha256_text("::".join((snapshot_id, source_revision, fetched_at)))
         connection.execute(
             """
@@ -165,262 +280,163 @@ def run_core_docs_build(*, args: Namespace, root: Path) -> dict[str, object]:
                 snapshot_sha,
             ),
         )
-
-        _insert_table1_rows(connection, table_rows)
-
-        doc_seen: dict[str, tuple[str, int]] = {}
-        section_order = 0
-        chunk_order = 0
-        for parsed in all_items:
-            path_parts = parsed.item_path.split("::")
-            module_path = "::".join(path_parts[: min(3, len(path_parts))])
-            doc_uid = f"{parsed.target.target_triple}::{module_path}"
-            if doc_uid not in doc_seen:
-                doc_seen[doc_uid] = (parsed.target.target_triple, len(doc_seen) + 1)
-                source_path = (
-                    parsed.target.target_triple + "/" + module_path.replace("::", "/") + ".md"
+        if not use_incremental or not current_inventory:
+            connection.execute("DELETE FROM core_docs_chunk_metadata")
+            connection.execute("DELETE FROM chunk_spans")
+            connection.execute("DELETE FROM chunks")
+            connection.execute("DELETE FROM sections")
+            connection.execute("DELETE FROM source_documents")
+            connection.execute("DELETE FROM docs")
+            connection.execute("DELETE FROM table1_row_profile_terms")
+            connection.execute("DELETE FROM table1_rows")
+            _insert_table1_rows(connection, table_rows)
+            for document in materialized["docs"].values():
+                upsert_core_docs_document(
+                    connection,
+                    snapshot_id=snapshot_id,
+                    fetched_at=fetched_at,
+                    source_revision=source_revision,
+                    document=document,
                 )
-                source_sha = _sha256_text(source_path)
-                connection.execute(
-                    """
-                    INSERT INTO source_documents(
-                        document_id,
-                        snapshot_id,
-                        chapter_id,
-                        rel_path,
-                        title,
-                        source_sha256,
-                        source_fetched_at,
-                        source_commit_sha,
-                        order_index
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        doc_uid,
-                        snapshot_id,
-                        "chapter:core-docs",
-                        source_path,
-                        module_path,
-                        source_sha,
-                        fetched_at,
-                        source_revision,
-                        doc_seen[doc_uid][1],
-                    ),
-                )
-                connection.execute(
-                    """
-                    INSERT INTO docs(
-                        doc_uid,
-                        source_path,
-                        title,
-                        revision,
-                        fetched_at,
-                        source_sha256,
-                        chapter_id,
-                        order_index
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        doc_uid,
-                        source_path,
-                        module_path,
-                        source_revision,
-                        fetched_at,
-                        source_sha,
-                        "chapter:core-docs",
-                        doc_seen[doc_uid][1],
-                    ),
+        else:
+            delete_ids = list(planned_delta.deleted) + list(planned_delta.updated)
+            delete_core_docs_documents(connection, delete_ids)
+            for document in materialized["docs"].values():
+                upsert_core_docs_document(
+                    connection,
+                    snapshot_id=snapshot_id,
+                    fetched_at=fetched_at,
+                    source_revision=source_revision,
+                    document=document,
                 )
 
-            header = (
-                f"Item: {parsed.item_path}\n"
-                f"Kind: {parsed.item_kind}\n"
-                f"Signature: {parsed.signature}\n"
-                f"Stability: {parsed.stability}\n"
-                f"Target: {parsed.target.target_triple}\n"
-            )
-            body = "\n\n".join(
-                segment
-                for segment in (
-                    parsed.docs_text,
-                    f"Safety\n{parsed.safety_notes}" if parsed.safety_notes else "",
-                    f"Panics\n{parsed.panic_behavior}" if parsed.panic_behavior else "",
-                    f"Examples\n{parsed.example_snippets}" if parsed.example_snippets else "",
-                )
-                if segment.strip()
-            )
-            raw_text = f"{header}\n{body}".strip()
-            split_chunks = _split_chunks(
-                raw_text,
-                min_tokens=int(getattr(args, "chunk_target_min_tokens", 150)),
-                target_tokens=260,
-                max_tokens=int(getattr(args, "chunk_target_max_tokens", 500)),
-            )
-
-            for local_idx, raw_chunk in enumerate(split_chunks, start=1):
-                section_order += 1
-                section_seed = (
-                    parsed.item_id
-                    + "::"
-                    + parsed.item_path
-                    + "::"
-                    + parsed.signature
-                    + "::"
-                    + str(local_idx)
-                    + "::"
-                    + parsed.target.target_triple
-                    + "::"
-                    + parsed.source_anchor
-                )
-                section_id = f"section::{_sha256_text(section_seed)}"
-                source_sha = _sha256_text(raw_chunk)
-                connection.execute(
-                    """
-                    INSERT INTO sections(
-                        section_id,
-                        snapshot_id,
-                        document_id,
-                        chapter_id,
-                        anchor,
-                        heading,
-                        order_index,
-                        level,
-                        text,
-                        source_sha256,
-                        source_fetched_at,
-                        source_commit_sha
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        section_id,
-                        snapshot_id,
-                        doc_uid,
-                        "chapter:core-docs",
-                        f"item-{_sha256_text(parsed.item_path)[:12]}",
-                        parsed.item_path,
-                        section_order,
-                        2,
-                        raw_chunk,
-                        source_sha,
-                        fetched_at,
-                        source_revision,
-                    ),
-                )
-
-                clean_result = strategy.clean_text(
-                    CleanInput(
-                        raw_text=raw_chunk,
-                        source_type="rustdoc_item",
-                        context={
-                            "item_path": parsed.item_path,
-                            "target_triple": parsed.target.target_triple,
-                            "source_anchor": parsed.source_anchor,
-                        },
-                    )
-                )
-                chunk_payload = (
-                    f"{clean_result.cleaned_text}\n"
-                    f"target_triple={parsed.target.target_triple}\n"
-                    f"target_os={parsed.target.target_os}\n"
-                    f"target_arch={parsed.target.target_arch}\n"
-                    f"target_env={parsed.target.target_env}"
-                ).strip()
-                chunk_order += 1
-                chunk_seed = section_id + "::" + str(local_idx) + "::" + chunk_payload
-                chunk_uid = f"chunk::{_sha256_text(chunk_seed)}"
-                connection.execute(
-                    """
-                    INSERT INTO chunks(
-                        chunk_uid,
-                        section_id,
-                        raw_text,
-                        clean_text,
-                        char_len,
-                        token_len,
-                        source_sha256,
-                        source_fetched_at,
-                        source_commit_sha,
-                        order_index
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        chunk_uid,
-                        section_id,
-                        raw_chunk,
-                        chunk_payload,
-                        len(chunk_payload),
-                        _token_len(chunk_payload),
-                        source_sha,
-                        fetched_at,
-                        source_revision,
-                        chunk_order,
-                    ),
-                )
-                connection.execute(
-                    """
-                    INSERT INTO core_docs_chunk_metadata(
-                        chunk_uid,
-                        item_path,
-                        item_kind,
-                        signature,
-                        stability,
-                        safety_notes,
-                        panic_behavior,
-                        example_snippets,
-                        target_triple,
-                        target_os,
-                        target_arch,
-                        target_env,
-                        cfg_signature,
-                        cfg_signature_sha256
-                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        chunk_uid,
-                        parsed.item_path,
-                        parsed.item_kind,
-                        parsed.signature,
-                        parsed.stability,
-                        parsed.safety_notes,
-                        parsed.panic_behavior,
-                        parsed.example_snippets,
-                        parsed.target.target_triple,
-                        parsed.target.target_os,
-                        parsed.target.target_arch,
-                        parsed.target.target_env,
-                        parsed.target.cfg_signature,
-                        parsed.target.cfg_signature_sha256,
-                    ),
-                )
-                connection.execute(
-                    """
-                    INSERT INTO chunk_spans(
-                        chunk_uid,
-                        source_anchor,
-                        start_offset,
-                        end_offset,
-                        span_order
-                    )
-                    VALUES(?, ?, ?, ?, ?)
-                    """,
-                    (chunk_uid, parsed.source_anchor, 0, len(chunk_payload), 1),
-                )
-
-        connection.execute("DELETE FROM chunks_fts")
-        connection.execute(
-            """
-            INSERT INTO chunks_fts(chunk_uid, section_id, section_heading, chunk_text)
-            SELECT c.chunk_uid, c.section_id, COALESCE(s.heading, ''), c.clean_text
-            FROM chunks AS c
-            LEFT JOIN sections AS s ON s.section_id = c.section_id
-            ORDER BY c.chunk_uid ASC
-            """
+        refresh_core_docs_fts(connection)
+        replace_source_inventory(
+            connection,
+            corpus="core_docs",
+            snapshot_id=snapshot_id,
+            documents=materialized["document_inventory"],
+            sections=materialized["section_inventory"],
+            units=materialized["unit_inventory"],
+            materialized_at=utc_now(),
         )
-        refresh_chunk_fts_rowids(connection)
-        enforce_chunk_fts_mapping(connection, context="core_docs build")
+        record_materialization_delta(
+            connection,
+            run_id=run_id,
+            corpus="core_docs",
+            mode="incremental" if use_incremental else "full_rebuild",
+            base_snapshot_id=base_snapshot_id,
+            target_snapshot_id=snapshot_id,
+            delta_payload={
+                **planned_delta.as_dict(),
+                "snapshot_id": snapshot_id,
+                "force_rebuild": force_rebuild,
+            },
+        )
+        embedding_audit = audit_preserved_chunk_embeddings(
+            connection,
+            corpus="core_docs",
+            unchanged_chunk_ids=unchanged_chunk_ids if use_incremental else [],
+        )
+        record_embedding_reuse_audit(
+            connection,
+            run_id=run_id,
+            corpus="core_docs",
+            model_fingerprint=embedding_reuse_key(
+                stable_id="core_docs",
+                content_sha256=snapshot_sha,
+                model_id=str(getattr(args, "embedding_model_id", DEFAULT_EMBEDDING_MODEL_ID)),
+                embed_version="v1",
+            ),
+            reused_count=int(embedding_audit["reused_count"]),
+            recomputed_count=int(embedding_audit["recomputed_count"]),
+        )
         connection.commit()
     finally:
         connection.close()
+
+    delta_report_path = write_delta_report(
+        report_root=report_root,
+        corpus="core_docs",
+        run_id=run_id,
+        payload={
+            **planned_delta.as_dict(),
+            "snapshot_id": snapshot_id,
+            "db_path": str(target_db_path),
+            "staged": use_incremental,
+        },
+    )
+    refresh_contract_path = write_refresh_contract_report(
+        report_root=report_root,
+        corpus="core_docs",
+        run_id=run_id,
+    )
+
+    if use_incremental:
+        try:
+            stage_reports = validate_staged_corpus(
+                corpus="core_docs", staged_db_path=target_db_path
+            )
+            cross_db_report_path = validate_cross_db_non_regression(
+                root=root,
+                report_root=report_root,
+                run_id=run_id,
+                target_corpus="core_docs",
+                baseline=cross_db_baseline,
+                additional_stage_reports=stage_reports,
+                target_staged_db_path=target_db_path,
+            )
+            promotion = promote_staged_db(
+                live_db_path=db_path,
+                staged_db_path=target_db_path,
+                promotion_root=promotion_root,
+                corpus="core_docs",
+                run_id=run_id,
+            )
+            promotion_provenance_path = write_promotion_provenance(
+                report_root=report_root,
+                corpus="core_docs",
+                run_id=run_id,
+                payload={
+                    "run_id": run_id,
+                    "corpus": "core_docs",
+                    "validated_at": utc_now(),
+                    "validation_reports": stage_reports,
+                    "refresh_contract_path": str(refresh_contract_path),
+                    "cross_db_report_path": str(cross_db_report_path),
+                    "promotion": promotion,
+                },
+            )
+            promotion["promotion_provenance_path"] = str(promotion_provenance_path)
+            operator_summary_path = write_operator_summary(
+                report_root=report_root,
+                corpus="core_docs",
+                run_id=run_id,
+                payload={
+                    "corpus": "core_docs",
+                    "run_id": run_id,
+                    "status": "promoted",
+                    "dry_run_report_path": str(dry_run_report_path),
+                    "delta_report_path": str(delta_report_path),
+                    "refresh_contract_path": str(refresh_contract_path),
+                    "cross_db_report_path": str(cross_db_report_path),
+                    "promotion_provenance_path": str(promotion_provenance_path),
+                    "validation_kinds": [item["kind"] for item in stage_reports],
+                },
+            )
+            promotion["operator_summary_path"] = str(operator_summary_path)
+        except Exception as exc:
+            if fallback_in_progress:
+                raise
+            require_force_rebuild(
+                corpus="core_docs",
+                reason=str(exc),
+                force_rebuild=force_rebuild,
+            )
+            fallback_args = Namespace(**vars(args))
+            fallback_args.incremental = False
+            fallback_args._fallback_in_progress = True
+            return run_core_docs_build(args=fallback_args, root=root)
 
     source_state = compute_source_state_from_db(db_path)
     model_fingerprint = canonical_json_hash(
@@ -473,6 +489,11 @@ def run_core_docs_build(*, args: Namespace, root: Path) -> dict[str, object]:
         "snapshot_id": snapshot_id,
         "db_path": str(db_path),
         "chunk_first_report_path": str(chunk_first_report_path),
+        "delta_report_path": str(delta_report_path),
+        "dry_run_report_path": str(dry_run_report_path),
+        "refresh_contract_path": str(refresh_contract_path),
+        "incremental": use_incremental,
+        "promotion": promotion,
         "targets": list(TARGET_MATRIX),
         "items": len(all_items),
         "rows": len(table_rows),

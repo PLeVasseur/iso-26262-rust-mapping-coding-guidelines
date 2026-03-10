@@ -1,0 +1,9 @@
+version: 1
+suite_id: fls_spec_ws7_placeholder_eval_v1
+description: >-
+  Placeholder retrieval evaluation suite for the active WS7 FLS runtime. This
+  suite is intentionally empty because no authoritative FLS retrieval eval set is
+  defined yet; `config/corpora/fls_spec.yaml` therefore sets `capabilities.eval`
+  to false and this file exists only to keep corpus metadata corpus-specific.
+
+prompts: []

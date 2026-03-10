@@ -47,3 +47,8 @@ def test_gather_candidates_tags_variant_name(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="legacy compatibility helper is retired"):
         fls_candidate_search.gather_candidates(packet=packet, limit_per_variant=2)
+
+
+def test_legacy_candidate_helper_is_quarantined_for_ws7_runtime() -> None:
+    with pytest.raises(RuntimeError, match="legacy compatibility helper is retired"):
+        fls_candidate_search.gather_candidates(packet={}, db_path=Path("fake.db"))

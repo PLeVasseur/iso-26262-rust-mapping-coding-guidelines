@@ -14,25 +14,38 @@ if str(SCRIPTS) not in sys.path:
 from retrieval.writer_host import fls_calibration  # noqa: E402
 
 
-def test_evaluate_calibration_items_reports_grounding_only_runtime(monkeypatch) -> None:
+def test_evaluate_calibration_items_reports_ws7_outcomes(monkeypatch) -> None:
     items = [
         {
             "path": "a.rst",
             "packet": {
                 "governing_obligation": "Unsafe behavior",
                 "construct_terms": ["unsafe"],
+                "code_tokens": [],
+                "supporting_phrases": [],
+                "prior_documents": [],
+                "prior_sections": [],
+                "ambiguity_notes": [],
             },
             "acceptable_ids": ["fls_a"],
             "acceptable_chapters": ["Unsafety"],
+            "allow_review": False,
+            "allow_unresolved": False,
         },
         {
             "path": "b.rst",
             "packet": {
                 "governing_obligation": "Ambiguous behavior",
                 "construct_terms": ["ambiguous"],
+                "code_tokens": [],
+                "supporting_phrases": [],
+                "prior_documents": [],
+                "prior_sections": [],
+                "ambiguity_notes": [],
             },
             "acceptable_ids": ["fls_b"],
             "acceptable_chapters": ["Expressions"],
+            "allow_review": True,
         },
     ]
 
@@ -40,23 +53,25 @@ def test_evaluate_calibration_items_reports_grounding_only_runtime(monkeypatch) 
         del policy_overrides
         if "Unsafe" in str(packet.get("governing_obligation", "")):
             return {
-                "paragraph_id": "fls_UNRESOLVED",
+                "paragraph_id": "fls_a",
                 "decision": {
-                    "publish_accept": False,
+                    "publish_accept": True,
                     "review_candidate": False,
                     "top_candidates": [],
-                    "reason_code": "WS7_REQUIRED",
-                    "grounding_only_runtime": True,
+                    "reason_code": "ACCEPTED",
+                    "accepted": True,
+                    "grounding_only_runtime": False,
                 },
             }
         return {
-            "paragraph_id": "fls_UNRESOLVED",
+            "paragraph_id": "fls_b",
             "decision": {
                 "publish_accept": False,
-                "review_candidate": False,
+                "review_candidate": True,
                 "top_candidates": [],
-                "reason_code": "WS7_REQUIRED",
-                "grounding_only_runtime": True,
+                "reason_code": "AMBIGUOUS_TOP_CANDIDATES",
+                "accepted": False,
+                "grounding_only_runtime": False,
             },
         }
 
@@ -64,10 +79,10 @@ def test_evaluate_calibration_items_reports_grounding_only_runtime(monkeypatch) 
     report = fls_calibration.evaluate_calibration_items(items=items)
 
     assert report["total"] == 2
-    assert report["ws7_required"] == 2
-    assert report["grounding_only_runtime"] == 2
-    assert report["abstention_correct"] == 2
-    assert report["publish_accept_violations"] == 0
+    assert report["accepted_correct"] == 1
+    assert report["review_correct"] == 1
+    assert report["accepted_wrong"] == 0
+    assert report["unresolved_unexpected"] == 0
 
 
 def test_load_calibration_items_prefers_dataset_over_manifest(tmp_path: Path) -> None:
@@ -88,6 +103,7 @@ def test_load_calibration_items_prefers_dataset_over_manifest(tmp_path: Path) ->
                         "path": "x.rst",
                         "acceptable_ids": ["fls_x"],
                         "acceptable_chapters": ["Unsafety"],
+                        "allow_review": True,
                     }
                 ]
             }
@@ -103,10 +119,47 @@ def test_load_calibration_items_prefers_dataset_over_manifest(tmp_path: Path) ->
 
     assert len(items) == 1
     assert items[0]["acceptable_ids"] == ["fls_x"]
+    assert items[0]["allow_review"] is True
 
 
-def test_threshold_sweep_is_disabled_until_ws7() -> None:
-    with pytest.raises(RuntimeError, match="WS7_REQUIRED"):
+def test_load_calibration_items_preserves_ws7_manifest_metadata(tmp_path: Path) -> None:
+    guidelines_root = tmp_path / "guidelines"
+    guidelines_root.mkdir(parents=True)
+    rst = guidelines_root / "x.rst"
+    rst.write_text("Title\n=====\n\n:fls: fls_x\n", encoding="utf-8")
+
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"exemplars": []}), encoding="utf-8")
+
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "path": "x.rst",
+                        "acceptable_ids": ["fls_x"],
+                        "rationale": "frozen rationale",
+                        "provenance": {"stable_identifier": "heldout::x"},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = fls_calibration.load_calibration_items(
+        manifest_path=manifest,
+        guidelines_repo_root=guidelines_root,
+        dataset_path=dataset,
+    )
+
+    assert items[0]["rationale"] == "frozen rationale"
+    assert items[0]["provenance"]["stable_identifier"] == "heldout::x"
+
+
+def test_threshold_sweep_reports_ws7_stub() -> None:
+    with pytest.raises(RuntimeError, match="not implemented for ws7_staged_retrieval_v1"):
         fls_calibration.run_threshold_sweep(items=[], base_policy={})
 
 
@@ -252,16 +305,18 @@ Unsafe visibility matters.
     assert "malloc" in packet["code_tokens"]
 
 
-def test_evaluate_calibration_items_is_grounding_runtime_report(monkeypatch) -> None:
+def test_evaluate_calibration_items_reports_unexpected_unresolved(monkeypatch) -> None:
     monkeypatch.setattr(
         fls_calibration,
         "resolve_fls_for_guideline",
         lambda packet, policy_overrides=None: {
             "paragraph_id": "fls_UNRESOLVED",
             "decision": {
-                "reason_code": "WS7_REQUIRED",
-                "grounding_only_runtime": True,
+                "reason_code": "NO_QUALIFYING_CANDIDATES",
+                "grounding_only_runtime": False,
                 "publish_accept": False,
+                "accepted": False,
+                "review_candidate": False,
                 "top_candidates": [],
             },
         },
@@ -282,49 +337,10 @@ def test_evaluate_calibration_items_is_grounding_runtime_report(monkeypatch) -> 
                 },
                 "acceptable_ids": ["fls_x"],
                 "acceptable_chapters": ["Unsafety"],
+                "allow_unresolved": False,
             }
         ]
     )
 
-    assert "strict_top1" not in report
-    assert "topk_contains" not in report
-    assert report["ws7_required"] == 1
-
-
-def test_evaluate_calibration_items_has_no_ranking_threshold_summary(monkeypatch) -> None:
-    monkeypatch.setattr(
-        fls_calibration,
-        "resolve_fls_for_guideline",
-        lambda packet, policy_overrides=None: {
-            "paragraph_id": "fls_UNRESOLVED",
-            "decision": {
-                "reason_code": "WS7_REQUIRED",
-                "grounding_only_runtime": True,
-                "publish_accept": False,
-                "top_candidates": [],
-            },
-        },
-    )
-
-    report = fls_calibration.evaluate_calibration_items(
-        items=[
-            {
-                "path": "x.rst",
-                "packet": {
-                    "governing_obligation": "x",
-                    "construct_terms": ["unsafe"],
-                    "code_tokens": [],
-                    "supporting_phrases": [],
-                    "prior_documents": [],
-                    "prior_sections": [],
-                    "ambiguity_notes": [],
-                },
-                "acceptable_ids": ["fls_x"],
-                "acceptable_chapters": ["Unsafety"],
-            }
-        ]
-    )
-
-    assert "min_confidence_score" not in report
-    assert "weights" not in report
-    assert report["grounding_only_runtime"] == 1
+    assert report["accepted_wrong"] == 0
+    assert report["unresolved_unexpected"] == 1

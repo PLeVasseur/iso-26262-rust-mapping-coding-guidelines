@@ -119,6 +119,126 @@ def write_current_chunk_first_validation_report(
     return path
 
 
+def validate_guidelines_repo_db(db_path: Path) -> dict[str, Any]:
+    failures: list[str] = []
+    warnings: list[str] = []
+
+    connection = sqlite3.connect(db_path)
+    try:
+        guideline_count = int(
+            connection.execute("SELECT COUNT(*) FROM guideline_records").fetchone()[0]
+        )
+        block_count = int(connection.execute("SELECT COUNT(*) FROM guideline_blocks").fetchone()[0])
+        citation_count = int(
+            connection.execute("SELECT COUNT(*) FROM guideline_citations").fetchone()[0]
+        )
+        bibliography_count = int(
+            connection.execute("SELECT COUNT(*) FROM guideline_bibliography").fetchone()[0]
+        )
+        bib_link_count = int(
+            connection.execute("SELECT COUNT(*) FROM guideline_bib_links").fetchone()[0]
+        )
+        exemplar_count = int(
+            connection.execute("SELECT COUNT(*) FROM guideline_exemplars").fetchone()[0]
+        )
+        schema_user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+
+        latest_migration_id = ""
+        if _table_exists(connection, "schema_version"):
+            row = connection.execute(
+                "SELECT latest_migration_id FROM schema_version WHERE schema_id = ?",
+                ("sqlite_kb",),
+            ).fetchone()
+            latest_migration_id = str(row[0] or "") if row else ""
+
+        latest_snapshot_id = ""
+        latest_commit_sha = ""
+        if _table_exists(connection, "snapshots"):
+            row = connection.execute(
+                "SELECT snapshot_id, commit_sha FROM snapshots ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+            if row is not None:
+                latest_snapshot_id = str(row[0] or "")
+                latest_commit_sha = str(row[1] or "")
+
+        duplicate_guideline_count = int(
+            connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM (
+                    SELECT guideline_id, COUNT(*) AS c
+                    FROM guideline_records
+                    GROUP BY guideline_id
+                    HAVING c > 1
+                )
+                """
+            ).fetchone()[0]
+        )
+        missing_source_file_path_count = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM guideline_records WHERE TRIM(source_file_path) = ''"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+
+    if guideline_count <= 0:
+        failures.append("No guideline_records rows materialized")
+    if block_count <= 0:
+        failures.append("No guideline_blocks rows materialized")
+    if block_count < guideline_count:
+        failures.append("guideline_blocks coverage is lower than guideline_records")
+    if not latest_snapshot_id:
+        failures.append("No snapshots row recorded for guidelines_repo")
+    if not latest_commit_sha:
+        failures.append("Latest guidelines_repo snapshot is missing commit_sha")
+    if not latest_migration_id:
+        failures.append("Missing latest_migration_id for guidelines_repo")
+    if duplicate_guideline_count > 0:
+        failures.append("Duplicate guideline_id values detected")
+    if missing_source_file_path_count > 0:
+        failures.append("Guideline rows with missing source_file_path detected")
+    if bibliography_count > 0 and bib_link_count == 0:
+        failures.append("Bibliography rows exist without guideline_bib_links coverage")
+    if citation_count == 0:
+        warnings.append("No guideline_citations rows materialized")
+    if exemplar_count == 0:
+        warnings.append("No guideline_exemplars rows materialized")
+
+    return {
+        "corpus": "guidelines_repo",
+        "db_path": str(db_path.resolve()),
+        "db_sha256": _sha256(db_path),
+        "checked_at": utc_now(),
+        "passed": not failures,
+        "failures": failures,
+        "warnings": warnings,
+        "schema_user_version": schema_user_version,
+        "latest_migration_id": latest_migration_id,
+        "latest_snapshot_id": latest_snapshot_id,
+        "latest_commit_sha": latest_commit_sha,
+        "table_counts": {
+            "guideline_records": guideline_count,
+            "guideline_blocks": block_count,
+            "guideline_citations": citation_count,
+            "guideline_bibliography": bibliography_count,
+            "guideline_bib_links": bib_link_count,
+            "guideline_exemplars": exemplar_count,
+        },
+    }
+
+
+def write_current_guidelines_repo_validation_report(
+    *,
+    report_root: Path,
+    payload: dict[str, Any],
+) -> Path:
+    report_root.mkdir(parents=True, exist_ok=True)
+    path = report_root / "current_validation.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
 def load_manifest(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"version": 1, "updated_at": utc_now(), "databases": {}}

@@ -80,6 +80,47 @@ class Ws7PreworkClosureTests(unittest.TestCase):
         )
         return target
 
+    def _write_current_guidelines_repo_validation_report(self, root: Path) -> Path:
+        db_path = root / ".cache" / "sqlite_kb" / "current" / "guidelines_repo.sqlite"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.write_text("db for guidelines_repo\n", encoding="utf-8")
+        target = (
+            root
+            / ".cache"
+            / "sqlite_kb"
+            / "reports"
+            / "guidelines_repo"
+            / "current_validation.json"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(
+                {
+                    "corpus": "guidelines_repo",
+                    "db_path": str(db_path),
+                    "db_sha256": hashlib.sha256(db_path.read_bytes()).hexdigest(),
+                    "passed": True,
+                    "schema_user_version": 7,
+                    "latest_migration_id": "20260309_005_chunk_fts_rowids",
+                    "latest_snapshot_id": "guidelines-repo-snapshot-1",
+                    "latest_commit_sha": "abc123",
+                    "table_counts": {
+                        "guideline_records": 2,
+                        "guideline_blocks": 3,
+                        "guideline_citations": 1,
+                        "guideline_bibliography": 1,
+                        "guideline_bib_links": 1,
+                        "guideline_exemplars": 0,
+                    },
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return target
+
     def test_write_ws7_prework_closure_packet_emits_report_and_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -98,7 +139,7 @@ class Ws7PreworkClosureTests(unittest.TestCase):
                     {"label": "proof-a", "path": artifact_a, "priority": 1},
                     {"label": "proof-b", "path": artifact_b, "priority": 2},
                 ],
-                corpora=["fls_spec", "core_docs", "rust_reference"],
+                corpora=["fls_spec", "core_docs", "rust_reference", "guidelines_repo"],
                 deferred_items=["WS7 staged runtime implementation"],
             )
 
@@ -111,7 +152,10 @@ class Ws7PreworkClosureTests(unittest.TestCase):
             self.assertEqual(report["priorities"][0]["status"], "pass")
             self.assertTrue(report["prework_only"])
             self.assertTrue(report["non_authoritative_for_full_ws7_runtime"])
-            self.assertEqual(report["corpora"], ["core_docs", "fls_spec", "rust_reference"])
+            self.assertEqual(
+                report["corpora"],
+                ["core_docs", "fls_spec", "guidelines_repo", "rust_reference"],
+            )
             self.assertEqual(len(report["proof_artifacts"]), 2)
             self.assertTrue(manifest["prework_only"])
             self.assertTrue(manifest["non_authoritative_for_full_ws7_runtime"])
@@ -186,6 +230,7 @@ class Ws7PreworkClosureTests(unittest.TestCase):
 
             for corpus in ("fls_spec", "core_docs", "rust_reference"):
                 self._write_current_chunk_first_report(temp_root, corpus=corpus)
+            self._write_current_guidelines_repo_validation_report(temp_root)
 
             with patch(
                 "retrieval.services.ws7_prework_closure.load_corpus_runtime_defaults",
@@ -217,20 +262,27 @@ class Ws7PreworkClosureTests(unittest.TestCase):
                     "fls_spec_current_chunk_first",
                     "core_docs_current_chunk_first",
                     "rust_reference_current_chunk_first",
+                    "guidelines_repo_current_validation",
                 ],
             )
-            self.assertEqual(len(report["db_identities"]), 3)
+            self.assertEqual(len(report["db_identities"]), 4)
             self.assertTrue(manifest_path.is_file())
             self.assertTrue((temp_root / "artifacts" / "priority1_3.xml").is_file())
             self.assertTrue(
                 (temp_root / "artifacts" / "fls_spec_current_chunk_first.json").is_file()
+            )
+            self.assertTrue(
+                (temp_root / "artifacts" / "guidelines_repo_current_validation.json").is_file()
             )
 
     def test_generate_ws7_prework_closure_packet_rejects_placeholder_junit(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
             (temp_root / "priority1_3.xml").write_text(
-                '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase classname="fake" name="fake" /></testsuite>\n',
+                (
+                    '<testsuite tests="1" failures="0" errors="0" skipped="0">'
+                    '<testcase classname="fake" name="fake" /></testsuite>\n'
+                ),
                 encoding="utf-8",
             )
             self._write_junit(
@@ -261,6 +313,7 @@ class Ws7PreworkClosureTests(unittest.TestCase):
             )
             for corpus in ("fls_spec", "core_docs", "rust_reference"):
                 self._write_current_chunk_first_report(temp_root, corpus=corpus)
+            self._write_current_guidelines_repo_validation_report(temp_root)
 
             with patch(
                 "retrieval.services.ws7_prework_closure.load_corpus_runtime_defaults",

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,30 +12,75 @@ from typing import Any
 from retrieval.build.artifacts import build_retrieval_artifacts
 from retrieval.build.cli import parse_build_args
 from retrieval.build.database_write import materialize_snapshot_db
+from retrieval.build.incremental_refresh import (
+    audit_preserved_chunk_embeddings,
+    build_reference_inventory,
+    capture_cross_db_baseline,
+    embedding_reuse_key,
+    ensure_incremental_tables,
+    estimate_embedding_impact,
+    load_source_inventory_documents,
+    plan_inventory_delta,
+    prepare_staged_db,
+    promote_staged_db,
+    record_embedding_reuse_audit,
+    record_materialization_delta,
+    replace_source_inventory,
+    require_force_rebuild,
+    validate_cross_db_non_regression,
+    validate_staged_corpus,
+    write_delta_report,
+    write_operator_summary,
+    write_promotion_provenance,
+    write_refresh_contract_report,
+)
 from retrieval.build.persistence import (
     compute_snapshot_sha256 as _compute_snapshot_sha256,
 )
-from retrieval.build.reports import (
-    load_manifest as _load_manifest,
-    read_previous_snapshot_path as _read_previous_snapshot_path,
-    update_manifest as _update_manifest,
-    validate_chunk_first_db,
-    validate_rust_reference_db,
-    write_current_chunk_first_validation_report as _write_current_chunk_first_validation_report,
-    write_chunk_first_validation_report as _write_chunk_first_validation_report,
-    write_row_metadata_report as _write_row_metadata_report,
-    write_validation_report as _write_validation_report,
+from retrieval.build.persistence import (
+    delete_reference_document_subtrees,
+    refresh_reference_derived_tables,
+    upsert_reference_source_rows,
 )
 from retrieval.build.reference_parsing import (
-    SummaryEntry,
     extract_sections_and_statements as _extract_sections_and_statements,
+)
+from retrieval.build.reference_parsing import (
     load_source_documents as _load_source_documents,
+)
+from retrieval.build.reference_parsing import (
     parse_summary as _parse_summary,
+)
+from retrieval.build.reports import (
+    load_manifest as _load_manifest,
+)
+from retrieval.build.reports import (
+    read_previous_snapshot_path as _read_previous_snapshot_path,
+)
+from retrieval.build.reports import (
+    update_manifest as _update_manifest,
+)
+from retrieval.build.reports import (
+    validate_chunk_first_db,
+    validate_rust_reference_db,
+)
+from retrieval.build.reports import (
+    write_chunk_first_validation_report as _write_chunk_first_validation_report,
+)
+from retrieval.build.reports import (
+    write_current_chunk_first_validation_report as _write_current_chunk_first_validation_report,
+)
+from retrieval.build.reports import (
+    write_row_metadata_report as _write_row_metadata_report,
+)
+from retrieval.build.reports import (
+    write_validation_report as _write_validation_report,
 )
 from retrieval.build.source_checkout import (
     resolve_reference_checkout as _resolve_reference_checkout,
 )
 from retrieval.core.provenance import (
+    apply_pending_migrations,
     canonical_json_hash,
     compute_source_state_from_db,
     record_pipeline_run,
@@ -112,6 +158,10 @@ def build_rust_reference_db(
     chunk_target_max_tokens: int = 500,
     chunk_overlap_percent: float = 0.0,
     allow_provenance_mismatch: bool = False,
+    incremental: bool = False,
+    force_rebuild: bool = False,
+    staged_output_root: Path | None = None,
+    promotion_root: Path | None = None,
 ) -> dict[str, Any]:
     report_root = report_root or (db_path.parents[1] / "reports" / "rust_reference")
     reference_cache_dir = reference_cache_dir or (db_path.parents[1] / "sources" / "rust-reference")
@@ -128,6 +178,14 @@ def build_rust_reference_db(
         raise ValueError("Pinned source revision is required; pass --reference-revision explicitly")
 
     strategy = resolve_ingest_strategy(ingest_strategy)
+    use_incremental = bool(incremental)
+    cross_db_baseline = (
+        capture_cross_db_baseline(root=Path(__file__).resolve().parents[3])
+        if use_incremental
+        else {}
+    )
+    staged_root = staged_output_root or (db_path.parents[1] / "staged")
+    promotion_root = promotion_root or (db_path.parents[1] / "promotions")
 
     existing_manifest = _load_manifest(manifest_path)
     previous_snapshot_path = _read_previous_snapshot_path(
@@ -193,6 +251,12 @@ def build_rust_reference_db(
     row_mechanisms = artifacts["row_mechanisms"]
     row_mechanism_scores = artifacts["row_mechanism_scores"]
     counts = artifacts["counts"]
+    document_inventory, section_inventory, unit_inventory = build_reference_inventory(
+        documents=documents,
+        sections=sections,
+        statements=statements,
+        chunks=chunks,
+    )
 
     snapshot_sha256 = _compute_snapshot_sha256(
         commit_sha=commit_sha,
@@ -202,40 +266,309 @@ def build_rust_reference_db(
         chunks=chunks,
     )
 
-    latest_migration_id, snapshot_db_path = materialize_snapshot_db(
-        db_path=db_path,
-        snapshot_root=snapshot_root,
-        snapshot_id=snapshot_id,
-        commit_sha=commit_sha,
-        source_fetched_at=source_fetched_at,
-        source_url=DEFAULT_REFERENCE_SOURCE_URL,
-        snapshot_sha256=snapshot_sha256,
-        chapters=chapters,
-        documents=documents,
-        sections=sections,
-        statements=statements,
-        chunks=chunks,
-        chunk_spans=chunk_spans,
-        mechanisms=mechanisms,
-        mechanism_evidence=mechanism_evidence,
-        table_rows=table_rows,
-        row_verdicts=row_verdicts,
-        row_mechanisms=row_mechanisms,
-        semantic_models=semantic_models,
-        semantic_corpus=semantic_corpus,
-        row_mechanism_scores=row_mechanism_scores,
-        extractor_version=(
-            f"sqlite-build-rust-reference-v7::{strategy.strategy_id}@{strategy.strategy_version}"
-        ),
-        build_notes=(
-            "chunk-first schema and deterministic block parsing via "
-            f"{strategy.strategy_id}@{strategy.strategy_version}"
-        ),
-        project_root=Path(__file__).resolve().parents[3],
+    run_id = f"rust_reference_incremental::{snapshot_id}"
+    target_db_path = db_path
+    promotion: dict[str, str] = {}
+    planned_delta = plan_inventory_delta(current={}, incoming=document_inventory)
+    if use_incremental:
+        target_db_path, _ = prepare_staged_db(
+            live_db_path=db_path,
+            staged_root=staged_root,
+            corpus="rust_reference",
+            run_id=run_id,
+        )
+        if target_db_path.exists():
+            connection = sqlite3.connect(target_db_path)
+            try:
+                planned_delta = plan_inventory_delta(
+                    current=load_source_inventory_documents(connection, corpus="rust_reference"),
+                    incoming=document_inventory,
+                )
+            finally:
+                connection.close()
+    unchanged_doc_ids = set(planned_delta.unchanged)
+    unchanged_section_ids = {
+        section.section_id for section in sections if section.document_id in unchanged_doc_ids
+    }
+    unchanged_chunk_ids = [
+        chunk.chunk_uid for chunk in chunks if chunk.section_id in unchanged_section_ids
+    ]
+    dry_run_report_path = write_delta_report(
+        report_root=report_root,
+        corpus="rust_reference",
+        run_id=run_id,
+        phase="pre_apply",
+        payload={
+            **planned_delta.as_dict(),
+            "snapshot_id": snapshot_id,
+            "db_path": str(target_db_path),
+            "staged": use_incremental,
+            "embedding_impact": estimate_embedding_impact(
+                planned_delta=planned_delta,
+                unchanged_chunk_ids=unchanged_chunk_ids,
+                changed_chunk_ids=[
+                    chunk.chunk_uid
+                    for chunk in chunks
+                    if chunk.section_id not in unchanged_section_ids
+                ],
+            ),
+        },
+    )
+
+    extractor_version = (
+        f"sqlite-build-rust-reference-v7::{strategy.strategy_id}@{strategy.strategy_version}"
+    )
+    build_notes = (
+        "chunk-first schema and deterministic block parsing via "
+        f"{strategy.strategy_id}@{strategy.strategy_version}"
+    )
+    if not use_incremental:
+        latest_migration_id, snapshot_db_path = materialize_snapshot_db(
+            db_path=target_db_path,
+            snapshot_root=snapshot_root,
+            snapshot_id=snapshot_id,
+            commit_sha=commit_sha,
+            source_fetched_at=source_fetched_at,
+            source_url=DEFAULT_REFERENCE_SOURCE_URL,
+            snapshot_sha256=snapshot_sha256,
+            chapters=chapters,
+            documents=documents,
+            sections=sections,
+            statements=statements,
+            chunks=chunks,
+            chunk_spans=chunk_spans,
+            mechanisms=mechanisms,
+            mechanism_evidence=mechanism_evidence,
+            table_rows=table_rows,
+            row_verdicts=row_verdicts,
+            row_mechanisms=row_mechanisms,
+            semantic_models=semantic_models,
+            semantic_corpus=semantic_corpus,
+            row_mechanism_scores=row_mechanism_scores,
+            extractor_version=extractor_version,
+            build_notes=build_notes,
+            project_root=Path(__file__).resolve().parents[3],
+        )
+    else:
+        target_db_path.parent.mkdir(parents=True, exist_ok=True)
+        if not target_db_path.exists():
+            latest_migration_id, snapshot_db_path = materialize_snapshot_db(
+                db_path=target_db_path,
+                snapshot_root=snapshot_root,
+                snapshot_id=snapshot_id,
+                commit_sha=commit_sha,
+                source_fetched_at=source_fetched_at,
+                source_url=DEFAULT_REFERENCE_SOURCE_URL,
+                snapshot_sha256=snapshot_sha256,
+                chapters=chapters,
+                documents=documents,
+                sections=sections,
+                statements=statements,
+                chunks=chunks,
+                chunk_spans=chunk_spans,
+                mechanisms=mechanisms,
+                mechanism_evidence=mechanism_evidence,
+                table_rows=table_rows,
+                row_verdicts=row_verdicts,
+                row_mechanisms=row_mechanisms,
+                semantic_models=semantic_models,
+                semantic_corpus=semantic_corpus,
+                row_mechanism_scores=row_mechanism_scores,
+                extractor_version=extractor_version,
+                build_notes=build_notes,
+                project_root=Path(__file__).resolve().parents[3],
+            )
+        else:
+            latest_migration_id = apply_pending_migrations(
+                target_db_path, root=Path(__file__).resolve().parents[3]
+            )[0]
+            connection = sqlite3.connect(target_db_path)
+            try:
+                ensure_incremental_tables(connection)
+                current_inventory = load_source_inventory_documents(
+                    connection, corpus="rust_reference"
+                )
+                planned_delta = plan_inventory_delta(
+                    current=current_inventory,
+                    incoming=document_inventory,
+                )
+                changed_document_ids = sorted(
+                    set(planned_delta.updated) | set(planned_delta.deleted)
+                )
+                insert_document_ids = sorted(set(planned_delta.added) | set(planned_delta.updated))
+                delete_reference_document_subtrees(
+                    connection,
+                    document_ids=changed_document_ids,
+                )
+                for chapter in chapters:
+                    connection.execute(
+                        (
+                            "INSERT OR REPLACE INTO chapters("
+                            "chapter_id, title, order_index"
+                            ") VALUES(?, ?, ?)"
+                        ),
+                        (chapter["chapter_id"], chapter["title"], int(chapter["order_index"])),
+                    )
+                connection.execute(
+                    (
+                        "INSERT OR REPLACE INTO snapshots("
+                        "snapshot_id, commit_sha, source_url, fetched_at, sha256"
+                        ") VALUES(?, ?, ?, ?, ?)"
+                    ),
+                    (
+                        snapshot_id,
+                        commit_sha,
+                        DEFAULT_REFERENCE_SOURCE_URL,
+                        source_fetched_at,
+                        snapshot_sha256,
+                    ),
+                )
+                changed_documents = [
+                    doc for doc in documents if doc.document_id in insert_document_ids
+                ]
+                changed_sections = [
+                    section for section in sections if section.document_id in insert_document_ids
+                ]
+                changed_section_ids = {section.section_id for section in changed_sections}
+                changed_statements = [
+                    statement
+                    for statement in statements
+                    if statement.section_id in changed_section_ids
+                ]
+                changed_chunks = [
+                    chunk for chunk in chunks if chunk.section_id in changed_section_ids
+                ]
+                changed_chunk_ids = {chunk.chunk_uid for chunk in changed_chunks}
+                changed_chunk_spans = [
+                    chunk_span
+                    for chunk_span in chunk_spans
+                    if chunk_span.chunk_uid in changed_chunk_ids
+                ]
+                upsert_reference_source_rows(
+                    connection,
+                    snapshot_id=snapshot_id,
+                    documents=changed_documents,
+                    sections=changed_sections,
+                    statements=changed_statements,
+                    chunks=changed_chunks,
+                    chunk_spans=changed_chunk_spans,
+                )
+                refresh_reference_derived_tables(
+                    connection,
+                    commit_sha=commit_sha,
+                    fetched_at=source_fetched_at,
+                    extractor_version=extractor_version,
+                    build_notes=build_notes,
+                    mechanisms=mechanisms,
+                    mechanism_evidence=mechanism_evidence,
+                    table_rows=table_rows,
+                    row_verdicts=row_verdicts,
+                    row_mechanisms=row_mechanisms,
+                    semantic_models=semantic_models,
+                    semantic_corpus=semantic_corpus,
+                    row_mechanism_scores=row_mechanism_scores,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            snapshot_root.mkdir(parents=True, exist_ok=True)
+            snapshot_db_path = snapshot_root / f"{snapshot_id}.sqlite"
+            __import__("shutil").copy2(target_db_path, snapshot_db_path)
+
+    connection = sqlite3.connect(target_db_path)
+    try:
+        ensure_incremental_tables(connection)
+        replace_source_inventory(
+            connection,
+            corpus="rust_reference",
+            snapshot_id=snapshot_id,
+            documents=document_inventory,
+            sections=section_inventory,
+            units=unit_inventory,
+            materialized_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        record_materialization_delta(
+            connection,
+            run_id=run_id,
+            corpus="rust_reference",
+            mode="incremental" if use_incremental else "full_rebuild",
+            base_snapshot_id=str(previous_snapshot_path or ""),
+            target_snapshot_id=snapshot_id,
+            delta_payload={
+                **planned_delta.as_dict(),
+                "snapshot_id": snapshot_id,
+                "force_rebuild": force_rebuild,
+            },
+        )
+        unchanged_doc_ids = set(planned_delta.unchanged)
+        unchanged_section_ids = {
+            section.section_id for section in sections if section.document_id in unchanged_doc_ids
+        }
+        unchanged_chunk_ids = [
+            chunk.chunk_uid for chunk in chunks if chunk.section_id in unchanged_section_ids
+        ]
+        embedding_audit = audit_preserved_chunk_embeddings(
+            connection,
+            corpus="rust_reference",
+            unchanged_chunk_ids=unchanged_chunk_ids if use_incremental else [],
+        )
+        record_embedding_reuse_audit(
+            connection,
+            run_id=run_id,
+            corpus="rust_reference",
+            model_fingerprint=embedding_reuse_key(
+                stable_id="rust_reference",
+                content_sha256=snapshot_sha256,
+                model_id=str(embedding_model_id),
+                embed_version="v1",
+            ),
+            reused_count=int(embedding_audit["reused_count"]),
+            recomputed_count=int(embedding_audit["recomputed_count"]),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    delta_report_path = write_delta_report(
+        report_root=report_root,
+        corpus="rust_reference",
+        run_id=run_id,
+        payload={
+            **planned_delta.as_dict(),
+            "snapshot_id": snapshot_id,
+            "db_path": str(target_db_path),
+            "staged": use_incremental,
+        },
+    )
+    dry_run_report_path = write_delta_report(
+        report_root=report_root,
+        corpus="rust_reference",
+        run_id=run_id,
+        phase="pre_apply",
+        payload={
+            **planned_delta.as_dict(),
+            "snapshot_id": snapshot_id,
+            "db_path": str(target_db_path),
+            "staged": use_incremental,
+            "embedding_impact": estimate_embedding_impact(
+                planned_delta=planned_delta,
+                unchanged_chunk_ids=unchanged_chunk_ids,
+                changed_chunk_ids=[
+                    chunk.chunk_uid
+                    for chunk in chunks
+                    if chunk.section_id not in unchanged_section_ids
+                ],
+            ),
+        },
+    )
+    refresh_contract_path = write_refresh_contract_report(
+        report_root=report_root,
+        corpus="rust_reference",
+        run_id=run_id,
     )
 
     validation_report = validate_rust_reference_db(
-        db_path=db_path,
+        db_path=target_db_path,
         previous_snapshot_path=previous_snapshot_path,
         min_sections=min_sections,
         min_statements=min_statements,
@@ -258,7 +591,7 @@ def build_rust_reference_db(
     report_path = _write_validation_report(
         report_root=report_root, snapshot_id=snapshot_id, payload=validation_report
     )
-    chunk_first_report = validate_chunk_first_db(db_path, corpus="rust_reference")
+    chunk_first_report = validate_chunk_first_db(target_db_path, corpus="rust_reference")
     chunk_first_report_path = _write_chunk_first_validation_report(
         report_root=report_root,
         corpus="rust_reference",
@@ -288,6 +621,109 @@ def build_rust_reference_db(
             "Chunk-first validation failed for rust_reference.sqlite: "
             f"{chunk_first_report['failures']}"
         )
+    if use_incremental:
+        try:
+            stage_reports = validate_staged_corpus(
+                corpus="rust_reference",
+                staged_db_path=target_db_path,
+                extra_validator=lambda path: validate_rust_reference_db(
+                    db_path=path,
+                    previous_snapshot_path=previous_snapshot_path,
+                    min_sections=min_sections,
+                    min_statements=min_statements,
+                    min_mechanisms=min_mechanisms,
+                ),
+            )
+            cross_db_report_path = validate_cross_db_non_regression(
+                root=Path(__file__).resolve().parents[3],
+                report_root=report_root,
+                run_id=run_id,
+                target_corpus="rust_reference",
+                baseline=cross_db_baseline,
+                additional_stage_reports=stage_reports,
+                target_staged_db_path=target_db_path,
+                target_extra_validator=lambda path: validate_rust_reference_db(
+                    db_path=path,
+                    previous_snapshot_path=previous_snapshot_path,
+                    min_sections=min_sections,
+                    min_statements=min_statements,
+                    min_mechanisms=min_mechanisms,
+                ),
+            )
+            promotion = promote_staged_db(
+                live_db_path=db_path,
+                staged_db_path=target_db_path,
+                promotion_root=promotion_root,
+                corpus="rust_reference",
+                run_id=run_id,
+            )
+            promotion_provenance_path = write_promotion_provenance(
+                report_root=report_root,
+                corpus="rust_reference",
+                run_id=run_id,
+                payload={
+                    "run_id": run_id,
+                    "corpus": "rust_reference",
+                    "validated_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "validation_reports": stage_reports,
+                    "refresh_contract_path": str(refresh_contract_path),
+                    "cross_db_report_path": str(cross_db_report_path),
+                    "promotion": promotion,
+                },
+            )
+            promotion["promotion_provenance_path"] = str(promotion_provenance_path)
+            operator_summary_path = write_operator_summary(
+                report_root=report_root,
+                corpus="rust_reference",
+                run_id=run_id,
+                payload={
+                    "corpus": "rust_reference",
+                    "run_id": run_id,
+                    "status": "promoted",
+                    "dry_run_report_path": str(dry_run_report_path),
+                    "delta_report_path": str(delta_report_path),
+                    "refresh_contract_path": str(refresh_contract_path),
+                    "cross_db_report_path": str(cross_db_report_path),
+                    "promotion_provenance_path": str(promotion_provenance_path),
+                    "validation_kinds": [item["kind"] for item in stage_reports],
+                },
+            )
+            promotion["operator_summary_path"] = str(operator_summary_path)
+        except Exception as exc:
+            require_force_rebuild(
+                corpus="rust_reference",
+                reason=str(exc),
+                force_rebuild=force_rebuild,
+            )
+            return build_rust_reference_db(
+                db_path=db_path,
+                snapshot_root=snapshot_root,
+                manifest_path=manifest_path,
+                extractor_db=extractor_db,
+                table_node_id=table_node_id,
+                reference_source_dir=reference_source_dir,
+                reference_revision=reference_revision,
+                min_sections=min_sections,
+                min_statements=min_statements,
+                min_mechanisms=min_mechanisms,
+                retrieval_mode=retrieval_mode,
+                semantic_profile_version=semantic_profile_version,
+                embedding_model_id=embedding_model_id,
+                embedding_model_revision=embedding_model_revision,
+                embedding_model_license=embedding_model_license,
+                embedding_dim=embedding_dim,
+                reranker_model_id=reranker_model_id,
+                reranker_model_revision=reranker_model_revision,
+                reranker_model_license=reranker_model_license,
+                chunk_target_min_tokens=chunk_target_min_tokens,
+                chunk_target_max_tokens=chunk_target_max_tokens,
+                chunk_overlap_percent=chunk_overlap_percent,
+                allow_provenance_mismatch=allow_provenance_mismatch,
+                incremental=False,
+                force_rebuild=False,
+                staged_output_root=staged_output_root,
+                promotion_root=promotion_root,
+            )
 
     _update_manifest(
         manifest_path=manifest_path,
@@ -368,6 +804,11 @@ def build_rust_reference_db(
         "rows_total": counts["applicable"] + counts["not_applicable"],
         "applicable": counts["applicable"],
         "not_applicable": counts["not_applicable"],
+        "delta_report_path": str(delta_report_path),
+        "dry_run_report_path": str(dry_run_report_path),
+        "refresh_contract_path": str(refresh_contract_path),
+        "incremental": use_incremental,
+        "promotion": promotion,
     }
 
 
@@ -434,6 +875,10 @@ def run_rust_reference_build(*, args: argparse.Namespace, root: Path) -> dict[st
         chunk_target_max_tokens=args.chunk_target_max_tokens,
         chunk_overlap_percent=args.chunk_overlap_percent,
         allow_provenance_mismatch=args.allow_provenance_mismatch,
+        incremental=bool(args.incremental),
+        force_rebuild=bool(args.force_rebuild),
+        staged_output_root=(root / args.staged_output_root).resolve(),
+        promotion_root=(root / args.promotion_root).resolve(),
     )
 
 

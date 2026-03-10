@@ -213,4 +213,37 @@ def parse_build_args(
         default="",
         help="Required operator reason when --assume-built is used",
     )
+    parser.set_defaults(incremental=True)
+    parser.add_argument(
+        "--incremental",
+        dest="incremental",
+        action="store_true",
+        help="Use staged incremental refresh when supported for the selected corpus",
+    )
+    parser.add_argument(
+        "--no-incremental",
+        dest="incremental",
+        action="store_false",
+        help="Disable staged incremental refresh and force direct full rebuild semantics",
+    )
+    parser.add_argument(
+        "--force-rebuild",
+        action="store_true",
+        help="Allow staged full rebuild fallback when incremental invariants fail",
+    )
+    parser.add_argument(
+        "--refresh-derived-only",
+        action="store_true",
+        help="Refresh derived/validation surfaces without rebuilding source-derived rows",
+    )
+    parser.add_argument(
+        "--staged-output-root",
+        default=".cache/sqlite_kb/staged",
+        help="Root directory for staged shadow DBs used by incremental mode",
+    )
+    parser.add_argument(
+        "--promotion-root",
+        default=".cache/sqlite_kb/promotions",
+        help="Root directory for rollback/promoted-copy artifacts during staged promotion",
+    )
     return parser.parse_args()

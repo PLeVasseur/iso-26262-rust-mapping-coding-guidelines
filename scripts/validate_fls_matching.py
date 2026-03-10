@@ -1,67 +1,60 @@
-"""Validate grounding-only WS6 runtime abstention behavior."""
+"""Compatibility wrapper for WS7 FLS validation."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any
 
 try:
-    from context.exemplars import EXEMPLAR_MANIFEST
-
     from retrieval.writer_host.fls_calibration import (
-        evaluate_calibration_items,
-        load_calibration_items,
+        extract_fls_ids_from_rst,
+        extract_topic_from_rst,
     )
 except ModuleNotFoundError:
     PROJECT_ROOT = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(PROJECT_ROOT))
-    from context.exemplars import EXEMPLAR_MANIFEST
-
     from retrieval.writer_host.fls_calibration import (
-        evaluate_calibration_items,
-        load_calibration_items,
+        extract_fls_ids_from_rst,
+        extract_topic_from_rst,
     )
 
+import validate_fls_ws7
 
-GUIDELINES_REPO = Path(
-    os.environ.get(
-        "GUIDELINES_REPO", "/Users/pete.levasseur/personal/safety-critical-rust-coding-guidelines"
-    )
-)
-DEFAULT_OUTPUT = Path(".cache/sqlite_kb/reports/fls_grounding_runtime_validation.json")
+__all__ = [
+    "extract_fls_ids_from_rst",
+    "extract_topic_from_rst",
+    "run_validation",
+    "resolve_output_path",
+    "write_validation_report",
+]
+
+
+DEFAULT_OUTPUT = Path(".cache/sqlite_kb/reports/ws7_validation.json")
 
 
 def run_validation(*, dataset_path: Path | None = None, sweep: bool = False) -> dict[str, Any]:
-    if dataset_path is not None and not dataset_path.exists():
-        raise RuntimeError(f"dataset path does not exist: {dataset_path}")
     if sweep:
         raise RuntimeError(
-            "WS7_REQUIRED: ranking threshold sweep is disabled while runtime remains grounding-only"
+            "threshold sweep is not implemented for ws7_staged_retrieval_v1; "
+            "use validate_fls_ws7 policy-driven validation instead"
         )
-    items = load_calibration_items(
-        manifest_path=EXEMPLAR_MANIFEST,
-        guidelines_repo_root=GUIDELINES_REPO,
-        dataset_path=dataset_path,
-    )
-    report = {
-        "dataset_path": str(dataset_path) if dataset_path else "<exemplar_manifest>",
-        "runtime_mode": "grounding_only_ws6",
-        "non_authoritative_for_ws7": True,
-        "item_count": len(items),
-        "baseline": evaluate_calibration_items(items=items),
+    report = validate_fls_ws7.run_validation(dataset_path=dataset_path)
+    return {
+        **report,
+        "compatibility_wrapper": True,
+        "deprecated_script": "validate_fls_matching.py",
+        "canonical_script": "validate_fls_ws7.py",
     }
-    return report
 
 
 def resolve_output_path(*, run_dir: Path | None = None, output_path: Path | None = None) -> Path:
     if output_path is not None:
         return output_path
     if run_dir is not None:
-        return run_dir / "fls_grounding_runtime_validation.json"
+        return run_dir / "ws7_validation.json"
     return DEFAULT_OUTPUT
 
 
@@ -75,13 +68,13 @@ def write_validation_report(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Validate grounding-only WS6 runtime abstention")
+    parser = argparse.ArgumentParser(description="Compatibility wrapper for WS7 FLS validation")
     parser.add_argument("--dataset", default="", help="Optional calibration dataset JSON path")
-    parser.add_argument("--sweep", action="store_true", help="Disabled until WS7")
+    parser.add_argument("--sweep", action="store_true", help="Not implemented for WS7")
     parser.add_argument(
         "--run-dir",
         default="",
-        help="Optional run directory; writes <run_dir>/fls_grounding_runtime_validation.json",
+        help="Optional run directory; writes <run_dir>/ws7_validation.json",
     )
     parser.add_argument(
         "--output",
@@ -100,23 +93,13 @@ def main() -> int:
     run_dir = Path(run_dir_raw).resolve() if run_dir_raw else None
     output_path = Path(output_raw).resolve() if output_raw else None
     report = run_validation(dataset_path=dataset, sweep=bool(args.sweep))
-
-    baseline_raw = report.get("baseline")
-    baseline: dict[str, Any] = baseline_raw if isinstance(baseline_raw, dict) else {}
-    total = int(baseline.get("total", 0) or 0)
-    ws7_required = int(baseline.get("ws7_required", 0) or 0)
-    abstention_correct = int(baseline.get("abstention_correct", 0) or 0)
-    structurally_valid = int(baseline.get("structurally_valid", 0) or 0)
-    print("FLS Grounding Runtime Abstention Validation")
-    print(f"  Items: {total}")
+    print("FLS WS7 Validation Compatibility Wrapper")
     print(f"  Runtime mode: {report.get('runtime_mode', 'unknown')}")
-    print(f"  WS7 required: {ws7_required}/{total}")
-    print(f"  Structurally valid packets: {structurally_valid}/{total}")
-    print(f"  Correct abstentions: {abstention_correct}/{total}")
-
+    print(f"  Item count: {report.get('item_count', 0)}")
+    print(f"  Proof valid: {report.get('proof_valid', False)}")
     out = write_validation_report(report, run_dir=run_dir, output_path=output_path)
     print(f"Report saved: {out}")
-    return 0
+    return 0 if bool(report.get("proof_valid", False)) else 1
 
 
 if __name__ == "__main__":

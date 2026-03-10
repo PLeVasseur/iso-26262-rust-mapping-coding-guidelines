@@ -17,6 +17,7 @@ from context.fls_topology import (
     paragraph_ids_for_section,
     topology_drift_report,
 )
+from context.fls_ws7 import resolve_guideline as resolve_ws7_guideline
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FLS_CANONICAL_DB_PATH = PROJECT_ROOT / ".cache" / "sqlite_kb" / "current" / "fls_spec.db"
@@ -199,18 +200,6 @@ def validate_fls_id(paragraph_id: str, *, spec_lock_path: Path = SPEC_LOCK_PATH)
     return get_paragraph(topology_index, paragraph_id) is not None
 
 
-def _grounding_only_decision() -> dict[str, Any]:
-    return {
-        "accepted": False,
-        "reason_code": "WS7_REQUIRED",
-        "publish_accept": False,
-        "review_candidate": False,
-        "grounding_only_runtime": True,
-        "used_llm_proposal": False,
-        "top_candidates": [],
-    }
-
-
 def resolve_fls_for_guideline(
     packet: dict[str, Any],
     *,
@@ -220,7 +209,7 @@ def resolve_fls_for_guideline(
     precomputed_variants: list[dict[str, str]] | None = None,
     policy_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    del spec_lock_path, precomputed_candidates, precomputed_variants, policy_overrides
+    del spec_lock_path, precomputed_candidates, precomputed_variants
     db_path = _resolve_fls_db_path(db_path)
     if not _db_has_paragraphs(db_path):
         raise RuntimeError(
@@ -237,10 +226,13 @@ def resolve_fls_for_guideline(
     terms = [term.strip() for term in construct_terms if term.strip()]
     if not terms:
         return _unresolved("no construct terms provided")
-    decision = _grounding_only_decision()
-    return _unresolved(
-        "WS6 grounding is active; paragraph candidate competition remains open in WS7",
-        decision=decision,
+    return resolve_ws7_guideline(
+        project_root=PROJECT_ROOT,
+        packet=packet,
+        db_path=db_path,
+        runtime_settings=_load_fls_runtime_settings(),
+        topology_index=_load_live_topology_index(),
+        policy_overrides=policy_overrides,
     )
 
 

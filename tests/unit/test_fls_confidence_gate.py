@@ -5,17 +5,47 @@ from context import fls_lookup
 
 def test_resolve_for_construct_is_grounding_only_in_ws6(monkeypatch) -> None:
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
+    monkeypatch.setattr(
+        fls_lookup,
+        "resolve_ws7_guideline",
+        lambda **kwargs: {
+            "paragraph_id": "fls_unsafe003",
+            "decision": {
+                "reason_code": "ACCEPTED",
+                "accepted": True,
+                "publish_accept": True,
+                "review_candidate": False,
+                "grounding_only_runtime": False,
+                "top_candidates": [],
+            },
+        },
+    )
 
     result = fls_lookup.resolve_fls_for_construct(["unsafe", "pointer", "dereference"])
 
-    assert result["paragraph_id"] == "fls_UNRESOLVED"
-    assert result["decision"]["reason_code"] == "WS7_REQUIRED"
-    assert result["decision"]["grounding_only_runtime"] is True
+    assert result["paragraph_id"] == "fls_unsafe003"
+    assert result["decision"]["reason_code"] == "ACCEPTED"
+    assert result["decision"]["grounding_only_runtime"] is False
     assert result["decision"]["top_candidates"] == []
 
 
 def test_resolve_for_construct_ignores_expected_domains_in_ws6(monkeypatch) -> None:
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
+    monkeypatch.setattr(
+        fls_lookup,
+        "resolve_ws7_guideline",
+        lambda **kwargs: {
+            "paragraph_id": "fls_atomic002",
+            "decision": {
+                "reason_code": "ACCEPTED",
+                "accepted": True,
+                "publish_accept": True,
+                "review_candidate": False,
+                "grounding_only_runtime": False,
+                "top_candidates": [],
+            },
+        },
+    )
 
     base = fls_lookup.resolve_fls_for_construct(["atomic", "fence", "ordering"])
     with_domains = fls_lookup.resolve_fls_for_construct(
@@ -26,8 +56,25 @@ def test_resolve_for_construct_ignores_expected_domains_in_ws6(monkeypatch) -> N
     assert with_domains == base
 
 
-def test_resolve_for_guideline_does_not_use_candidate_competition_in_ws6(monkeypatch) -> None:
+def test_resolve_for_guideline_delegates_to_ws7_runtime(monkeypatch) -> None:
     monkeypatch.setattr(fls_lookup, "_db_has_paragraphs", lambda _db: True)
+    seen: dict[str, object] = {}
+
+    def fake_ws7(**kwargs):
+        seen.update(kwargs)
+        return {
+            "paragraph_id": "fls_unsafe003",
+            "decision": {
+                "reason_code": "ACCEPTED",
+                "accepted": True,
+                "publish_accept": True,
+                "review_candidate": False,
+                "grounding_only_runtime": False,
+                "top_candidates": [],
+            },
+        }
+
+    monkeypatch.setattr(fls_lookup, "resolve_ws7_guideline", fake_ws7)
     packet = {
         "governing_obligation": "Unsafe code must preserve invariants",
         "construct_terms": ["unsafe", "invariants"],
@@ -44,8 +91,9 @@ def test_resolve_for_guideline_does_not_use_candidate_competition_in_ws6(monkeyp
         precomputed_variants=[{"name": "packet_text", "query": "unsafe invariants"}],
     )
 
-    assert result["paragraph_id"] == "fls_UNRESOLVED"
-    assert result["decision"]["reason_code"] == "WS7_REQUIRED"
+    assert result["paragraph_id"] == "fls_unsafe003"
+    assert result["decision"]["reason_code"] == "ACCEPTED"
+    assert seen["packet"] == packet
 
 
 def test_resolve_requires_construct_terms(monkeypatch) -> None:

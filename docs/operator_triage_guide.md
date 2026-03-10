@@ -83,13 +83,19 @@
   a plan-path mismatch unless bibliography resolution behavior is also missing.
 - Inspect `writer_subagent_outputs/subagent_invocation_trace.json` and verify
   each invocation has `injected_context` budgets recorded.
-- Run `uv run python scripts/validate_fls_matching.py --run-dir <run_dir>` and confirm
-  `<run_dir>/fls_grounding_runtime_validation.json` reports grounding-only
-  `WS7_REQUIRED` abstention with structurally valid packets; do not treat it as
-  ranked matching quality evidence.
+- Run `uv run python scripts/validate_fls_ws7.py --run-dir <run_dir>` and confirm
+  `<run_dir>/ws7_validation.json` exists, reports `runtime_mode:
+  ws7_staged_retrieval_v1`, and records stage artifacts / candidate traces for
+  the validated atoms.
+- Treat `scripts/validate_fls_matching.py` as a compatibility wrapper only; do
+  not treat grounding-only abstention language as the active FLS runtime truth.
 
 ## WS7 Prework Operational Checks
 
+- Treat incremental refresh as the default build path for source-driven corpora.
+- Use `--no-incremental` only when deliberately forcing full rebuild semantics.
+- Use `--force-rebuild` only when an incremental run fails invariants and you are
+  explicitly authorizing fallback replacement of the live DB.
 - Treat `.cache/sqlite_kb/reports/<corpus>/current_chunk_first_validation.json` as the
   operational chunk-first health surface for `fls_spec`, `core_docs`, and
   `rust_reference`.
@@ -107,6 +113,15 @@
   `.cache/sqlite_kb/reports/ws7_prework_20260309_v3/ws7_prework_closure_report.json`
   as valid when it references the same converged current DB identities (or an
   explicitly named snapshot set) that review is certifying.
+- For incremental corpus runs, inspect the operator summary under
+  `.cache/sqlite_kb/reports/<corpus>/incremental/<run_id>/` and verify it points
+  to all of:
+  - `<corpus>_pre_apply_delta_report.json`
+  - `<corpus>_post_apply_delta_report.json`
+  - `<corpus>_refresh_contract.json`
+  - `<corpus>_cross_db_validation.json`
+  - `<corpus>_promotion_provenance.json`
+  - `<corpus>_operator_summary.json`
 
 ## Step 8 Per-Role Validation + Retry Triage
 

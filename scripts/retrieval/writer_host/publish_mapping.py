@@ -36,7 +36,7 @@ def _resolve_fls_id(
     report_path: str | None = None
     if report_root is not None:
         report = {
-            "runtime_mode": "grounding_only_ws6",
+            "runtime_mode": str(decision.get("runtime_mode", "unknown") or "unknown"),
             "grounding_packet": packet,
             "decision": decision,
             "resolved_paragraph_id": fls_id,
@@ -50,7 +50,13 @@ def _resolve_fls_id(
                 payload=report,
             )
         )
-    valid = fls_id.startswith("fls_") and fls_id != "fls_UNRESOLVED" and validate_fls_id(fls_id)
+    accepted = bool(decision.get("accepted", False))
+    valid = (
+        accepted
+        and fls_id.startswith("fls_")
+        and fls_id != "fls_UNRESOLVED"
+        and validate_fls_id(fls_id)
+    )
     reason = str(paragraph.get("unresolved_reason", "")).strip() or str(
         decision.get("reason_code", "UNRESOLVED")
     )
@@ -170,9 +176,8 @@ def map_publish_record(
         report_root=resolution_report_root,
     )
     if not bool(publishability.get("publishable", False)) and not allow_unresolved:
-        raise RuntimeError(
-            f"failed to resolve valid fls id for title='{title}': {publishability.get('reason', 'UNRESOLVED')}"
-        )
+        reason = str(publishability.get("reason", "UNRESOLVED"))
+        raise RuntimeError(f"failed to resolve valid fls id for title='{title}': {reason}")
     category_raw = str(fls_candidate.get("category", "")).strip().lower()
     category = _infer_category(category_raw=category_raw, family_key=family_key, chapter=chapter)
     return {

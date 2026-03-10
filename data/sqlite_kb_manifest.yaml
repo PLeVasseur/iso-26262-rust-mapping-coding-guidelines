@@ -1,19 +1,20 @@
 version: 1
-updated_at: '2026-02-26T23:31:49+00:00'
+updated_at: '2026-03-10T16:47:36+00:00'
 databases:
   rust_reference:
     db_name: rust_reference.sqlite
     current_path: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/current/rust_reference.sqlite
-    snapshot_id: rust-reference-20260226T233148Z
-    snapshot_path: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/snapshots/rust_reference/rust-reference-20260226T233148Z.sqlite
+    snapshot_id: rust-reference-20260310T164729Z
+    snapshot_path: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/snapshots/rust_reference/rust-reference-20260310T164729Z.sqlite
     source:
       kind: rust-reference
       ref: https://doc.rust-lang.org/reference/
       commit_sha: 442cbef9105662887d5eae2882ca551f3726bf28
-      fetched_at: '2026-02-26T23:31:47+00:00'
+      fetched_at: '2026-03-10T16:47:29+00:00'
     query_contract: config/sqlite_query_contracts/rust_reference_chunk.yaml
-    validation_report: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260226T233148Z.json
-    row_metadata_report: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260226T233148Z_table1_row_metadata.json
+    validation_report: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260310T164729Z.json
+    row_metadata_report: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260310T164729Z_table1_row_metadata.json
+    chunk_first_validation_report: /Users/pete.levasseur/personal/iso-26262-rust-mapping-coding-guidelines/.cache/sqlite_kb/reports/rust_reference/rust-reference-20260310T164729Z_chunk_first_validation.json
     semantic_retrieval:
       retrieval_mode: hybrid
       retrieval_corpus: chunk
@@ -27,3 +28,17 @@ databases:
     chunk_stats:
       chunk_count: 1471
       chunk_overlap_percent: 0.0
+    chunk_fts_mapping:
+      applicable: true
+      scope: full
+      passed: true
+      chunk_count: 1471
+      chunks_fts_count: 1471
+      chunk_fts_rowids_count: 1471
+      missing_mapping_count: 0
+      orphan_mapping_count: 0
+      fts_without_mapping_count: 0
+      source_mismatch_count: 0
+      duplicate_chunk_uid_count: 0
+      duplicate_fts_rowid_count: 0
+      validator_status: pass

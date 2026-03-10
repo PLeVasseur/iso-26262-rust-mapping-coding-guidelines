@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from context.fls_lookup import resolve_fls_for_guideline
-from retrieval.writer_host.fls_grounding import build_grounding_artifact
 
+from retrieval.writer_host.fls_grounding import build_grounding_artifact
 
 EXPECTED_GROUNDING_FIELDS = {
     "governing_obligation",
@@ -168,7 +168,8 @@ def _assert_runtime_allowed_dataset(dataset_path: Path) -> None:
     payload = _load_json(dataset_path)
     if bool(payload.get("runtime_use_prohibited", False)):
         raise RuntimeError(
-            f"dataset {dataset_path} is marked runtime_use_prohibited and cannot be used for calibration"
+            "dataset "
+            f"{dataset_path} is marked runtime_use_prohibited and cannot be used for calibration"
         )
 
 
@@ -212,6 +213,10 @@ def load_calibration_items(
                     "acceptable_ids": acceptable_ids,
                     "acceptable_chapters": acceptable_chapters,
                     "should_abstain": bool(row.get("should_abstain", False)),
+                    "allow_review": bool(row.get("allow_review", False)),
+                    "allow_unresolved": bool(row.get("allow_unresolved", False)),
+                    "rationale": str(row.get("rationale", "")).strip(),
+                    "provenance": dict(row.get("provenance") or {}),
                 }
             )
         return out
@@ -241,6 +246,8 @@ def load_calibration_items(
                 "acceptable_ids": ids,
                 "acceptable_chapters": [],
                 "should_abstain": False,
+                "allow_review": False,
+                "allow_unresolved": False,
             }
         )
     return out
@@ -251,12 +258,14 @@ def evaluate_calibration_items(
     items: list[dict[str, Any]],
 ) -> dict[str, Any]:
     total = 0
-    ws7_required = 0
-    grounding_only_runtime = 0
     structurally_valid = 0
     no_legacy_fields = 0
-    abstention_correct = 0
-    publish_accept_violations = 0
+    accepted_correct = 0
+    accepted_wrong = 0
+    review_correct = 0
+    review_unexpected = 0
+    unresolved_expected = 0
+    unresolved_unexpected = 0
     rows: list[dict[str, Any]] = []
 
     for item in items:
@@ -292,24 +301,48 @@ def evaluate_calibration_items(
         reason_code = str(decision.get("reason_code", ""))
         is_grounding_only = bool(decision.get("grounding_only_runtime", False))
         publish_accept = bool(decision.get("publish_accept", False))
+        accepted = bool(decision.get("accepted", False))
+        review_candidate = bool(decision.get("review_candidate", False))
+        should_abstain = bool(item.get("should_abstain", False))
+        allow_review = bool(item.get("allow_review", False))
+        allow_unresolved = bool(item.get("allow_unresolved", False))
 
         total += 1
         if packet_fields_exact:
             structurally_valid += 1
         if packet_has_no_legacy:
             no_legacy_fields += 1
-        if reason_code == "WS7_REQUIRED":
-            ws7_required += 1
-        if is_grounding_only:
-            grounding_only_runtime += 1
-        if (
-            predicted_id == "fls_UNRESOLVED"
-            and reason_code == "WS7_REQUIRED"
-            and not publish_accept
-        ):
-            abstention_correct += 1
-        if publish_accept:
-            publish_accept_violations += 1
+        correct = predicted_id in acceptable_ids
+        if should_abstain:
+            if predicted_id == "fls_UNRESOLVED":
+                unresolved_expected += 1
+                outcome = "unresolved-expected"
+            elif review_candidate:
+                review_correct += 1
+                outcome = "review-correct"
+            else:
+                accepted_wrong += 1
+                outcome = "accepted-wrong"
+        elif accepted:
+            if correct:
+                accepted_correct += 1
+                outcome = "accepted-correct"
+            else:
+                accepted_wrong += 1
+                outcome = "accepted-wrong"
+        elif review_candidate:
+            if correct and allow_review:
+                review_correct += 1
+                outcome = "review-correct"
+            else:
+                review_unexpected += 1
+                outcome = "review-unexpected"
+        elif allow_unresolved:
+            unresolved_expected += 1
+            outcome = "unresolved-expected"
+        else:
+            unresolved_unexpected += 1
+            outcome = "unresolved-unexpected"
 
         rows.append(
             {
@@ -321,22 +354,30 @@ def evaluate_calibration_items(
                 "reason_code": reason_code,
                 "publish_accept": publish_accept,
                 "grounding_only_runtime": is_grounding_only,
+                "accepted": accepted,
+                "review_candidate": review_candidate,
+                "outcome": outcome,
             }
         )
 
     return {
         "total": total,
-        "ws7_required": ws7_required,
-        "grounding_only_runtime": grounding_only_runtime,
         "structurally_valid": structurally_valid,
         "no_legacy_fields": no_legacy_fields,
-        "abstention_correct": abstention_correct,
-        "publish_accept_violations": publish_accept_violations,
-        "ws7_required_ratio": (ws7_required / total) if total else 0.0,
-        "grounding_only_ratio": (grounding_only_runtime / total) if total else 0.0,
+        "accepted_correct": accepted_correct,
+        "accepted_wrong": accepted_wrong,
+        "review_correct": review_correct,
+        "review_unexpected": review_unexpected,
+        "unresolved_expected": unresolved_expected,
+        "unresolved_unexpected": unresolved_unexpected,
         "structurally_valid_ratio": (structurally_valid / total) if total else 0.0,
         "no_legacy_fields_ratio": (no_legacy_fields / total) if total else 0.0,
-        "abstention_correct_ratio": (abstention_correct / total) if total else 0.0,
+        "accepted_correct_ratio": (accepted_correct / total) if total else 0.0,
+        "accepted_wrong_ratio": (accepted_wrong / total) if total else 0.0,
+        "review_correct_ratio": (review_correct / total) if total else 0.0,
+        "review_unexpected_ratio": (review_unexpected / total) if total else 0.0,
+        "unresolved_expected_ratio": (unresolved_expected / total) if total else 0.0,
+        "unresolved_unexpected_ratio": (unresolved_unexpected / total) if total else 0.0,
         "rows": rows,
     }
 
@@ -348,7 +389,8 @@ def run_threshold_sweep(
 ) -> dict[str, Any]:
     del items, base_policy
     raise RuntimeError(
-        "WS7_REQUIRED: threshold sweep is disabled while runtime remains grounding-only"
+        "threshold sweep is not implemented for ws7_staged_retrieval_v1; "
+        "use explicit policy_overrides in targeted validator/runtime tests instead"
     )
 
 

@@ -4,11 +4,11 @@ corpus: fls_spec
 paths:
   db: .cache/sqlite_kb/current/fls_spec.db
   contract: config/sqlite_query_contracts/fls_spec.yaml
-  eval_testset: data/query_testsets/rust_reference_table1_retrieval_eval.yaml
+  eval_testset: data/query_testsets/fls_spec_ws7_placeholder_eval.yaml
   rewrite_rules: config/sqlite_query_rewrite/fls_spec_rewrite.yaml
   query_log_root: .cache/sqlite_kb/query_logs/fls_spec
   report_root: .cache/sqlite_kb/reports/fls_spec
-  eval_policy: config/eval_policies/rust_reference.yaml
+  eval_policy: config/eval_policies/fls_spec_ws7_placeholder.yaml
 
 defaults:
   profile: fls_spec_control
@@ -36,10 +36,10 @@ runtime:
 
 capabilities:
   query: true
-  eval: true
+  eval: false
   build: true
   materialize: true
-  smoke: false
+  smoke: true
   capture: true
   verify: true
   validate: true

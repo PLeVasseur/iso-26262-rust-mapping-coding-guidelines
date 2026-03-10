@@ -10,6 +10,7 @@ import pytest
 from context.fls_lookup import (
     get_live_topology_membership,
     resolve_fls_for_construct,
+    resolve_fls_for_guideline,
     validate_fls_id,
 )
 from context.fls_search_runtime import search_fls_paragraphs
@@ -17,6 +18,7 @@ from scripts.build_fls_db import build_fls_db
 from scripts.fetch_fls_source import fetch_fls_source
 from scripts.parse_fls_paragraphs import parse_fls_rst
 from scripts.retrieval.operations.query import execute_retrieval_query
+
 from semantic_backend_client import SemanticBackendConfig
 
 
@@ -212,7 +214,8 @@ Glossary
 .. _fls_glossary001:
 
 :dp:`fls_glossary001`
-The :dt:`strict provenance` model constrains :t:`pointer` interpretation and :std:`core::ptr::addr_of` usage.
+The :dt:`strict provenance` model constrains :t:`pointer` interpretation and
+:std:`core::ptr::addr_of` usage.
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -254,7 +257,8 @@ Foreign Function Interface
 .. _fls_ffi001:
 
 :dp:`fls_ffi001`
-The :dt:`external function <extern function>` calling convention constrains :t:`thread[s] <thread>` interaction and :p:`17.2 <fls_threads002>` semantics.
+The :dt:`external function <extern function>` calling convention constrains
+:t:`thread[s] <thread>` interaction and :p:`17.2 <fls_threads002>` semantics.
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -415,13 +419,16 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         ).fetchall() == [("fls_atomic002",)]
         assert (
             connection.execute(
-                "SELECT COUNT(*) FROM chunks c JOIN paragraphs p ON p.paragraph_id = c.chunk_uid WHERE c.clean_text != p.clean_text"
+                "SELECT COUNT(*) FROM chunks c JOIN paragraphs p "
+                "ON p.paragraph_id = c.chunk_uid "
+                "WHERE c.clean_text != p.clean_text"
             ).fetchone()[0]
             == 0
         )
         assert (
             connection.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'statement_embeddings'"
+                "SELECT COUNT(*) FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'statement_embeddings'"
             ).fetchone()[0]
             == 0
         )
@@ -810,8 +817,15 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         db_path=db_path,
         spec_lock_path=spec_lock_path,
     )
-    assert resolved["paragraph_id"] == "fls_UNRESOLVED"
-    assert resolved["decision"]["reason_code"] == "WS7_REQUIRED"
+    assert resolved["paragraph_id"] == "fls_atomic002"
+    assert resolved["decision"]["reason_code"] == "ACCEPTED"
+    assert resolved["decision"]["selected_stage"] == "global"
+    assert resolved["decision"]["grounding_only_runtime"] is False
+    assert resolved["decision"]["top_candidates"][0]["first_seen_stage"] == "global"
+    assert (
+        resolved["decision"]["top_candidates"][0]["paragraph_link"]
+        == "concurrency.html#fls_atomic002"
+    )
 
     resolved_with_domains = resolve_fls_for_construct(
         ["atomic", "fence", "ordering"],
@@ -820,6 +834,101 @@ def test_build_and_lookup_fls_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         expected_domains=["unsafe", "concurrency"],
     )
     assert resolved_with_domains == resolved
+
+    section_stage = resolve_fls_for_guideline(
+        {
+            "governing_obligation": "Atomic fence ordering controls visibility between threads",
+            "construct_terms": ["atomic", "fence", "ordering"],
+            "code_tokens": ["atomic", "fence"],
+            "supporting_phrases": ["visibility between threads"],
+            "prior_documents": [
+                {
+                    "document_link": "concurrency.html",
+                    "score": 1.0,
+                    "evidence": {},
+                }
+            ],
+            "prior_sections": [
+                {
+                    "section_link": "concurrency.html#fls_chapter_anchor",
+                    "score": 1.0,
+                    "evidence": {},
+                }
+            ],
+            "ambiguity_notes": [],
+        },
+        db_path=db_path,
+    )
+    assert section_stage["paragraph_id"] == "fls_atomic002"
+    assert section_stage["decision"]["selected_stage"] == "section"
+    first_stage = section_stage["decision"]["stage_artifacts"][0]
+    assert set(first_stage) == {
+        "stage_name",
+        "mode_artifacts",
+        "candidate_universe_size",
+        "advancement_reason",
+        "candidate_ids",
+    }
+    assert first_stage["stage_name"] == "section"
+    assert first_stage["candidate_universe_size"] == 2
+    assert first_stage["advancement_reason"] == "TERMINAL_STAGE_SUCCESS"
+    assert first_stage["candidate_ids"][0]["first_seen_stage"] == "section"
+    assert set(
+        first_stage["mode_artifacts"]["lexical"]["retrieval_result_ref"]["scope"][
+            "allowed_scope_ids"
+        ]
+    ) == {"fls_sendsync001", "fls_atomic002"}
+    assert first_stage["mode_artifacts"]["lexical"]["returned_candidate_count"] >= 1
+    assert first_stage["mode_artifacts"]["semantic"]["returned_candidate_count"] >= 1
+    assert first_stage["mode_artifacts"]["hybrid"]["returned_candidate_count"] >= 1
+
+    broadened = resolve_fls_for_guideline(
+        {
+            "governing_obligation": "Atomic fence ordering controls visibility between threads",
+            "construct_terms": ["atomic", "fence", "ordering"],
+            "code_tokens": ["atomic", "fence"],
+            "supporting_phrases": ["visibility between threads"],
+            "prior_documents": [
+                {
+                    "document_link": "unsafety.html",
+                    "score": 1.0,
+                    "evidence": {},
+                }
+            ],
+            "prior_sections": [
+                {
+                    "section_link": "unsafety.html#fls_unsafety_anchor",
+                    "score": 1.0,
+                    "evidence": {},
+                }
+            ],
+            "ambiguity_notes": [],
+        },
+        db_path=db_path,
+    )
+    assert broadened["paragraph_id"] == "fls_atomic002"
+    assert broadened["decision"]["selected_stage"] == "global"
+    assert [stage["stage_name"] for stage in broadened["decision"]["stage_artifacts"]] == [
+        "section",
+        "document",
+        "global",
+    ]
+    assert (
+        broadened["decision"]["stage_artifacts"][0]["advancement_reason"]
+        == "GLOBAL_FALLBACK_REQUIRED"
+    )
+    assert (
+        broadened["decision"]["stage_artifacts"][1]["advancement_reason"]
+        == "GLOBAL_FALLBACK_REQUIRED"
+    )
+    assert broadened["decision"]["top_candidates"][0]["first_seen_stage"] == "global"
+    assert (
+        broadened["decision"]["top_candidates"][0]["score_components"]["document_prior_score"]
+        == 0.0
+    )
+    assert (
+        broadened["decision"]["top_candidates"][0]["score_components"]["section_prior_score"] == 0.0
+    )
 
     assert validate_fls_id("fls_atomic002", spec_lock_path=spec_lock_path)
     assert not validate_fls_id("fls_FABRICATED_ID", spec_lock_path=spec_lock_path)
@@ -967,7 +1076,8 @@ Foreign Function Interface
 .. _fls_ffi001:
 
 :dp:`fls_ffi001`
-The :dt:`external function <extern function>` calling convention constrains :t:`thread[s] <thread>` interaction and :p:`17.2 <fls_threads002>` semantics.
+The :dt:`external function <extern function>` calling convention constrains
+:t:`thread[s] <thread>` interaction and :p:`17.2 <fls_threads002>` semantics.
 """.strip()
         + "\n",
         encoding="utf-8",

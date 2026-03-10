@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import sqlite3
 from argparse import Namespace
 from datetime import UTC, datetime
 from pathlib import Path
-import sqlite3
 
+from retrieval.build.chunk_fts_validation import validate_chunk_fts_mapping_db
 from retrieval.build.reports import (
     validate_chunk_first_db,
+    validate_guidelines_repo_db,
     write_current_chunk_first_validation_report,
+    write_current_guidelines_repo_validation_report,
 )
-from retrieval.build.chunk_fts_validation import validate_chunk_fts_mapping_db
 from retrieval.core.provenance import (
     apply_pending_migrations,
     canonical_json_hash,
@@ -48,7 +50,11 @@ def run(args: Namespace, *, root: Path) -> int:
             if count == 0:
                 ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
                 connection.execute(
-                    "INSERT INTO snapshots(snapshot_id, commit_sha, source_url, fetched_at, sha256) VALUES(?, ?, ?, ?, ?)",
+                    (
+                        "INSERT INTO snapshots("
+                        "snapshot_id, commit_sha, source_url, fetched_at, sha256"
+                        ") VALUES(?, ?, ?, ?, ?)"
+                    ),
                     (
                         f"bootstrap-{ts}",
                         "bootstrap",
@@ -96,7 +102,17 @@ def run(args: Namespace, *, root: Path) -> int:
         model_fingerprint=model_fingerprint,
         allow_provenance_mismatch=False,
     )
-    if mapping.get("applicable"):
+    if defaults.corpus == "guidelines_repo":
+        current_report = validate_guidelines_repo_db(defaults.db_path)
+        write_current_guidelines_repo_validation_report(
+            report_root=defaults.report_root,
+            payload=current_report,
+        )
+        maybe_refresh_ws7_prework_closure_packet(
+            root=root,
+            deferred_items=["WS7 staged runtime implementation"],
+        )
+    elif mapping.get("applicable"):
         current_report = validate_chunk_first_db(defaults.db_path, corpus=defaults.corpus)
         write_current_chunk_first_validation_report(
             report_root=defaults.report_root,

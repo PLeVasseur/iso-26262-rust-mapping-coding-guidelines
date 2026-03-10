@@ -14,52 +14,36 @@ if str(SCRIPTS) not in sys.path:
 import validate_fls_matching  # noqa: E402
 
 
-def test_run_validation_includes_baseline(monkeypatch) -> None:
+def test_run_validation_is_ws7_compatibility_wrapper(monkeypatch) -> None:
     monkeypatch.setattr(
-        validate_fls_matching, "load_calibration_items", lambda **kwargs: [{"path": "x"}]
-    )
-    monkeypatch.setattr(
-        validate_fls_matching,
-        "evaluate_calibration_items",
+        validate_fls_matching.validate_fls_ws7,
+        "run_validation",
         lambda **kwargs: {
-            "total": 1,
-            "ws7_required": 1,
-            "abstention_correct": 1,
-            "structurally_valid": 1,
+            "runtime_mode": "ws7_staged_retrieval_v1",
+            "item_count": 1,
+            "proof_valid": True,
         },
     )
 
     report = validate_fls_matching.run_validation(sweep=False)
 
-    assert report["item_count"] == 1
-    assert report["baseline"]["total"] == 1
-    assert report["runtime_mode"] == "grounding_only_ws6"
-    assert report["non_authoritative_for_ws7"] is True
+    assert report["runtime_mode"] == "ws7_staged_retrieval_v1"
+    assert report["compatibility_wrapper"] is True
+    assert report["canonical_script"] == "validate_fls_ws7.py"
 
 
-def test_run_validation_rejects_sweep_until_ws7() -> None:
-    with pytest.raises(RuntimeError, match="WS7_REQUIRED"):
+def test_run_validation_rejects_ws7_sweep() -> None:
+    with pytest.raises(RuntimeError, match="not implemented for ws7_staged_retrieval_v1"):
         validate_fls_matching.run_validation(sweep=True)
-
-
-def test_run_validation_rejects_runtime_use_prohibited_dataset(tmp_path: Path) -> None:
-    dataset = tmp_path / "heldout.json"
-    dataset.write_text(
-        json.dumps({"runtime_use_prohibited": True, "items": []}),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(RuntimeError, match="runtime_use_prohibited"):
-        validate_fls_matching.run_validation(dataset_path=dataset)
 
 
 def test_write_validation_report_prefers_run_dir(tmp_path: Path) -> None:
     out = validate_fls_matching.write_validation_report(
-        {"runtime_mode": "grounding_only_ws6"},
+        {"runtime_mode": "ws7_staged_retrieval_v1"},
         run_dir=tmp_path,
     )
 
-    assert out == tmp_path / "fls_grounding_runtime_validation.json"
+    assert out == tmp_path / "ws7_validation.json"
     assert out.exists()
 
 
@@ -67,10 +51,12 @@ def test_write_validation_report_allows_explicit_output_path(tmp_path: Path) -> 
     output = tmp_path / "nested" / "report.json"
 
     out = validate_fls_matching.write_validation_report(
-        {"runtime_mode": "grounding_only_ws6"},
+        {"runtime_mode": "ws7_staged_retrieval_v1"},
         run_dir=tmp_path,
         output_path=output,
     )
 
     assert out == output
-    assert json.loads(output.read_text(encoding="utf-8"))["runtime_mode"] == "grounding_only_ws6"
+    assert (
+        json.loads(output.read_text(encoding="utf-8"))["runtime_mode"] == "ws7_staged_retrieval_v1"
+    )

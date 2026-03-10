@@ -23,3 +23,35 @@ synonym_groups:
   - unsafe
   - unsafety
   - unchecked
+- canonical: unsafe external block
+  terms:
+  - unsafe external block
+  - unsafe extern
+  - extern block
+  - external block
+- canonical: unsafe attribute
+  terms:
+  - unsafe attribute
+  - attribute unsafe
+  - no_mangle
+  - export_name
+  - link_section
+- canonical: address to pointer cast
+  terms:
+  - address to pointer cast
+  - integer to pointer
+  - numeric to pointer
+  - transmute pointer
+  - type cast expression
+- canonical: recursive function
+  terms:
+  - recursive function
+  - recursion
+  - stack overflow
+  - tail call
+- canonical: distinct types
+  terms:
+  - distinct types
+  - strong types
+  - newtype
+  - type alias

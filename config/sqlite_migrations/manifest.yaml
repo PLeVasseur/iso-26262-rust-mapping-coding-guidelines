@@ -11,3 +11,5 @@ migrations:
   - id: 20260309_005_chunk_fts_rowids
     file: config/sqlite_migrations/20260309_005_chunk_fts_rowids.sql
     backfill: chunk_fts_rowids_from_chunks_fts
+  - id: 20260310_006_incremental_refresh_inventory
+    file: config/sqlite_migrations/20260310_006_incremental_refresh_inventory.sql

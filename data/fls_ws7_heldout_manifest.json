@@ -1,0 +1,64 @@
+{
+  "manifest_version": 1,
+  "frozen": true,
+  "purpose": "WS7 held-out validation set for staged retrieval, ranking, glossary handling, and review outcomes.",
+  "runtime_use_prohibited": false,
+  "selection_constraints": {
+    "excluded_validation_sets": [
+      "Batch A",
+      "Batch C",
+      "Batch F",
+      "Batch G",
+      "v17.2 full 23-target batch"
+    ]
+  },
+  "items": [
+    {
+      "path": "src/coding-guidelines/attributes/gui_ZDLZzjeOwLSU.rst",
+      "acceptable_ids": ["fls_z5DTDKM9mU3o", "fls_8ltVLtAfvy0m"],
+      "allow_review": false,
+      "allow_unresolved": true,
+      "rationale": "Current FLS evidence suggests this guideline spans unsafe-attribute and unsafe-external-block concepts. Until WS7 can distinguish that neighborhood reliably, unresolved is acceptable and candidate review should focus on fls_z5DTDKM9mU3o / fls_8ltVLtAfvy0m rather than the older stale mapping.",
+      "provenance": {
+        "stable_identifier": "ws7-heldout::gui_ZDLZzjeOwLSU",
+        "construct_family": "ffi / unsafe attribute visibility",
+        "mapping_note": "original guideline :fls: appears stale relative to current FLS corpus"
+      }
+    },
+    {
+      "path": "src/coding-guidelines/associated-items/gui_ot2Zt3dd6of1.rst",
+      "acceptable_ids": [],
+      "allow_review": false,
+      "allow_unresolved": true,
+      "rationale": "No convincing recursive-function paragraph was found in the current FLS corpus. Until a valid FLS match exists, unresolved is the honest expected outcome for this guideline.",
+      "provenance": {
+        "stable_identifier": "ws7-heldout::gui_ot2Zt3dd6of1",
+        "construct_family": "associated items / recursion",
+        "mapping_note": "current guideline :fls: id was not found in the active fls_spec DB"
+      }
+    },
+    {
+      "path": "src/coding-guidelines/types-and-traits/gui_xztNdXA2oFNC.rst",
+      "acceptable_ids": ["fls_ji9iem1c7ekq"],
+      "allow_review": false,
+      "allow_unresolved": true,
+      "rationale": "The original guideline :fls: maps to an integer-type paragraph that does not fit the strong-types/newtype intent. The nearest current FLS concept is type aliases, but unresolved remains acceptable until a stronger corpus match exists.",
+      "provenance": {
+        "stable_identifier": "ws7-heldout::gui_xztNdXA2oFNC",
+        "construct_family": "types and traits",
+        "mapping_note": "best available current FLS concept appears to be type-alias-related rather than a dedicated strong-types/newtype paragraph"
+      }
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_PM8Vpf7lZ51U.rst",
+      "acceptable_ids": ["fls_59mpteeczzo"],
+      "allow_review": true,
+      "allow_unresolved": false,
+      "rationale": "Pointer conversion guidance should land in the address-to-pointer cast neighborhood. Review is acceptable when the runtime surfaces fls_59mpteeczzo but the margin against closely related type-cast clauses remains too small for acceptance.",
+      "provenance": {
+        "stable_identifier": "ws7-heldout::gui_PM8Vpf7lZ51U",
+        "construct_family": "expressions / pointer conversion"
+      }
+    }
+  ]
+}

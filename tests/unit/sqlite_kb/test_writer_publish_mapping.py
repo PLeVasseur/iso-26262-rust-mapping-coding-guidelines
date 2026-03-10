@@ -174,7 +174,7 @@ def test_map_publish_record_passes_title_and_target_to_report_writer(
     assert seen["target_id"] == "RET-ISSUE-001"
     assert seen["title"] == "Preserve safety invariants on error paths"
     payload = cast(dict[str, Any], seen["payload"])
-    assert payload["runtime_mode"] == "grounding_only_ws6"
+    assert payload["runtime_mode"] == "unknown"
     assert "grounding_packet" in payload
     assert "candidate_count" not in payload
     assert "candidate_preview" not in payload
@@ -257,11 +257,47 @@ def test_map_publish_record_allows_unresolved_in_review_mode(monkeypatch) -> Non
     assert mapped["publishability"]["reason_code"] == "CHAPTER_MISMATCH"
 
 
-def test_map_publish_record_uses_grounding_only_runtime_by_default(monkeypatch) -> None:
-    monkeypatch.setattr(publish_mapping, "validate_fls_id", lambda value: value.startswith("fls_"))
+def test_map_publish_record_does_not_publish_review_only_valid_fls_id(monkeypatch) -> None:
+    monkeypatch.setattr(
+        publish_mapping,
+        "resolve_fls_for_guideline",
+        lambda packet: {
+            "paragraph_id": "fls_atomic002",
+            "decision": {
+                "reason_code": "AMBIGUOUS_TOP_CANDIDATES",
+                "accepted": False,
+                "review_candidate": True,
+            },
+        },
+    )
+    monkeypatch.setattr(publish_mapping, "validate_fls_id", lambda value: value == "fls_atomic002")
 
     mapped = publish_mapping.map_publish_record(_row_fixture(), allow_unresolved=True)
 
     assert mapped["fls_id"] == "fls_UNRESOLVED"
-    assert mapped["fls_resolution"]["reason_code"] == "WS7_REQUIRED"
     assert mapped["publishability"]["publishable"] is False
+    assert mapped["publishability"]["reason_code"] == "AMBIGUOUS_TOP_CANDIDATES"
+
+
+def test_map_publish_record_uses_grounding_only_runtime_by_default(monkeypatch) -> None:
+    monkeypatch.setattr(
+        publish_mapping,
+        "resolve_fls_for_guideline",
+        lambda packet: {
+            "paragraph_id": "fls_atomic002",
+            "decision": {
+                "accepted": True,
+                "publish_accept": True,
+                "review_candidate": False,
+                "reason_code": "ACCEPTED",
+                "runtime_mode": "ws7_staged_retrieval_v1",
+            },
+        },
+    )
+    monkeypatch.setattr(publish_mapping, "validate_fls_id", lambda value: value.startswith("fls_"))
+
+    mapped = publish_mapping.map_publish_record(_row_fixture(), allow_unresolved=True)
+
+    assert mapped["fls_id"] == "fls_atomic002"
+    assert mapped["fls_resolution"]["reason_code"] == "ACCEPTED"
+    assert mapped["publishability"]["publishable"] is True

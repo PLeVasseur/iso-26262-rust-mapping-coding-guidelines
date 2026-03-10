@@ -62,7 +62,8 @@ def _parse_junit_summary(path: Path, *, artifact: dict[str, Any]) -> dict[str, A
         raise RuntimeError(f"WS7 prework JUnit artifact has no executed tests: {path}")
     if tests < min_tests:
         raise RuntimeError(
-            f"WS7 prework JUnit artifact has too few executed tests: {path} tests={tests} min_tests={min_tests}"
+            "WS7 prework JUnit artifact has too few executed tests: "
+            f"{path} tests={tests} min_tests={min_tests}"
         )
     if failures or errors:
         raise RuntimeError(
@@ -76,7 +77,8 @@ def _parse_junit_summary(path: Path, *, artifact: dict[str, Any]) -> dict[str, A
     for expected in expected_testcase_substrings:
         if not any(expected in identity for identity in testcase_identities):
             raise RuntimeError(
-                f"WS7 prework JUnit artifact missing expected testcase identity '{expected}': {path}"
+                "WS7 prework JUnit artifact missing expected testcase identity "
+                f"'{expected}': {path}"
             )
     return {
         "tests": tests,
@@ -95,7 +97,8 @@ def _parse_chunk_first_report(path: Path, *, expected_corpus: str) -> dict[str, 
         raise RuntimeError(f"WS7 prework chunk-first report must be a JSON object: {path}")
     if str(payload.get("corpus", "")).strip() != expected_corpus:
         raise RuntimeError(
-            f"WS7 prework chunk-first report corpus mismatch: expected {expected_corpus}, got {payload.get('corpus')}"
+            "WS7 prework chunk-first report corpus mismatch: expected "
+            f"{expected_corpus}, got {payload.get('corpus')}"
         )
     if not bool(payload.get("passed", False)):
         raise RuntimeError(f"WS7 prework chunk-first report is not passing: {path}")
@@ -148,6 +151,61 @@ def _parse_chunk_first_report(path: Path, *, expected_corpus: str) -> dict[str, 
     }
 
 
+def _parse_guidelines_repo_validation_report(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"guidelines_repo validation report must be a JSON object: {path}")
+    if str(payload.get("corpus", "")).strip() != "guidelines_repo":
+        raise RuntimeError(
+            "guidelines_repo validation report corpus mismatch: "
+            f"expected guidelines_repo, got {payload.get('corpus')}"
+        )
+    if not bool(payload.get("passed", False)):
+        raise RuntimeError(f"guidelines_repo validation report is not passing: {path}")
+    db_path = str(payload.get("db_path", "")).strip()
+    db_sha256 = str(payload.get("db_sha256", "")).strip()
+    if not db_path or not db_sha256:
+        raise RuntimeError(f"guidelines_repo validation report missing DB identity fields: {path}")
+    db_file = Path(db_path)
+    if not db_file.exists() or not db_file.is_file():
+        raise RuntimeError(f"guidelines_repo validation report points to missing DB: {path}")
+    actual_db_sha256 = _sha256(db_file)
+    if actual_db_sha256 != db_sha256:
+        raise RuntimeError(
+            "guidelines_repo validation report DB hash mismatch: "
+            f"expected {db_sha256}, actual {actual_db_sha256}: {path}"
+        )
+    latest_migration_id = str(payload.get("latest_migration_id", "") or "").strip()
+    latest_snapshot_id = str(payload.get("latest_snapshot_id", "") or "").strip()
+    if not latest_migration_id:
+        raise RuntimeError(f"guidelines_repo validation report missing latest_migration_id: {path}")
+    if not latest_snapshot_id:
+        raise RuntimeError(f"guidelines_repo validation report missing latest_snapshot_id: {path}")
+    counts_raw = payload.get("table_counts")
+    counts = counts_raw if isinstance(counts_raw, dict) else {}
+    guideline_count = int(counts.get("guideline_records", 0) or 0)
+    block_count = int(counts.get("guideline_blocks", 0) or 0)
+    if guideline_count <= 0 or block_count <= 0:
+        raise RuntimeError(f"guidelines_repo validation report has no guideline coverage: {path}")
+    return {
+        "corpus": "guidelines_repo",
+        "db_path": db_path,
+        "db_sha256": db_sha256,
+        "schema_user_version": int(payload.get("schema_user_version", 0) or 0),
+        "latest_migration_id": latest_migration_id,
+        "latest_snapshot_id": latest_snapshot_id,
+        "checked_at": str(payload.get("checked_at", "") or ""),
+        "table_counts": {
+            "guideline_records": guideline_count,
+            "guideline_blocks": block_count,
+            "guideline_citations": int(counts.get("guideline_citations", 0) or 0),
+            "guideline_bibliography": int(counts.get("guideline_bibliography", 0) or 0),
+            "guideline_bib_links": int(counts.get("guideline_bib_links", 0) or 0),
+            "guideline_exemplars": int(counts.get("guideline_exemplars", 0) or 0),
+        },
+    }
+
+
 def _validate_artifact(path: Path, artifact: dict[str, Any]) -> dict[str, Any]:
     artifact_type = str(artifact.get("type", "file")).strip() or "file"
     if artifact_type == "junit_xml":
@@ -157,6 +215,8 @@ def _validate_artifact(path: Path, artifact: dict[str, Any]) -> dict[str, Any]:
         if not expected_corpus:
             raise RuntimeError(f"chunk_first_report artifact missing expected_corpus: {path}")
         return _parse_chunk_first_report(path, expected_corpus=expected_corpus)
+    if artifact_type == "guidelines_repo_validation_report":
+        return _parse_guidelines_repo_validation_report(path)
     return {}
 
 
@@ -204,7 +264,14 @@ def write_ws7_prework_closure_packet(
             artifact_record["validated_summary"] = validated_summary
         artifact_records.append(artifact_record)
         artifact_labels.add(label)
-        if artifact_record["type"] == "chunk_first_report" and validated_summary:
+        if (
+            artifact_record["type"]
+            in {
+                "chunk_first_report",
+                "guidelines_repo_validation_report",
+            }
+            and validated_summary
+        ):
             db_identities.append(validated_summary)
     if (missing or invalid) and not allow_incomplete:
         details: list[str] = []
@@ -314,6 +381,18 @@ def _current_chunk_first_artifact_specs(*, root: Path) -> list[dict[str, Any]]:
     return specs
 
 
+def _current_guidelines_repo_artifact_specs(*, root: Path) -> list[dict[str, Any]]:
+    defaults = load_corpus_runtime_defaults(root=root, corpus="guidelines_repo")
+    return [
+        {
+            "label": "guidelines_repo_current_validation",
+            "path": defaults.report_root / "current_validation.json",
+            "priority": 5,
+            "type": "guidelines_repo_validation_report",
+        }
+    ]
+
+
 def generate_ws7_prework_closure_packet(
     *,
     report_dir: Path,
@@ -368,6 +447,7 @@ def generate_ws7_prework_closure_packet(
             ],
         },
         *_current_chunk_first_artifact_specs(root=project_root),
+        *_current_guidelines_repo_artifact_specs(root=project_root),
     ]
     priorities = [
         {"priority": 1, "required_artifact_labels": ["priority1_3"]},
@@ -383,6 +463,7 @@ def generate_ws7_prework_closure_packet(
                 "fls_spec_current_chunk_first",
                 "core_docs_current_chunk_first",
                 "rust_reference_current_chunk_first",
+                "guidelines_repo_current_validation",
             ],
         },
     ]
@@ -390,7 +471,7 @@ def generate_ws7_prework_closure_packet(
         report_dir=report_dir,
         priorities=priorities,
         proof_artifacts=artifact_specs,
-        corpora=["fls_spec", "core_docs", "rust_reference"],
+        corpora=["fls_spec", "core_docs", "rust_reference", "guidelines_repo"],
         deferred_items=deferred_items,
         allow_incomplete=allow_incomplete,
     )
