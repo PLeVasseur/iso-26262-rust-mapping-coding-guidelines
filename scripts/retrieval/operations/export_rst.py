@@ -15,6 +15,7 @@ from retrieval.operations.guideline_template_bridge import (
     build_template_guideline_page,
     parse_bibliography_payload,
 )
+from retrieval.services.guideline_fls_resolution import get_guideline_fls_resolution_state
 
 EXIT_SUCCESS = 0
 EXIT_RUNTIME_FAIL = 3
@@ -106,7 +107,11 @@ def export_guidelines(*, db_path: Path, output_root: Path) -> dict[str, object]:
                 category=str(metadata.get("category", "advisory") or "advisory"),
                 status=str(metadata.get("status", "draft") or "draft"),
                 release=str(metadata.get("release", "1.85.1") or "1.85.1"),
-                fls_id=str(metadata.get("fls_id", "") or ""),
+                fls_id=str(
+                    get_guideline_fls_resolution_state(guideline_id, db_path=db_path).get(
+                        "effective_fls_id", ""
+                    )
+                ),
                 decidability=str(metadata.get("decidability", "undecidable") or "undecidable"),
                 scope=str(metadata.get("scope", "module") or "module"),
                 tags=tags,

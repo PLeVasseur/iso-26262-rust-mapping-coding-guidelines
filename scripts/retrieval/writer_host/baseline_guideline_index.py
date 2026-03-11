@@ -6,6 +6,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from retrieval.services.guideline_fls_resolution import get_guideline_fls_resolution_state
+
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_:#\-]*")
 _STOPWORDS = {
     "the",
@@ -49,10 +51,16 @@ def load_baseline_guideline_index(
     connection = sqlite3.connect(effective_db)
     try:
         rows = connection.execute(
-            "SELECT guideline_id, title, export_topic, metadata_json FROM guideline_records ORDER BY guideline_id"
+
+                "SELECT guideline_id, title, export_topic, metadata_json "
+                "FROM guideline_records ORDER BY guideline_id"
+
         ).fetchall()
         block_rows = connection.execute(
-            "SELECT guideline_id, block_type, content FROM guideline_blocks ORDER BY guideline_id, order_index"
+
+                "SELECT guideline_id, block_type, content FROM guideline_blocks "
+                "ORDER BY guideline_id, order_index"
+
         ).fetchall()
     finally:
         connection.close()
@@ -87,7 +95,9 @@ def load_baseline_guideline_index(
                 "rationale_text": rationale,
                 "construct_keywords": construct_keywords,
                 "review_question_hint": review_question_hint,
-                "fls_id": str(metadata.get("fls_id") or metadata.get("fls") or "").strip(),
+                "fls_id": get_guideline_fls_resolution_state(
+                    str(guideline_id), db_path=effective_db
+                ).get("effective_fls_id", ""),
             }
         )
     return index

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import sys
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-
-import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = ROOT / "scripts"
@@ -90,6 +89,27 @@ def build_guideline_page_content(title, guideline_body):
                         bib_key TEXT NOT NULL,
                         PRIMARY KEY(guideline_id, bib_key)
                     );
+                    CREATE TABLE guideline_fls_source_mappings(
+                        guideline_id TEXT PRIMARY KEY,
+                        source_file_path TEXT NOT NULL,
+                        raw_fls_id TEXT NOT NULL,
+                        raw_fls_present INTEGER NOT NULL,
+                        source_revision TEXT NOT NULL,
+                        source_hash TEXT NOT NULL,
+                        last_ingested_at TEXT NOT NULL
+                    );
+                    CREATE TABLE guideline_fls_resolution_overrides(
+                        guideline_id TEXT PRIMARY KEY,
+                        effective_fls_id TEXT NOT NULL,
+                        resolution_kind TEXT NOT NULL,
+                        resolution_status TEXT NOT NULL,
+                        audit_run_id TEXT NOT NULL,
+                        evidence_source_id TEXT NOT NULL,
+                        rationale_text TEXT NOT NULL,
+                        approved_by TEXT NOT NULL,
+                        approved_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
                     """
                 )
                 connection.execute(
@@ -115,6 +135,33 @@ def build_guideline_page_content(title, guideline_body):
                     "INSERT INTO guideline_blocks(block_id, guideline_id, block_type, order_index, content) VALUES(?, ?, ?, ?, ?)",
                     ("gui_ABC123:body:1", "gui_ABC123", "body", 1, "Example body content"),
                 )
+                connection.execute(
+                    "INSERT INTO guideline_fls_source_mappings VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "gui_ABC123",
+                        "coding-guidelines/expressions/gui_ABC123.rst",
+                        "fls_dummy12345",
+                        1,
+                        "rev",
+                        "hash",
+                        "now",
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO guideline_fls_resolution_overrides VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "gui_ABC123",
+                        "fls_effective999",
+                        "remap",
+                        "approved",
+                        "audit",
+                        "source",
+                        "better paragraph",
+                        "tester",
+                        "now",
+                        "now",
+                    ),
+                )
                 connection.commit()
             finally:
                 connection.close()
@@ -126,6 +173,7 @@ def build_guideline_page_content(title, guideline_body):
             self.assertTrue(exported_path.exists())
             exported_text = exported_path.read_text(encoding="utf-8")
             self.assertIn(".. guideline::", exported_text)
+            self.assertIn(":fls: fls_effective999", exported_text)
             index_path = output_root / "expressions" / "index.rst"
             self.assertTrue(index_path.exists())
             index_text = index_path.read_text(encoding="utf-8")

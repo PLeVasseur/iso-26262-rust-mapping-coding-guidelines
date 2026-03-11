@@ -109,6 +109,14 @@ def _guideline_inventory_map(rows: list[dict[str, str]]) -> dict[str, InventoryE
     }
 
 
+def _raw_fls_id(guideline: Any) -> str:
+    try:
+        metadata = json.loads(str(guideline.metadata_json or "{}"))
+    except json.JSONDecodeError:
+        metadata = {}
+    return str(metadata.get("fls", "") or "").strip()
+
+
 def _delete_guidelines(connection: sqlite3.Connection, guideline_ids: list[str]) -> None:
     if not guideline_ids:
         return
@@ -133,6 +141,27 @@ def _delete_guidelines(connection: sqlite3.Connection, guideline_ids: list[str])
         f"DELETE FROM guideline_records WHERE guideline_id IN ({placeholders})",
         tuple(guideline_ids),
     )
+    if _table_exists(connection, "guideline_fls_source_mappings"):
+        connection.execute(
+            f"DELETE FROM guideline_fls_source_mappings WHERE guideline_id IN ({placeholders})",
+            tuple(guideline_ids),
+        )
+    if _table_exists(connection, "guideline_fls_resolution_overrides"):
+        connection.execute(
+            (
+                "DELETE FROM guideline_fls_resolution_overrides "
+                f"WHERE guideline_id IN ({placeholders})"
+            ),
+            tuple(guideline_ids),
+        )
+    if _table_exists(connection, "guideline_fls_resolution_candidates"):
+        connection.execute(
+            (
+                "DELETE FROM guideline_fls_resolution_candidates "
+                f"WHERE guideline_id IN ({placeholders})"
+            ),
+            tuple(guideline_ids),
+        )
     connection.execute(
         """
         DELETE FROM guideline_bibliography
@@ -219,6 +248,33 @@ def _upsert_guideline(
             ),
             (guideline.guideline_id, fetched_at, "configured_exemplar"),
         )
+    if _table_exists(connection, "guideline_fls_source_mappings"):
+        raw_fls_id = _raw_fls_id(guideline)
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO guideline_fls_source_mappings(
+                guideline_id, source_file_path, raw_fls_id, raw_fls_present,
+                source_revision, source_hash, last_ingested_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                guideline.guideline_id,
+                guideline.source_file_path,
+                raw_fls_id,
+                1 if raw_fls_id else 0,
+                revision,
+                guideline.source_hash,
+                fetched_at,
+            ),
+        )
+
+
+def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+        (table_name,),
+    ).fetchone()
+    return row is not None
 
 
 def run_guidelines_repo_build(*, args: Namespace, root: Path) -> dict[str, Any]:

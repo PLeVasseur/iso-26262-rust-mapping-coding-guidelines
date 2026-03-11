@@ -13,3 +13,5 @@ migrations:
     backfill: chunk_fts_rowids_from_chunks_fts
   - id: 20260310_006_incremental_refresh_inventory
     file: config/sqlite_migrations/20260310_006_incremental_refresh_inventory.sql
+  - id: 20260310_007_guideline_fls_resolution_overlay
+    file: config/sqlite_migrations/20260310_007_guideline_fls_resolution_overlay.sql
