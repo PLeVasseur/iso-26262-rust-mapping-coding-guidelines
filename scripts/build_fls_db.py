@@ -47,6 +47,15 @@ from retrieval.build.reports import (
     write_current_chunk_first_validation_report,
 )
 from retrieval.services.ws7_prework_closure import maybe_refresh_ws7_prework_closure_packet
+from validate_ws7_mapping_audit import (
+    DEFAULT_CLEANUP_OUTPUT_PATH,
+    DEFAULT_OUTPUT_PATH as DEFAULT_WS7_AUDIT_OUTPUT_PATH,
+    DEFAULT_DIFF_OUTPUT_PATH as DEFAULT_WS7_AUDIT_DIFF_OUTPUT_PATH,
+    generate_mapping_audit,
+    persist_mapping_audit_to_db,
+    write_mapping_audit_diff,
+    write_mapping_cleanup_tasks,
+)
 
 try:
     from scripts.parse_fls_paragraphs import (
@@ -552,6 +561,9 @@ def build_fls_db(
     topology_path: Path = DEFAULT_TOPOLOGY_PATH,
     compat_symlink_mode: Literal["auto", "always", "never"] = "auto",
     report_root: Path = REPORT_ROOT,
+    ws7_audit_output_path: Path | None = None,
+    ws7_cleanup_output_path: Path | None = None,
+    ws7_diff_output_path: Path | None = None,
     incremental: bool = False,
     force_rebuild: bool = False,
     staged_output_root: Path | None = None,
@@ -1135,6 +1147,46 @@ def build_fls_db(
         corpus="fls_spec",
         run_id=run_id,
     )
+    audit_output_path = ws7_audit_output_path or DEFAULT_WS7_AUDIT_OUTPUT_PATH
+    cleanup_output_path = ws7_cleanup_output_path or DEFAULT_CLEANUP_OUTPUT_PATH
+    diff_output_path = ws7_diff_output_path or DEFAULT_WS7_AUDIT_DIFF_OUTPUT_PATH
+    previous_audit_payload = {}
+    if audit_output_path.exists():
+        previous_audit_payload = json.loads(audit_output_path.read_text(encoding="utf-8"))
+    audit_payload = generate_mapping_audit(
+        fls_db_path=target_db_path,
+        guidelines_root=(PROJECT_ROOT / ".." / "safety-critical-rust-coding-guidelines").resolve(),
+        guidelines_db_path=PROJECT_ROOT
+        / ".cache"
+        / "sqlite_kb"
+        / "current"
+        / "guidelines_repo.sqlite",
+        output_path=audit_output_path,
+        heldout_manifest_path=PROJECT_ROOT / "data" / "fls_ws7_heldout_manifest.json",
+        publishability_audit_path=(
+            PROJECT_ROOT
+            / ".cache"
+            / "sqlite_kb"
+            / "reports"
+            / "writer_publish"
+            / "v17_2_closure_23_reviewer_hardened_ws7"
+            / "publishability_audit.json"
+        ),
+    )
+    cleanup_payload = write_mapping_cleanup_tasks(
+        audit_payload=audit_payload,
+        output_path=cleanup_output_path,
+    )
+    diff_payload = write_mapping_audit_diff(
+        previous_payload=previous_audit_payload,
+        current_payload=audit_payload,
+        output_path=diff_output_path,
+    )
+    persist_mapping_audit_to_db(
+        fls_db_path=target_db_path,
+        audit_payload=audit_payload,
+        cleanup_payload=cleanup_payload,
+    )
 
     chunk_first_report = validate_chunk_first_db(target_db_path, corpus="fls_spec")
     chunk_first_report_path = write_chunk_first_validation_report(
@@ -1175,6 +1227,42 @@ def build_fls_db(
                 corpus="fls_spec",
                 run_id=run_id,
             )
+            audit_payload = generate_mapping_audit(
+                fls_db_path=db_path,
+                guidelines_root=(
+                    PROJECT_ROOT / ".." / "safety-critical-rust-coding-guidelines"
+                ).resolve(),
+                guidelines_db_path=PROJECT_ROOT
+                / ".cache"
+                / "sqlite_kb"
+                / "current"
+                / "guidelines_repo.sqlite",
+                output_path=audit_output_path,
+                heldout_manifest_path=PROJECT_ROOT / "data" / "fls_ws7_heldout_manifest.json",
+                publishability_audit_path=(
+                    PROJECT_ROOT
+                    / ".cache"
+                    / "sqlite_kb"
+                    / "reports"
+                    / "writer_publish"
+                    / "v17_2_closure_23_reviewer_hardened_ws7"
+                    / "publishability_audit.json"
+                ),
+            )
+            cleanup_payload = write_mapping_cleanup_tasks(
+                audit_payload=audit_payload,
+                output_path=cleanup_output_path,
+            )
+            diff_payload = write_mapping_audit_diff(
+                previous_payload=previous_audit_payload,
+                current_payload=audit_payload,
+                output_path=diff_output_path,
+            )
+            persist_mapping_audit_to_db(
+                fls_db_path=db_path,
+                audit_payload=audit_payload,
+                cleanup_payload=cleanup_payload,
+            )
             promotion_provenance_path = write_promotion_provenance(
                 report_root=report_root,
                 corpus="fls_spec",
@@ -1184,6 +1272,9 @@ def build_fls_db(
                     "corpus": "fls_spec",
                     "validated_at": _utc_now(),
                     "validation_reports": stage_reports,
+                    "ws7_mapping_audit_path": str(audit_output_path),
+                    "ws7_mapping_cleanup_tasks_path": str(cleanup_output_path),
+                    "ws7_mapping_audit_diff_path": str(diff_output_path),
                     "refresh_contract_path": str(refresh_contract_path),
                     "cross_db_report_path": str(cross_db_report_path),
                     "promotion": promotion,
@@ -1201,6 +1292,9 @@ def build_fls_db(
                     "dry_run_report_path": str(dry_run_report_path),
                     "delta_report_path": str(delta_report_path),
                     "refresh_contract_path": str(refresh_contract_path),
+                    "ws7_mapping_audit_path": str(audit_output_path),
+                    "ws7_mapping_cleanup_tasks_path": str(cleanup_output_path),
+                    "ws7_mapping_audit_diff_path": str(diff_output_path),
                     "cross_db_report_path": str(cross_db_report_path),
                     "promotion_provenance_path": str(promotion_provenance_path),
                     "validation_kinds": [item["kind"] for item in stage_reports],
@@ -1242,6 +1336,12 @@ def build_fls_db(
         "delta_report_path": str(delta_report_path),
         "dry_run_report_path": str(dry_run_report_path),
         "refresh_contract_path": str(refresh_contract_path),
+        "ws7_mapping_audit_path": str(audit_output_path),
+        "ws7_mapping_cleanup_tasks_path": str(cleanup_output_path),
+        "ws7_mapping_audit_diff_path": str(diff_output_path),
+        "ws7_mapping_classification_counts": audit_payload.get("classification_counts", {}),
+        "ws7_mapping_cleanup_task_count": cleanup_payload.get("task_count", 0),
+        "ws7_mapping_changed_rows": len(list(diff_payload.get("changed_rows") or [])),
         "incremental": use_incremental,
         "promotion": promotion,
         "chunk_fts_mapping": {

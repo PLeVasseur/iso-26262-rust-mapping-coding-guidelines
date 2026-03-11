@@ -12,7 +12,12 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from validate_ws7_mapping_audit import generate_mapping_audit  # noqa: E402
+from validate_ws7_mapping_audit import (  # noqa: E402
+    generate_mapping_audit,
+    persist_mapping_audit_to_db,
+    write_mapping_audit_diff,
+    write_mapping_cleanup_tasks,
+)
 
 
 class ValidateWs7MappingAuditTests(unittest.TestCase):
@@ -60,6 +65,92 @@ class ValidateWs7MappingAuditTests(unittest.TestCase):
             publishability_audit = temp_root / "publishability.json"
             publishability_audit.write_text(json.dumps({"rows": []}), encoding="utf-8")
 
+            guidelines_db = temp_root / "guidelines_repo.sqlite"
+            guid_conn = sqlite3.connect(guidelines_db)
+            try:
+                guid_conn.executescript(
+                    """
+                    CREATE TABLE guideline_records(
+                        guideline_id TEXT PRIMARY KEY,
+                        title TEXT,
+                        source_file_path TEXT,
+                        quality_label TEXT,
+                        metadata_json TEXT,
+                        export_topic TEXT,
+                        source_revision TEXT,
+                        source_hash TEXT,
+                        ingested_at TEXT
+                    );
+                    CREATE TABLE guideline_fls_source_mappings(
+                        guideline_id TEXT PRIMARY KEY,
+                        source_file_path TEXT,
+                        raw_fls_id TEXT,
+                        raw_fls_present INTEGER,
+                        source_revision TEXT,
+                        source_hash TEXT,
+                        last_ingested_at TEXT
+                    );
+                    CREATE TABLE guideline_fls_resolution_overrides(
+                        guideline_id TEXT PRIMARY KEY,
+                        effective_fls_id TEXT,
+                        resolution_kind TEXT,
+                        resolution_status TEXT,
+                        audit_run_id TEXT,
+                        evidence_source_id TEXT,
+                        rationale_text TEXT,
+                        approved_by TEXT,
+                        approved_at TEXT,
+                        updated_at TEXT
+                    );
+                    """
+                )
+                guid_conn.execute(
+                    "INSERT INTO guideline_fls_source_mappings VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "gui_stale",
+                        "src/coding-guidelines/expressions/gui_stale.rst",
+                        "fls_missing",
+                        1,
+                        "rev",
+                        "hash",
+                        "now",
+                    ),
+                )
+                guid_conn.execute(
+                    "INSERT INTO guideline_fls_source_mappings VALUES(?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "gui_rank",
+                        "src/coding-guidelines/expressions/gui_rank.rst",
+                        "fls_live",
+                        1,
+                        "rev",
+                        "hash",
+                        "now",
+                    ),
+                )
+                guid_conn.execute(
+                    (
+                        "INSERT INTO guideline_fls_resolution_overrides VALUES("
+                        "?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+                        ")"
+                    ),
+                    (
+                        "gui_stale",
+                        "fls_UNRESOLVED",
+                        "unresolved_expected",
+                        "approved",
+                        "audit",
+                        "source",
+                        "dead mapping",
+                        "tester",
+                        "now",
+                        "now",
+                    ),
+                )
+                guid_conn.commit()
+            finally:
+                guid_conn.close()
+
             db_path = temp_root / "fls_spec.db"
             connection = sqlite3.connect(db_path)
             try:
@@ -90,17 +181,53 @@ class ValidateWs7MappingAuditTests(unittest.TestCase):
                 connection.close()
 
             output_path = temp_root / "ws7_mapping_audit.json"
-            generate_mapping_audit(
+            payload = generate_mapping_audit(
                 fls_db_path=db_path,
                 guidelines_root=guidelines_root,
+                guidelines_db_path=guidelines_db,
                 output_path=output_path,
                 heldout_manifest_path=manifest_path,
                 publishability_audit_path=publishability_audit,
             )
-            payload = json.loads(output_path.read_text(encoding="utf-8"))
-            rows = {row["source_id"]: row for row in payload["rows"]}
-            self.assertEqual(rows["heldout::stale"]["classification"], "stale_mapping")
+            file_payload = json.loads(output_path.read_text(encoding="utf-8"))
+            rows = {row["source_id"]: row for row in file_payload["rows"]}
+            self.assertEqual(rows["heldout::stale"]["classification"], "corpus_gap")
             self.assertEqual(rows["heldout::rank"]["classification"], "true_ranking_bug")
+            self.assertEqual(rows["heldout::stale"]["raw_source_fls_id"], "fls_missing")
+            self.assertEqual(rows["heldout::stale"]["effective_source_fls_id"], "fls_UNRESOLVED")
+            self.assertEqual(rows["heldout::stale"]["resolution_status"], "approved")
+            cleanup_path = temp_root / "ws7_mapping_cleanup_tasks.json"
+            cleanup_payload = write_mapping_cleanup_tasks(
+                audit_payload=payload,
+                output_path=cleanup_path,
+            )
+            self.assertEqual(cleanup_payload["task_count"], 0)
+            diff_path = temp_root / "ws7_mapping_audit_diff.json"
+            diff_payload = write_mapping_audit_diff(
+                previous_payload=None,
+                current_payload=payload,
+                output_path=diff_path,
+            )
+            self.assertGreaterEqual(len(diff_payload["changed_rows"]), 1)
+            persist_mapping_audit_to_db(
+                fls_db_path=db_path,
+                audit_payload=payload,
+                cleanup_payload=cleanup_payload,
+            )
+            connection = sqlite3.connect(db_path)
+            try:
+                audit_rows = int(
+                    connection.execute("SELECT COUNT(*) FROM ws7_mapping_audit_rows").fetchone()[0]
+                )
+                cleanup_rows = int(
+                    connection.execute("SELECT COUNT(*) FROM ws7_mapping_cleanup_tasks").fetchone()[
+                        0
+                    ]
+                )
+            finally:
+                connection.close()
+            self.assertEqual(audit_rows, 2)
+            self.assertEqual(cleanup_rows, 0)
 
 
 if __name__ == "__main__":
