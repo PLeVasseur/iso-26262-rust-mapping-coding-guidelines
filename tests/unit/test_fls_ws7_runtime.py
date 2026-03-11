@@ -221,6 +221,53 @@ def test_select_stage_winner_returns_review_for_close_scores() -> None:
     assert decision["reason_code"] == "AMBIGUOUS_TOP_CANDIDATES"
 
 
+def test_build_query_text_uses_only_declared_inputs_and_preserves_phrases() -> None:
+    packet = {
+        "governing_obligation": "Prefer Strict Provenance APIs over integer-to-pointer reconstruction.",
+        "construct_terms": ["strict provenance", "pointer", "transmute"],
+        "supporting_phrases": [
+            "address-to-pointer casts require documented handling",
+            "pointer-to-pointer transmute remains distinct",
+            "strict provenance should stay explicit",
+            "do not drop later phrases",
+        ],
+        "code_tokens": ["addr_of", "transmute"],
+        "prior_documents": [{"document_link": "casts.html", "score": 1.0}],
+        "prior_sections": [{"section_link": "casts.html#type-cast-expressions", "score": 1.0}],
+        "metadata": {"tags": ["ffi", "irrelevant-tag"]},
+        "debug_label": "ignored-runtime-noise",
+    }
+
+    query_text = fls_ws7._build_query_text(Path("."), packet)
+
+    assert "Prefer Strict Provenance APIs over integer-to-pointer reconstruction." in query_text
+    assert "address-to-pointer casts require documented handling" in query_text
+    assert "pointer-to-pointer transmute remains distinct" in query_text
+    assert "do not drop later phrases" in query_text
+    assert "addr_of transmute" in query_text
+    assert "irrelevant-tag" not in query_text
+    assert "ignored-runtime-noise" not in query_text
+
+
+def test_project_query_inputs_strips_undeclared_runtime_fields() -> None:
+    packet = {
+        "governing_obligation": "unsafe extern blocks require explicit ABI",
+        "construct_terms": ["unsafe", "extern", "abi"],
+        "supporting_phrases": ["unsafe extern blocks require explicit ABI"],
+        "code_tokens": ["extern", "C"],
+        "prior_documents": [{"document_link": "ffi.html", "score": 1.0}],
+        "prior_sections": [{"section_link": "ffi.html#extern-blocks", "score": 1.0}],
+        "metadata": {"tags": ["ffi"]},
+        "target_id": "gui_deadbeef",
+    }
+
+    projected = fls_ws7._project_query_inputs(packet)
+
+    assert set(projected) == set(fls_ws7.DECLARED_QUERY_INPUT_FIELDS)
+    assert projected["governing_obligation"] == packet["governing_obligation"]
+    assert projected["construct_terms"] == packet["construct_terms"]
+
+
 def test_resolve_guideline_keeps_glossary_visible_but_selects_normative_candidate(
     monkeypatch,
 ) -> None:
@@ -414,6 +461,71 @@ def test_resolve_guideline_broadens_when_retrieved_rows_do_not_qualify(monkeypat
     ]
 
 
+def test_run_stage_disables_query_rewrite_and_uses_declared_stage_scopes(monkeypatch) -> None:
+    packet = {
+        "governing_obligation": "atomic fence ordering visibility",
+        "construct_terms": ["atomic", "fence", "ordering", "visibility"],
+        "code_tokens": [],
+        "supporting_phrases": ["visibility"],
+        "prior_documents": [{"document_link": "weak.html", "score": 1.0}],
+        "prior_sections": [{"section_link": "glossary.html#terms", "score": 1.0}],
+    }
+    calls: list[dict[str, Any]] = []
+
+    def fake_execute_retrieval_query(**kwargs):
+        calls.append(
+            {
+                "mode": kwargs["mode"],
+                "rewrite_mode": kwargs["rewrite_mode"],
+                "allowed_statement_ids": kwargs.get("allowed_statement_ids"),
+            }
+        )
+        return {
+            "executed_mode": kwargs["mode"],
+            "rows": [],
+            "row_count": 0,
+            "scope": {"state": "restricted_empty", "allowed_scope_ids": []},
+        }
+
+    class FakeSemanticBackendConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(
+        fls_ws7,
+        "_load_runtime_components",
+        lambda project_root: (fake_execute_retrieval_query, FakeSemanticBackendConfig),
+    )
+    monkeypatch.setattr(
+        fls_ws7,
+        "paragraph_ids_for_section",
+        lambda topology_index, section_link: ["fls_glossary001"]
+        if section_link == "glossary.html#terms"
+        else [],
+    )
+    monkeypatch.setattr(
+        fls_ws7,
+        "paragraph_ids_for_document",
+        lambda topology_index, document_link: ["fls_doc001"]
+        if document_link == "weak.html"
+        else [],
+    )
+
+    fls_ws7.resolve_guideline(
+        project_root=Path("."),
+        packet=packet,
+        db_path=Path("fake.db"),
+        runtime_settings=_base_runtime_settings(),
+        topology_index={},
+    )
+
+    assert len(calls) == 9
+    assert all(call["rewrite_mode"] == "off" for call in calls)
+    assert calls[0]["allowed_statement_ids"] == ["fls_glossary001"]
+    assert calls[3]["allowed_statement_ids"] == ["fls_doc001"]
+    assert calls[6]["allowed_statement_ids"] is None
+
+
 def test_merge_canonical_row_is_invariant_to_mode_order() -> None:
     lexical = _row(
         "fls_atomic002",
@@ -456,6 +568,33 @@ def test_merge_canonical_row_surfaces_identity_conflict() -> None:
     assert merge["identity_conflicts"]["document_link"] == [
         "alt_concurrency.html",
         "concurrency.html",
+    ]
+
+
+def test_merge_canonical_row_surfaces_ranking_conflict_deterministically() -> None:
+    lexical = _row(
+        "fls_atomic002",
+        text="short text",
+        paragraph_link="concurrency.html#fls_atomic002",
+        document_link="concurrency.html",
+        section_link="concurrency.html#atomics",
+    )
+    hybrid = _row(
+        "fls_atomic002",
+        text="atomic fence ordering visibility with stronger evidence",
+        paragraph_link="concurrency.html#fls_atomic002",
+        document_link="concurrency.html",
+        section_link="concurrency.html#atomics",
+        term_refs=[{"text": "atomic", "target": "atomic"}],
+    )
+
+    canonical, merge = fls_ws7._merge_canonical_row({"lexical": lexical, "hybrid": hybrid})
+
+    assert canonical["text"] == hybrid["text"]
+    assert merge["selected_modes"]["text"] == "hybrid"
+    assert merge["ranking_conflicts"]["text"] == [
+        "atomic fence ordering visibility with stronger evidence",
+        "short text",
     ]
 
 

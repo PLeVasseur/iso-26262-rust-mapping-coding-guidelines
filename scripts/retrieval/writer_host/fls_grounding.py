@@ -35,6 +35,7 @@ MAX_CONSTRUCT_TERMS = 12
 MAX_SUPPORTING_PHRASES = 8
 MAX_DOCUMENT_PRIORS = 3
 MAX_SECTION_PRIORS = 5
+GLOSSARY_PRIOR_DAMPING = 0.2
 
 
 def _text(value: Any) -> str:
@@ -331,6 +332,13 @@ def _normalize_priors(
     return trimmed
 
 
+def _apply_glossary_prior_damping(link: str, raw_score: float) -> float:
+    normalized_link = _text(link).lower()
+    if not normalized_link.startswith("glossary.html"):
+        return raw_score
+    return raw_score * GLOSSARY_PRIOR_DAMPING
+
+
 def _prior_documents(
     connection: sqlite3.Connection, grounding: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -368,6 +376,7 @@ def _prior_documents(
         raw_score = (
             3.0 * title_hits + 1.5 * section_hits + 0.2 * role_hits + 0.35 * role_feature_types
         )
+        raw_score = _apply_glossary_prior_damping(str(document_link), raw_score)
         evidence = {
             "document_title_hits": title_token_hits,
             "section_title_hits": section_title_hits,
@@ -410,6 +419,7 @@ def _prior_sections(
         role_hits = sum(len(values) for values in section_role_counts.values())
         role_feature_types = sum(1 for value in section_role_counts.values() if len(value) > 0)
         raw_score = 3.5 * title_hits + 0.25 * role_hits + 0.35 * role_feature_types
+        raw_score = _apply_glossary_prior_damping(str(section_link), raw_score)
         evidence = {
             "document_title_hits": [],
             "section_title_hits": title_token_hits,

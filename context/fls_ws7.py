@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -19,6 +18,7 @@ from context.fls_topology import (
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 STAGE_ORDER = ("section", "document", "global")
 MODE_ORDER = ("lexical", "semantic", "hybrid")
+MODE_PREFERENCE = {"hybrid": 0, "semantic": 1, "lexical": 2, "supplemental": 3}
 ADVANCEMENT_NO_QUALIFYING = "NO_QUALIFYING_CANDIDATES"
 ADVANCEMENT_STAGE_SUCCESS = "TERMINAL_STAGE_SUCCESS"
 ADVANCEMENT_GLOBAL_FALLBACK = "GLOBAL_FALLBACK_REQUIRED"
@@ -28,6 +28,14 @@ REASON_REVIEW = "REVIEW_REQUIRED"
 REASON_NO_QUALIFYING = "NO_QUALIFYING_CANDIDATES"
 REASON_WEAK = "WEAK_CANDIDATE"
 REASON_AMBIGUOUS = "AMBIGUOUS_TOP_CANDIDATES"
+DECLARED_QUERY_INPUT_FIELDS = (
+    "governing_obligation",
+    "construct_terms",
+    "supporting_phrases",
+    "code_tokens",
+    "prior_documents",
+    "prior_sections",
+)
 
 
 def _trace_path(policy: dict[str, Any]) -> Path | None:
@@ -84,53 +92,47 @@ def _load_runtime_components(project_root: Path) -> tuple[Any, Any]:
     return execute_retrieval_query, SemanticBackendConfig
 
 
+def _text_list(values: Any) -> list[str]:
+    out: list[str] = []
+    for value in list(values or []):
+        normalized = str(value).strip()
+        if not normalized or normalized in out:
+            continue
+        out.append(normalized)
+    return out
+
+
+def _project_query_inputs(packet: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "governing_obligation": str(packet.get("governing_obligation", "")).strip(),
+        "construct_terms": _text_list(packet.get("construct_terms")),
+        "supporting_phrases": _text_list(packet.get("supporting_phrases")),
+        "code_tokens": _text_list(packet.get("code_tokens")),
+        "prior_documents": [
+            dict(row) for row in list(packet.get("prior_documents") or []) if isinstance(row, dict)
+        ],
+        "prior_sections": [
+            dict(row) for row in list(packet.get("prior_sections") or []) if isinstance(row, dict)
+        ],
+    }
+
+
 def _build_query_text(project_root: Path, packet: dict[str, Any]) -> str:
     del project_root
+    projection = _project_query_inputs(packet)
     pieces: list[str] = []
-    obligation = str(packet.get("governing_obligation", "")).strip()
+    obligation = str(projection["governing_obligation"])
     if obligation:
         pieces.append(obligation)
-    construct_terms = [
-        str(value).strip()
-        for value in list(packet.get("construct_terms") or [])
-        if str(value).strip()
-    ]
+    supporting_phrases = list(projection["supporting_phrases"])
+    pieces.extend(supporting_phrases)
+    construct_terms = list(projection["construct_terms"])
     if construct_terms:
-        pieces.append(" ".join(construct_terms[:10]))
-    supporting_phrases = [
-        str(value).strip()
-        for value in list(packet.get("supporting_phrases") or [])
-        if str(value).strip()
-    ]
-    if supporting_phrases:
-        pieces.append(" ".join(supporting_phrases[:3]))
-    lower_blob = " ".join(pieces).lower()
-    if ("integer" in lower_blob or "numeric" in lower_blob) and "pointer" in lower_blob:
-        pieces.append("address to pointer cast")
-    if "transmute" in lower_blob:
-        pieces.append("address to pointer cast")
-    if "recursive" in lower_blob or "recursion" in lower_blob:
-        pieces.append("recursive function stack overflow tail call")
-    if "strong types" in lower_blob or "newtype" in lower_blob or "type alias" in lower_blob:
-        pieces.append("distinct types type alias newtype")
-    if "unsafe" in lower_blob and any(
-        term in lower_blob
-        for term in ("extern", "no_mangle", "export_name", "link_section", "attribute")
-    ):
-        pieces.append("unsafe attribute unsafe external block")
-    merged = " ".join(piece for piece in pieces if piece)
-    tokens = re.findall(r"[A-Za-z0-9_]+", merged)
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for token in tokens:
-        lowered = token.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        deduped.append(token)
-        if len(deduped) >= 48:
-            break
-    return " ".join(deduped).strip()
+        pieces.append(" ".join(construct_terms))
+    code_tokens = list(projection["code_tokens"])
+    if code_tokens:
+        pieces.append(" ".join(code_tokens))
+    return "\n".join(piece for piece in pieces if piece).strip()
 
 
 def _tokenize_text(text: str) -> set[str]:
@@ -192,29 +194,6 @@ def _overlap_score(candidate_text: str, packet_tokens: dict[str, set[str]]) -> f
         return 0.0
     overlap = len(candidate_tokens.intersection(query_tokens))
     score = overlap / max(1, len(query_tokens))
-    if "unsafe" in query_tokens:
-        score += 0.12 if "unsafe" in candidate_lower else -0.04
-    if {"integer", "pointer"}.issubset(query_tokens) or {"numeric", "pointer"}.issubset(
-        query_tokens
-    ):
-        if "address to pointer" in candidate_lower or (
-            "integer type" in candidate_lower
-            and ("*const" in candidate_lower or "*mut" in candidate_lower)
-        ):
-            score += 0.15
-        if "function pointer" in candidate_lower and "function" not in query_tokens:
-            score -= 0.12
-    if (
-        "recursive" in query_tokens
-        and "type" in candidate_lower
-        and "function" not in candidate_lower
-    ):
-        score -= 0.08
-    if {"strong", "types"}.issubset(query_tokens) or {"distinct", "types"}.issubset(query_tokens):
-        if "type alias" in candidate_lower:
-            score += 0.10
-        if "copy trait" in candidate_lower or "implements the core marker copy" in candidate_lower:
-            score -= 0.08
     return round(max(0.0, min(1.0, score)), 6)
 
 
@@ -250,11 +229,6 @@ def _is_glossary_candidate(row: dict[str, Any]) -> bool:
     return (
         "glossary" in document_link or "glossary" in section_link or "glossary" in section_heading
     )
-
-
-def _is_glossary_link(link: str) -> bool:
-    lowered = str(link or "").strip().lower()
-    return "glossary" in lowered
 
 
 def _candidate_identity(row: dict[str, Any]) -> dict[str, str]:
@@ -306,6 +280,22 @@ IDENTITY_FIELDS = (
     "section_link",
     "checksum",
 )
+TEXT_FIELDS = ("text", "chunk_text")
+ROLE_PAYLOAD_FIELDS = (
+    "defined_terms_json",
+    "term_refs_json",
+    "syntax_defs_json",
+    "syntax_refs_json",
+    "std_refs_json",
+)
+DESCRIPTIVE_FIELDS = (
+    "chunk_uid",
+    "section_heading",
+    "chapter",
+    "section",
+    "paragraph_number",
+    "source_anchor",
+)
 MERGEABLE_FIELDS = tuple(field for field in CANONICAL_FIELDS if field not in IDENTITY_FIELDS)
 
 
@@ -314,16 +304,41 @@ def _canonical_value_key(value: Any) -> tuple[int, str]:
     return (len(normalized), normalized)
 
 
-def _choose_field_value(rows_by_mode: dict[str, dict[str, Any]], field: str) -> Any:
-    values = {
-        str(row.get(field, "")).strip(): row.get(field)
-        for row in rows_by_mode.values()
-        if str(row.get(field, "")).strip()
-    }
-    if not values:
-        return ""
-    best_key = max(values, key=lambda item: _canonical_value_key(item))
-    return values[best_key]
+def _mode_sort_key(mode: str) -> tuple[int, str]:
+    return (MODE_PREFERENCE.get(mode, 99), str(mode))
+
+
+def _row_field_value_kind(field: str, value: Any) -> tuple[int, int, str]:
+    normalized = str(value or "").strip()
+    if field in ROLE_PAYLOAD_FIELDS:
+        try:
+            payload = json.loads(normalized or "[]")
+        except json.JSONDecodeError:
+            payload = []
+        size = len(payload) if isinstance(payload, list) else 0
+        return (size, len(normalized), normalized)
+    return (0, *_canonical_value_key(normalized))
+
+
+def _choose_field_value(rows_by_mode: dict[str, dict[str, Any]], field: str) -> tuple[Any, str]:
+    candidates: list[tuple[tuple[int, int, str], tuple[int, str], str, Any]] = []
+    for mode, row in rows_by_mode.items():
+        normalized = str(row.get(field, "")).strip()
+        if not normalized:
+            continue
+        candidates.append(
+            (
+                _row_field_value_kind(field, row.get(field)),
+                _mode_sort_key(mode),
+                mode,
+                row.get(field),
+            )
+        )
+    if not candidates:
+        return "", ""
+    candidates.sort(key=lambda item: (-item[0][0], -item[0][1], item[1], item[0][2]))
+    _, _, mode, value = candidates[0]
+    return value, mode
 
 
 def _identity_values(rows_by_mode: dict[str, dict[str, Any]], field: str) -> list[str]:
@@ -340,20 +355,28 @@ def _merge_canonical_row(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     canonical: dict[str, Any] = {}
     identity_conflicts: dict[str, list[str]] = {}
+    ranking_conflicts: dict[str, list[str]] = {}
     selected_values: dict[str, str] = {}
+    selected_modes: dict[str, str] = {}
     for field in IDENTITY_FIELDS:
         values = _identity_values(rows_by_mode, field)
         if len(values) > 1:
             identity_conflicts[field] = values
-        selected = values[0] if values else ""
+        selected, selected_mode = _choose_field_value(rows_by_mode, field)
         canonical[field] = selected
-        selected_values[field] = selected
+        selected_values[field] = str(selected or "").strip()
+        selected_modes[field] = selected_mode
     for field in MERGEABLE_FIELDS:
-        canonical[field] = _choose_field_value(rows_by_mode, field)
+        values = _identity_values(rows_by_mode, field)
+        if field in TEXT_FIELDS + ROLE_PAYLOAD_FIELDS and len(values) > 1:
+            ranking_conflicts[field] = values
+        canonical[field], selected_modes[field] = _choose_field_value(rows_by_mode, field)
         selected_values[field] = str(canonical[field] or "").strip()
     return canonical, {
         "identity_conflicts": identity_conflicts,
+        "ranking_conflicts": ranking_conflicts,
         "selected_values": selected_values,
+        "selected_modes": selected_modes,
     }
 
 
@@ -420,126 +443,6 @@ def _candidate_meets_gate_floor(candidate: dict[str, Any], *, policy: dict[str, 
     return float(candidate.get("total_score", 0.0) or 0.0) >= review_total_min
 
 
-def _load_role_map(
-    connection: sqlite3.Connection,
-    *,
-    table: str,
-    text_field: str,
-    target_field: str,
-    order_field: str,
-    paragraph_ids: list[str],
-) -> dict[str, str]:
-    placeholders = ",".join("?" for _ in paragraph_ids)
-    query = (
-        f"SELECT paragraph_id, {text_field}, {target_field} FROM {table} "
-        f"WHERE paragraph_id IN ({placeholders}) ORDER BY paragraph_id, {order_field}"
-    )
-    mapping: dict[str, list[dict[str, str]]] = {paragraph_id: [] for paragraph_id in paragraph_ids}
-    for paragraph_id, text, target in connection.execute(query, paragraph_ids):
-        mapping[str(paragraph_id)].append(
-            {"text": str(text or "").strip(), "target": str(target or "").strip()}
-        )
-    return {
-        paragraph_id: json.dumps(rows, separators=(",", ":"))
-        for paragraph_id, rows in mapping.items()
-    }
-
-
-def _load_paragraph_rows(db_path: Path, paragraph_ids: list[str]) -> list[dict[str, Any]]:
-    if not paragraph_ids:
-        return []
-    connection = sqlite3.connect(str(db_path))
-    try:
-        placeholders = ",".join("?" for _ in paragraph_ids)
-        query = (
-            "SELECT p.paragraph_id, p.paragraph_link, p.document_link, p.section_link, p.chapter, "
-            "p.section, p.paragraph_number, p.text, p.clean_text, p.checksum, c.source_sha256 "
-            "FROM paragraphs p LEFT JOIN chunks c ON c.chunk_uid = p.paragraph_id "
-            f"WHERE p.paragraph_id IN ({placeholders})"
-        )
-        rows = connection.execute(query, paragraph_ids).fetchall()
-        defined_map = _load_role_map(
-            connection,
-            table="fls_paragraph_defined_terms",
-            text_field="term_text",
-            target_field="term_target",
-            order_field="term_order",
-            paragraph_ids=paragraph_ids,
-        )
-        term_ref_map = _load_role_map(
-            connection,
-            table="fls_paragraph_term_refs",
-            text_field="term_text",
-            target_field="term_target",
-            order_field="term_order",
-            paragraph_ids=paragraph_ids,
-        )
-        syntax_def_map = _load_role_map(
-            connection,
-            table="fls_paragraph_syntax_defs",
-            text_field="symbol_text",
-            target_field="symbol_target",
-            order_field="symbol_order",
-            paragraph_ids=paragraph_ids,
-        )
-        syntax_ref_map = _load_role_map(
-            connection,
-            table="fls_paragraph_syntax_refs",
-            text_field="symbol_text",
-            target_field="symbol_target",
-            order_field="symbol_order",
-            paragraph_ids=paragraph_ids,
-        )
-        std_ref_map = _load_role_map(
-            connection,
-            table="fls_paragraph_std_refs",
-            text_field="symbol_text",
-            target_field="symbol_target",
-            order_field="symbol_order",
-            paragraph_ids=paragraph_ids,
-        )
-        out: list[dict[str, Any]] = []
-        for (
-            paragraph_id,
-            paragraph_link,
-            document_link,
-            section_link,
-            chapter,
-            section,
-            paragraph_number,
-            text,
-            clean_text,
-            checksum,
-            source_sha256,
-        ) in rows:
-            pid = str(paragraph_id)
-            out.append(
-                {
-                    "chunk_uid": pid,
-                    "paragraph_id": pid,
-                    "paragraph_link": str(paragraph_link or "").strip(),
-                    "document_link": str(document_link or "").strip(),
-                    "section_link": str(section_link or "").strip(),
-                    "section_heading": str(section or "").strip(),
-                    "chapter": str(chapter or "").strip(),
-                    "section": str(section or "").strip(),
-                    "paragraph_number": str(paragraph_number or "").strip(),
-                    "text": str(text or ""),
-                    "chunk_text": str(clean_text or text or ""),
-                    "defined_terms_json": defined_map.get(pid, "[]"),
-                    "term_refs_json": term_ref_map.get(pid, "[]"),
-                    "syntax_defs_json": syntax_def_map.get(pid, "[]"),
-                    "syntax_refs_json": syntax_ref_map.get(pid, "[]"),
-                    "std_refs_json": std_ref_map.get(pid, "[]"),
-                    "source_anchor": str(paragraph_link or "").strip(),
-                    "checksum": str(checksum or source_sha256 or "").strip(),
-                }
-            )
-        return out
-    finally:
-        connection.close()
-
-
 def _merge_stage_candidates(
     *,
     stage: str,
@@ -550,7 +453,6 @@ def _merge_stage_candidates(
     topology_index: dict[str, Any],
     policy: dict[str, Any],
     first_seen_by_paragraph: dict[str, str],
-    supplemental_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     components_cfg = dict((policy.get("scoring") or {}).get("components") or {})
     qualification_cfg = dict(policy.get("qualification") or {})
@@ -586,21 +488,6 @@ def _merge_stage_candidates(
             candidate["mode_row_refs"].append(
                 _mode_row_ref(mode=mode, stage=stage, row=row, rank=index)
             )
-
-    for row in list(supplemental_rows or []):
-        identity = _candidate_identity(row)
-        paragraph_id = identity["paragraph_id"]
-        if not paragraph_id or paragraph_id in candidates_by_id:
-            continue
-        first_seen_stage = first_seen_by_paragraph.setdefault(paragraph_id, stage)
-        candidates_by_id[paragraph_id] = {
-            "paragraph_id": paragraph_id,
-            "first_seen_stage": first_seen_stage,
-            "retrieval_stage": stage,
-            "seen_in_modes": [],
-            "mode_row_refs": [],
-            "rows_by_mode": {"supplemental": dict(row)},
-        }
 
     ranked_candidates: list[dict[str, Any]] = []
     for candidate in candidates_by_id.values():
@@ -788,20 +675,6 @@ def _resolve_stage_scope(
         key = "document_link"
         resolver = paragraph_ids_for_document
 
-    non_glossary_rows = [
-        row
-        for row in prior_rows
-        if isinstance(row, dict) and not _is_glossary_link(str(row.get(key, "")))
-    ]
-    if non_glossary_rows:
-        prior_rows = non_glossary_rows
-    elif stage == "section" and prior_rows:
-        return [], {
-            "state": "restricted_empty",
-            "allowed_paragraph_ids": [],
-            "source_links": [],
-        }
-
     source_links: list[str] = []
     paragraph_ids: list[str] = []
     seen_ids: set[str] = set()
@@ -823,35 +696,6 @@ def _resolve_stage_scope(
         "allowed_paragraph_ids": paragraph_ids,
         "source_links": source_links,
     }
-
-
-def _top_section_scope_ids(
-    *,
-    stage_candidates: list[dict[str, Any]],
-    topology_index: dict[str, Any],
-    limit: int = 3,
-) -> list[str]:
-    section_links: list[str] = []
-    seen: set[str] = set()
-    for row in stage_candidates:
-        section_link = str(row.get("section_link", "")).strip()
-        if not section_link or section_link in seen:
-            continue
-        if _is_glossary_link(section_link):
-            continue
-        seen.add(section_link)
-        section_links.append(section_link)
-        if len(section_links) >= limit:
-            break
-    paragraph_ids: list[str] = []
-    seen_ids: set[str] = set()
-    for section_link in section_links:
-        for paragraph_id in paragraph_ids_for_section(topology_index, section_link):
-            if paragraph_id in seen_ids:
-                continue
-            seen_ids.add(paragraph_id)
-            paragraph_ids.append(paragraph_id)
-    return paragraph_ids
 
 
 def _run_stage(
@@ -891,6 +735,9 @@ def _run_stage(
 
     def run_mode_queries(*, allowed_statement_ids: list[str] | None) -> dict[str, dict[str, Any]]:
         local_results: dict[str, dict[str, Any]] = {}
+        rewrite_mode = (
+            str(((policy.get("query") or {}).get("rewrite_mode", "off"))).strip() or "off"
+        )
         for mode in MODE_ORDER:
             local_results[mode] = execute_retrieval_query(
                 mode=mode,
@@ -910,7 +757,7 @@ def _run_stage(
                 semantic_retries=int(runtime_settings["semantic_retries"]),
                 persist_semantic_cache=False,
                 allow_online_corpus_embedding=False,
-                rewrite_mode="auto",
+                rewrite_mode=rewrite_mode,
                 rewrite_rules_path=Path(runtime_settings["rewrite_rules_path"]),
                 hybrid_fusion_method=str(runtime_settings["hybrid_fusion_method"]),
                 hybrid_rrf_k=int(runtime_settings["hybrid_rrf_k"]),
@@ -942,36 +789,6 @@ def _run_stage(
     qualifying_candidates = [
         row for row in stage_candidates if bool(row.get("qualifying_candidate", False))
     ]
-    if not qualifying_candidates and stage in {"document", "global"}:
-        refinement_scope_ids = _top_section_scope_ids(
-            stage_candidates=stage_candidates,
-            topology_index=topology_index,
-        )
-        if refinement_scope_ids:
-            seen_ids = {
-                str(row.get("paragraph_id", "")).strip()
-                for row in stage_candidates
-                if str(row.get("paragraph_id", "")).strip()
-            }
-            supplemental_rows = [
-                row
-                for row in _load_paragraph_rows(db_path, refinement_scope_ids)
-                if str(row.get("paragraph_id", "")).strip() not in seen_ids
-            ]
-            stage_candidates = _merge_stage_candidates(
-                stage=stage,
-                mode_results=mode_results,
-                prior_documents=list(packet.get("prior_documents") or []),
-                prior_sections=list(packet.get("prior_sections") or []),
-                packet_tokens=packet_tokens,
-                topology_index=topology_index,
-                policy=policy,
-                first_seen_by_paragraph=first_seen_by_paragraph,
-                supplemental_rows=supplemental_rows,
-            )
-            qualifying_candidates = [
-                row for row in stage_candidates if bool(row.get("qualifying_candidate", False))
-            ]
     qualifying_by_mode = {
         mode: sum(
             1 for row in qualifying_candidates if mode in list(row.get("seen_in_modes") or [])
@@ -1215,6 +1032,7 @@ def resolve_guideline(
     policy_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     policy = _load_policy(project_root, overrides=policy_overrides)
+    runtime_packet = _project_query_inputs(packet)
     validation_only_continuation = bool(
         (policy_overrides or {}).get("validation_only_continuation", False)
     )
@@ -1238,7 +1056,7 @@ def resolve_guideline(
         stage_result = _run_stage(
             project_root=project_root,
             stage=stage,
-            packet=packet,
+            packet=runtime_packet,
             topology_index=topology_index,
             db_path=db_path,
             runtime_settings=runtime_settings,
@@ -1253,9 +1071,10 @@ def resolve_guideline(
         stage_artifacts.append(stage_artifact)
         if candidate is not None:
             if bool(stage_decision.get("accepted", False)):
-                decision.update(stage_decision)
-                selected_stage = stage
-                selected_candidate = candidate
+                if selected_candidate is None:
+                    decision.update(stage_decision)
+                    selected_stage = stage
+                    selected_candidate = candidate
                 if not validation_only_continuation:
                     break
             else:

@@ -4,6 +4,14 @@ ws7_policy:
   query:
     top_k: 25
     candidate_limit: 500
+    rewrite_mode: "off"
+    runtime_inputs:
+      - governing_obligation
+      - construct_terms
+      - supporting_phrases
+      - code_tokens
+      - prior_documents
+      - prior_sections
   qualification:
     component_evidence_min: 0.12
     total_score_min: 0.24
@@ -90,3 +98,5 @@ ws7_policy:
     - Stage order is section, then document, then global.
     - Priors may accelerate early stages but may not fence global recovery.
     - Final ranking uses only the declared components listed above.
+    - WS7 stage execution must use only the declared runtime inputs listed in ws7_policy.query.runtime_inputs.
+    - WS7 may not rely on rewrite-driven synonym expansion, undeclared query augmentation, or hidden scope broadening.

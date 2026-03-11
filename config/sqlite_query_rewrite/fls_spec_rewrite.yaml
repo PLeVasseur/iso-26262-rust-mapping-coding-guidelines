@@ -1,57 +1,9 @@
 version: 1
 corpus: fls_spec
-mode_rules:
-  lexical:
-    max_expansion_terms: 8
-  semantic:
-    max_expansion_terms: 8
-  hybrid:
-    max_expansion_terms: 8
-row_marker_aliases:
-  fls:
-  - fls
-  - paragraph
-  - specification
-synonym_groups:
-- canonical: undefined behavior
-  terms:
-  - ub
-  - undefined behavior
-  - unsound
-- canonical: unsafe
-  terms:
-  - unsafe
-  - unsafety
-  - unchecked
-- canonical: unsafe external block
-  terms:
-  - unsafe external block
-  - unsafe extern
-  - extern block
-  - external block
-- canonical: unsafe attribute
-  terms:
-  - unsafe attribute
-  - attribute unsafe
-  - no_mangle
-  - export_name
-  - link_section
-- canonical: address to pointer cast
-  terms:
-  - address to pointer cast
-  - integer to pointer
-  - numeric to pointer
-  - transmute pointer
-  - type cast expression
-- canonical: recursive function
-  terms:
-  - recursive function
-  - recursion
-  - stack overflow
-  - tail call
-- canonical: distinct types
-  terms:
-  - distinct types
-  - strong types
-  - newtype
-  - type alias
+strategy: rewrite-v1
+allow_row_marker_terms: false
+token_expansions: {}
+row_marker_terms: {}
+mode_terms: {}
+suppress_tokens_when_present: {}
+mode_specific_rules: {}
