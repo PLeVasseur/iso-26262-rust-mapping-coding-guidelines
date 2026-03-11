@@ -19,6 +19,14 @@ ws7_policy:
     acceptance_total_score_min: 0.28
     acceptance_margin_min: 0.05
     review_total_score_min: 0.22
+    glossary_acceptance_total_score_min: 0.42
+    glossary_acceptance_margin_min: 0.12
+    glossary_scoped_acceptance_forbidden_when_dominated: true
+    glossary_global_acceptance_requires_strong_phrase: true
+  stage_health:
+    strong_phrase_threshold: 0.55
+    scoped_nonterminal_override_margin: 0.14
+    document_stage_override_margin_delta: 0.02
   scoring:
     comparison_margin: 0.08
     ambiguity_margin_floor: 0.05
@@ -33,7 +41,14 @@ ws7_policy:
           - governing_obligation
           - construct_terms
           - supporting_phrases
-        weight: 0.36
+        weight: 0.24
+      phrase_evidence_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - chunk_text
+          - supporting_phrases
+        weight: 0.22
       document_prior_score:
         kind: bonus
         range: 0..1

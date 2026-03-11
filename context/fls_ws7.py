@@ -16,6 +16,18 @@ from context.fls_topology import (
 )
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+PHRASE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "any",
+    "as",
+    "of",
+    "the",
+    "to",
+    "where",
+}
+GENERIC_PHRASE_TOKENS = {"expression", "operand", "pointer", "target", "type", "value"}
 STAGE_ORDER = ("section", "document", "global")
 MODE_ORDER = ("lexical", "semantic", "hybrid")
 MODE_PREFERENCE = {"hybrid": 0, "semantic": 1, "lexical": 2, "supplemental": 3}
@@ -28,6 +40,13 @@ REASON_REVIEW = "REVIEW_REQUIRED"
 REASON_NO_QUALIFYING = "NO_QUALIFYING_CANDIDATES"
 REASON_WEAK = "WEAK_CANDIDATE"
 REASON_AMBIGUOUS = "AMBIGUOUS_TOP_CANDIDATES"
+REASON_SCOPED_NO_QUALIFYING = "SCOPED_STAGE_NO_QUALIFYING_CANDIDATES"
+REASON_SCOPED_WEAK_SCOPE = "SCOPED_STAGE_NON_TERMINAL_WEAK_SCOPE"
+REASON_SCOPED_GLOSSARY = "SCOPED_STAGE_NON_TERMINAL_GLOSSARY_WINNER"
+REASON_SCOPED_WEAK_PHRASE = "SCOPED_STAGE_NON_TERMINAL_WEAK_PHRASE_SUPPORT"
+REASON_SCOPED_OVERRIDE = "SCOPED_STAGE_TERMINAL_STRONG_NON_GLOSSARY_OVERRIDE"
+REASON_TERMINAL_STAGE_SUCCESS = "TERMINAL_STAGE_SUCCESS"
+REASON_GLOBAL_STAGE = "GLOBAL_AUTHORITATIVE_STAGE"
 DECLARED_QUERY_INPUT_FIELDS = (
     "governing_obligation",
     "construct_terms",
@@ -140,6 +159,11 @@ def _tokenize_text(text: str) -> set[str]:
 
 
 def _tokenize_packet(packet: dict[str, Any]) -> dict[str, set[str]]:
+    supporting_phrase_texts = [
+        str(value).strip()
+        for value in list(packet.get("supporting_phrases") or [])
+        if str(value).strip()
+    ]
     construct_terms = {
         str(value).strip().lower()
         for value in list(packet.get("construct_terms") or [])
@@ -161,7 +185,126 @@ def _tokenize_packet(packet: dict[str, Any]) -> dict[str, set[str]]:
         "governing_tokens": governing_tokens,
         "code_tokens": code_tokens,
         "text_tokens": text_tokens,
+        "supporting_phrase_texts": set(supporting_phrase_texts),
     }
+
+
+def _normalized_chunk_text(row: dict[str, Any]) -> str:
+    return str(row.get("chunk_text", row.get("text", "")) or "").strip().lower()
+
+
+def _phrase_ngrams(tokens: list[str], n: int) -> set[tuple[str, ...]]:
+    if n <= 0 or len(tokens) < n:
+        return set()
+    return {tuple(tokens[index : index + n]) for index in range(len(tokens) - n + 1)}
+
+
+def _ordered_subsequence_coverage(needle_tokens: list[str], haystack_tokens: list[str]) -> float:
+    if not needle_tokens:
+        return 0.0
+    haystack_index = 0
+    matched = 0
+    for token in needle_tokens:
+        while haystack_index < len(haystack_tokens) and haystack_tokens[haystack_index] != token:
+            haystack_index += 1
+        if haystack_index >= len(haystack_tokens):
+            break
+        matched += 1
+        haystack_index += 1
+    return round(matched / max(1, len(needle_tokens)), 6)
+
+
+def _phrase_evidence_score(row: dict[str, Any], packet: dict[str, Any]) -> dict[str, Any]:
+    def _targets_after_to(tokens: list[str]) -> set[str]:
+        targets: set[str] = set()
+        for index, token in enumerate(tokens[:-1]):
+            if token != "to":
+                continue
+            for candidate in tokens[index + 1 : index + 3]:
+                if candidate in PHRASE_STOPWORDS:
+                    continue
+                targets.add(candidate)
+                break
+        return targets
+
+    def _normalize_phrase_token(token: str) -> str:
+        lowered = token.lower()
+        if len(lowered) > 4 and lowered.endswith("s") and not lowered.endswith("ss"):
+            return lowered[:-1]
+        return lowered
+
+    chunk_text = _normalized_chunk_text(row)
+    chunk_tokens = [_normalize_phrase_token(token) for token in TOKEN_RE.findall(chunk_text)]
+    filtered_chunk_tokens = [token for token in chunk_tokens if token not in PHRASE_STOPWORDS]
+    chunk_targets = _targets_after_to(chunk_tokens)
+    best = {
+        "phrase_evidence_score": 0.0,
+        "best_phrase_text": "",
+        "best_phrase_exact_match": 0.0,
+        "best_phrase_ordered_overlap": 0.0,
+        "best_phrase_bigram_score": 0.0,
+        "best_phrase_trigram_score": 0.0,
+        "best_phrase_ngram_score": 0.0,
+    }
+    for phrase in list(packet.get("supporting_phrases") or []):
+        phrase_text = str(phrase or "").strip().lower()
+        if not phrase_text:
+            continue
+        phrase_tokens = [_normalize_phrase_token(token) for token in TOKEN_RE.findall(phrase_text)]
+        if not phrase_tokens:
+            continue
+        filtered_phrase_tokens = [token for token in phrase_tokens if token not in PHRASE_STOPWORDS]
+        phrase_specificity = len(
+            [token for token in filtered_phrase_tokens if token not in GENERIC_PHRASE_TOKENS]
+        ) / max(1, len(filtered_phrase_tokens))
+        phrase_targets = _targets_after_to(phrase_tokens)
+        exact_phrase_match = 1.0 if phrase_text in chunk_text else 0.0
+        ordered_overlap_score = _ordered_subsequence_coverage(
+            filtered_phrase_tokens or phrase_tokens,
+            filtered_chunk_tokens or chunk_tokens,
+        )
+        ngram_source = [
+            token for token in phrase_tokens if token not in PHRASE_STOPWORDS
+        ] or phrase_tokens
+        ngram_target = [
+            token for token in chunk_tokens if token not in PHRASE_STOPWORDS
+        ] or chunk_tokens
+        bigrams = _phrase_ngrams(ngram_source, 2)
+        trigrams = _phrase_ngrams(ngram_source, 3)
+        bigram_score = (
+            round(
+                len(bigrams.intersection(_phrase_ngrams(ngram_target, 2))) / max(1, len(bigrams)), 6
+            )
+            if bigrams
+            else 0.0
+        )
+        trigram_score = (
+            round(
+                len(trigrams.intersection(_phrase_ngrams(ngram_target, 3))) / max(1, len(trigrams)),
+                6,
+            )
+            if trigrams
+            else 0.0
+        )
+        ngram_score = round(max(bigram_score, trigram_score), 6)
+        local_phrase_score = max(
+            exact_phrase_match, 0.65 * ordered_overlap_score + 0.35 * ngram_score
+        )
+        if phrase_targets and phrase_targets.intersection(chunk_targets):
+            local_phrase_score += 0.15 * max(0.35, phrase_specificity)
+        local_phrase_score *= max(0.35, phrase_specificity)
+        local_phrase_score = round(max(0.0, min(1.0, local_phrase_score)), 6)
+        if local_phrase_score > float(best["phrase_evidence_score"]):
+            best = {
+                "phrase_evidence_score": local_phrase_score,
+                "best_phrase_text": phrase,
+                "best_phrase_exact_match": round(exact_phrase_match, 6),
+                "best_phrase_ordered_overlap": round(ordered_overlap_score, 6),
+                "best_phrase_bigram_score": bigram_score,
+                "best_phrase_trigram_score": trigram_score,
+                "best_phrase_ngram_score": ngram_score,
+            }
+    return best
 
 
 def _parse_role_payload(raw: Any) -> list[dict[str, str]]:
@@ -223,12 +366,24 @@ def _role_match_score(
 
 
 def _is_glossary_candidate(row: dict[str, Any]) -> bool:
+    content_type = str(row.get("content_type", "")).strip().lower()
+    if content_type == "glossary":
+        return True
     document_link = str(row.get("document_link", "")).lower()
     section_link = str(row.get("section_link", "")).lower()
     section_heading = str(row.get("section_heading", row.get("section", ""))).lower()
     return (
         "glossary" in document_link or "glossary" in section_link or "glossary" in section_heading
     )
+
+
+def _candidate_content_type(row: dict[str, Any]) -> str:
+    content_type = str(row.get("content_type", "")).strip().lower()
+    if content_type:
+        return content_type
+    if _is_glossary_candidate(row):
+        return "glossary"
+    return "normative"
 
 
 def _candidate_identity(row: dict[str, Any]) -> dict[str, str]:
@@ -519,10 +674,18 @@ def _merge_stage_candidates(
                 packet_tokens["construct_terms"], packet_tokens["code_tokens"]
             ),
         )
+        phrase_evidence = _phrase_evidence_score(
+            canonical_row,
+            {"supporting_phrases": list(packet_tokens.get("supporting_phrase_texts", []))},
+        )
+        content_type = _candidate_content_type(canonical_row)
         glossary_candidate = _is_glossary_candidate(canonical_row)
         score_components = {
             "text_overlap_score": _overlap_score(
                 str(canonical_row.get("chunk_text", canonical_row.get("text", ""))), packet_tokens
+            ),
+            "phrase_evidence_score": float(
+                phrase_evidence.get("phrase_evidence_score", 0.0) or 0.0
             ),
             "document_prior_score": _prior_score(
                 prior_documents,
@@ -605,7 +768,9 @@ def _merge_stage_candidates(
                 "checksum": str(canonical_row.get("checksum", "")).strip(),
                 "canonical_row": canonical_row,
                 "canonical_merge": canonical_merge,
+                "content_type": content_type,
                 "glossary_candidate": glossary_candidate,
+                "phrase_evidence": phrase_evidence,
                 "matched_role_features": {
                     "defined_terms": defined_matches,
                     "term_refs": term_ref_matches,
@@ -646,14 +811,6 @@ def _merge_stage_candidates(
         if margin < ambiguity_floor and ambiguity_floor > 0.0 and ambiguity_penalty_max > 0.0:
             penalty = -round(min(ambiguity_penalty_max, ambiguity_floor - margin), 6)
             top_candidate["score_components"]["ambiguity_penalty"] = penalty
-            top_candidate["total_score"] = round(float(top_candidate["total_score"]) + penalty, 6)
-            ranked_candidates.sort(
-                key=lambda row: (
-                    -float(row.get("total_score", 0.0)),
-                    -float(row.get("score_components", {}).get("text_overlap_score", 0.0)),
-                    str(row.get("paragraph_id", "")),
-                )
-            )
     return ranked_candidates
 
 
@@ -698,6 +855,120 @@ def _resolve_stage_scope(
     }
 
 
+def _scope_info(packet: dict[str, Any], stage_name: str, source_links: list[str]) -> dict[str, Any]:
+    if stage_name == "global":
+        info = {
+            "state": "global",
+            "scope_kind": "global",
+            "source_links": [],
+            "specificity_state": "global",
+            "specificity_reasons": [],
+            "content_type_mix": {
+                "normative": 0,
+                "glossary": 0,
+                "inventory": 0,
+                "index": 0,
+                "examples": 0,
+                "unknown": 0,
+            },
+            "glossary_share": 0.0,
+            "hub_share": 0.0,
+            "normative_share": 0.0,
+            "selected_prior_count": 0,
+        }
+        info["terminal_confidence_allowed"] = True
+        return info
+    scope_key = "prior_sections" if stage_name == "section" else "prior_documents"
+    rows = [
+        row
+        for row in list(packet.get(scope_key) or [])
+        if isinstance(row, dict)
+        and str(row.get("section_link" if stage_name == "section" else "document_link", ""))
+        in set(source_links)
+    ]
+    first = rows[0] if rows else {}
+    content_type_mix = {
+        "normative": 0,
+        "glossary": 0,
+        "inventory": 0,
+        "index": 0,
+        "examples": 0,
+        "unknown": 0,
+    }
+    for row in rows:
+        content_type = str(row.get("content_type", "unknown") or "unknown")
+        content_type_mix[content_type if content_type in content_type_mix else "unknown"] += 1
+    selected_prior_count = len(rows)
+    glossary_share = content_type_mix["glossary"] / max(1, selected_prior_count)
+    hub_share = (
+        content_type_mix["glossary"] + content_type_mix["inventory"] + content_type_mix["index"]
+    ) / max(1, selected_prior_count)
+    normative_share = content_type_mix["normative"] / max(1, selected_prior_count)
+    info = {
+        "state": "restricted_subset" if selected_prior_count else "restricted_empty",
+        "scope_kind": stage_name,
+        "source_links": list(source_links),
+        "specificity_state": str(
+            first.get("specificity_state", "high_specificity") or "high_specificity"
+        ),
+        "specificity_reasons": list(
+            (first.get("evidence") or {})
+            .get("prior_health_snapshot", {})
+            .get("specificity_reasons")
+            or []
+        ),
+        "content_type_mix": content_type_mix,
+        "glossary_share": round(glossary_share, 6),
+        "hub_share": round(hub_share, 6),
+        "normative_share": round(normative_share, 6),
+        "selected_prior_count": selected_prior_count,
+    }
+    info["terminal_confidence_allowed"] = _terminal_confidence_allowed(info)
+    return info
+
+
+def _terminal_confidence_allowed(scope_info: dict[str, Any]) -> bool:
+    if str(scope_info.get("scope_kind", "")) == "global":
+        return True
+    return str(scope_info.get("specificity_state", "")) == "high_specificity"
+
+
+def _stage_can_terminate(
+    stage_name: str,
+    scope_info: dict[str, Any],
+    winning_candidate: dict[str, Any] | None,
+    decision_inputs: dict[str, Any],
+) -> tuple[bool, str]:
+    if winning_candidate is None:
+        if stage_name == "global":
+            return False, REASON_NO_QUALIFYING
+        return False, REASON_SCOPED_NO_QUALIFYING
+    if stage_name == "global":
+        return True, REASON_GLOBAL_STAGE
+    if bool(scope_info.get("terminal_confidence_allowed", False)):
+        return True, REASON_TERMINAL_STAGE_SUCCESS
+    if bool(winning_candidate.get("glossary_candidate", False)):
+        return False, REASON_SCOPED_GLOSSARY
+    phrase_score = float(
+        winning_candidate.get("phrase_evidence", {}).get("phrase_evidence_score", 0.0) or 0.0
+    )
+    margin = float(decision_inputs.get("margin", 0.0) or 0.0)
+    stage_health_cfg = dict(decision_inputs.get("stage_health_cfg") or {})
+    required_margin = float(
+        stage_health_cfg.get("scoped_nonterminal_override_margin", 0.14) or 0.14
+    )
+    if stage_name == "document":
+        required_margin -= float(
+            stage_health_cfg.get("document_stage_override_margin_delta", 0.02) or 0.02
+        )
+    strong_phrase_threshold = float(stage_health_cfg.get("strong_phrase_threshold", 0.55) or 0.55)
+    if phrase_score < strong_phrase_threshold:
+        return False, REASON_SCOPED_WEAK_PHRASE
+    if margin < required_margin:
+        return False, REASON_SCOPED_WEAK_SCOPE
+    return True, REASON_SCOPED_OVERRIDE
+
+
 def _run_stage(
     *,
     project_root: Path,
@@ -713,6 +984,7 @@ def _run_stage(
     allowed_ids, scope_info = _resolve_stage_scope(
         stage=stage, packet=packet, topology_index=topology_index
     )
+    scope_metadata = _scope_info(packet, stage, list(scope_info["source_links"]))
     query_text = _build_query_text(project_root, packet)
     _trace_event(
         policy,
@@ -722,6 +994,7 @@ def _run_stage(
             "scope_state": scope_info["state"],
             "source_links": list(scope_info["source_links"]),
             "allowed_paragraph_count": len(scope_info["allowed_paragraph_ids"]),
+            "scope_info": scope_metadata,
         },
     )
     semantic_config = SemanticBackendConfig(
@@ -817,9 +1090,13 @@ def _run_stage(
                     "paragraph_id": str(row.get("paragraph_id", "")),
                     "total_score": float(row.get("total_score", 0.0) or 0.0),
                     "glossary_candidate": bool(row.get("glossary_candidate", False)),
+                    "phrase_evidence_score": float(
+                        row.get("phrase_evidence", {}).get("phrase_evidence_score", 0.0) or 0.0
+                    ),
                 }
                 for row in stage_candidates[:3]
             ],
+            "scope_info": scope_metadata,
         },
     )
     return {
@@ -827,6 +1104,7 @@ def _run_stage(
         "query_text": query_text,
         "scope": {
             **scope_info,
+            "scope_info": scope_metadata,
             "candidate_universe_size": (
                 len(scope_info["allowed_paragraph_ids"])
                 if scope_info["state"] != "global"
@@ -840,6 +1118,7 @@ def _run_stage(
             len(scope_info["allowed_paragraph_ids"]) if scope_info["state"] != "global" else -1
         ),
         "entered_with_priors": bool(scope_info["source_links"]),
+        "scope_info": scope_metadata,
         "advancement_reason": advancement_reason,
         "mode_qualifying_counts": qualifying_by_mode,
         "stage_artifact": {
@@ -884,24 +1163,35 @@ def _select_stage_winner(
     stage_result: dict[str, Any], *, policy: dict[str, Any]
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     gating_cfg = dict(policy.get("gating") or {})
+    stage_health_cfg = dict(policy.get("stage_health") or {})
+    stage_name = str(stage_result.get("stage_name", "global") or "global")
+    scope_info = dict(stage_result.get("scope_info") or {})
+    if not scope_info:
+        scope_info = _scope_info({}, stage_name, [])
     candidates = list(stage_result.get("qualifying_candidates") or [])
     if not candidates:
+        reason_code = (
+            REASON_NO_QUALIFYING if stage_name == "global" else REASON_SCOPED_NO_QUALIFYING
+        )
         _trace_event(
             policy,
             {
                 "event": "stage_decision",
-                "stage": str(stage_result.get("stage_name", "")),
-                "reason_code": REASON_NO_QUALIFYING,
+                "stage": stage_name,
+                "reason_code": reason_code,
                 "accepted": False,
                 "review_candidate": False,
             },
         )
         return None, {
-            "reason_code": REASON_NO_QUALIFYING,
+            "reason_code": reason_code,
             "publish_accept": False,
             "review_candidate": False,
             "accepted": False,
             "glossary_override_applied": False,
+            "glossary_ladder_state": "not_glossary_candidate",
+            "glossary_acceptance_allowed": False,
+            "glossary_acceptance_reason": "not_glossary_candidate",
         }
     candidates.sort(
         key=lambda row: (-float(row.get("total_score", 0.0)), str(row.get("paragraph_id", "")))
@@ -951,23 +1241,65 @@ def _select_stage_winner(
         else 1.0
     )
     top["decision_margin"] = round(margin, 6)
+    can_terminate, termination_reason = _stage_can_terminate(
+        stage_name,
+        scope_info,
+        top,
+        {"margin": margin, "stage_health_cfg": stage_health_cfg},
+    )
+    glossary_candidate = bool(top.get("glossary_candidate", False))
+    glossary_ladder_state = "not_glossary_candidate"
+    glossary_acceptance_allowed = not glossary_candidate
+    glossary_acceptance_reason = "not_glossary_candidate"
+    if glossary_candidate:
+        glossary_ladder_state = "glossary_provisional"
+        glossary_acceptance_allowed = False
+        if (
+            stage_name != "global"
+            and bool(gating_cfg.get("glossary_scoped_acceptance_forbidden_when_dominated", True))
+            and str(scope_info.get("specificity_state", ""))
+            in {"low_specificity", "glossary_dominated"}
+        ):
+            glossary_acceptance_reason = "glossary_dominated_stage_forbids_glossary_acceptance"
+        elif stage_name != "global":
+            glossary_acceptance_reason = "low_specificity_glossary_requires_review"
+        elif float(top.get("phrase_evidence", {}).get("phrase_evidence_score", 0.0) or 0.0) < float(
+            stage_health_cfg.get("strong_phrase_threshold", 0.55) or 0.55
+        ):
+            glossary_acceptance_reason = "glossary_thresholds_not_met"
+        else:
+            glossary_acceptance_allowed = True
+            glossary_acceptance_reason = "global_glossary_acceptance_allowed"
 
     if (
         float(top.get("total_score", 0.0)) >= acceptance_total_min
         and margin >= acceptance_margin_min
+        and can_terminate
+        and (
+            not glossary_candidate
+            or (
+                glossary_acceptance_allowed
+                and float(top.get("total_score", 0.0))
+                >= float(gating_cfg.get("glossary_acceptance_total_score_min", 0.42) or 0.42)
+                and margin >= float(gating_cfg.get("glossary_acceptance_margin_min", 0.12) or 0.12)
+            )
+        )
     ):
         _trace_event(
             policy,
             {
                 "event": "stage_decision",
-                "stage": str(stage_result.get("stage_name", "")),
-                "reason_code": REASON_ACCEPTED,
+                "stage": stage_name,
+                "reason_code": termination_reason
+                if termination_reason != REASON_TERMINAL_STAGE_SUCCESS
+                else REASON_ACCEPTED,
                 "accepted": True,
                 "review_candidate": False,
                 "paragraph_id": str(top.get("paragraph_id", "")),
                 "total_score": float(top.get("total_score", 0.0) or 0.0),
                 "decision_margin": float(top.get("decision_margin", 0.0) or 0.0),
                 "glossary_override_applied": glossary_override_applied,
+                "glossary_acceptance_reason": glossary_acceptance_reason,
             },
         )
         return top, {
@@ -976,6 +1308,41 @@ def _select_stage_winner(
             "review_candidate": False,
             "accepted": True,
             "glossary_override_applied": glossary_override_applied,
+            "glossary_ladder_state": "glossary_accepted"
+            if glossary_candidate
+            else glossary_ladder_state,
+            "glossary_acceptance_allowed": glossary_acceptance_allowed,
+            "glossary_acceptance_reason": glossary_acceptance_reason,
+            "stage_terminal": True,
+        }
+
+    if not can_terminate and stage_name != "global":
+        review_candidate = float(top.get("total_score", 0.0) or 0.0) >= review_total_min
+        _trace_event(
+            policy,
+            {
+                "event": "stage_decision",
+                "stage": stage_name,
+                "reason_code": termination_reason,
+                "accepted": False,
+                "review_candidate": review_candidate,
+                "paragraph_id": str(top.get("paragraph_id", "")),
+                "total_score": float(top.get("total_score", 0.0) or 0.0),
+                "decision_margin": float(top.get("decision_margin", 0.0) or 0.0),
+                "glossary_override_applied": glossary_override_applied,
+                "glossary_acceptance_reason": glossary_acceptance_reason,
+            },
+        )
+        return top, {
+            "reason_code": termination_reason,
+            "publish_accept": False,
+            "review_candidate": review_candidate,
+            "accepted": False,
+            "glossary_override_applied": glossary_override_applied,
+            "glossary_ladder_state": glossary_ladder_state,
+            "glossary_acceptance_allowed": glossary_acceptance_allowed,
+            "glossary_acceptance_reason": glossary_acceptance_reason,
+            "stage_terminal": False,
         }
 
     if float(top.get("total_score", 0.0)) >= review_total_min:
@@ -984,7 +1351,7 @@ def _select_stage_winner(
             policy,
             {
                 "event": "stage_decision",
-                "stage": str(stage_result.get("stage_name", "")),
+                "stage": stage_name,
                 "reason_code": reason_code,
                 "accepted": False,
                 "review_candidate": True,
@@ -992,6 +1359,7 @@ def _select_stage_winner(
                 "total_score": float(top.get("total_score", 0.0) or 0.0),
                 "decision_margin": float(top.get("decision_margin", 0.0) or 0.0),
                 "glossary_override_applied": glossary_override_applied,
+                "glossary_acceptance_reason": glossary_acceptance_reason,
             },
         )
         return top, {
@@ -1000,17 +1368,22 @@ def _select_stage_winner(
             "review_candidate": True,
             "accepted": False,
             "glossary_override_applied": glossary_override_applied,
+            "glossary_ladder_state": glossary_ladder_state,
+            "glossary_acceptance_allowed": glossary_acceptance_allowed,
+            "glossary_acceptance_reason": glossary_acceptance_reason,
+            "stage_terminal": stage_name == "global",
         }
 
     _trace_event(
         policy,
         {
             "event": "stage_decision",
-            "stage": str(stage_result.get("stage_name", "")),
+            "stage": stage_name,
             "reason_code": REASON_NO_QUALIFYING,
             "accepted": False,
             "review_candidate": False,
             "glossary_override_applied": glossary_override_applied,
+            "glossary_acceptance_reason": glossary_acceptance_reason,
         },
     )
     return None, {
@@ -1019,6 +1392,10 @@ def _select_stage_winner(
         "review_candidate": False,
         "accepted": False,
         "glossary_override_applied": glossary_override_applied,
+        "glossary_ladder_state": glossary_ladder_state,
+        "glossary_acceptance_allowed": glossary_acceptance_allowed,
+        "glossary_acceptance_reason": glossary_acceptance_reason,
+        "stage_terminal": False,
     }
 
 
@@ -1066,6 +1443,8 @@ def resolve_guideline(
         stage_results.append(stage_result)
         stage_artifact = dict(stage_result["stage_artifact"])
         candidate, stage_decision = _select_stage_winner(stage_result, policy=policy)
+        if not bool(stage_decision.get("stage_terminal", False)) and stage != STAGE_ORDER[-1]:
+            stage_artifact["advancement_reason"] = ADVANCEMENT_GLOBAL_FALLBACK
         if validation_only_continuation and candidate is not None and stage != STAGE_ORDER[-1]:
             stage_artifact["advancement_reason"] = ADVANCEMENT_VALIDATION_ONLY
         stage_artifacts.append(stage_artifact)
@@ -1077,7 +1456,7 @@ def resolve_guideline(
                     selected_candidate = candidate
                 if not validation_only_continuation:
                     break
-            else:
+            elif bool(stage_decision.get("review_candidate", False)):
                 if provisional_candidate is None:
                     provisional_candidate = candidate
                     provisional_decision = dict(stage_decision)

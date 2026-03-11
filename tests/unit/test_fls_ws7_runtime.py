@@ -249,6 +249,34 @@ def test_build_query_text_uses_only_declared_inputs_and_preserves_phrases() -> N
     assert "ignored-runtime-noise" not in query_text
 
 
+def test_phrase_evidence_score_prefers_address_to_pointer_clause() -> None:
+    packet = {
+        "supporting_phrases": [
+            "An integer shall not be converted to a pointer.",
+            "Address-to-pointer casts require documented handling.",
+        ]
+    }
+    expected = _row(
+        "fls_expected",
+        text="An operand of integer type and target type *const V perform address-to-pointer cast.",
+        paragraph_link="expressions.html#fls_expected",
+        document_link="expressions.html",
+        section_link="expressions.html#type-cast-expressions",
+    )
+    sibling = _row(
+        "fls_sibling",
+        text="An operand of type *const T and a target integer type perform pointer-to-address cast.",
+        paragraph_link="expressions.html#fls_sibling",
+        document_link="expressions.html",
+        section_link="expressions.html#type-cast-expressions",
+    )
+
+    expected_score = fls_ws7._phrase_evidence_score(expected, packet)
+    sibling_score = fls_ws7._phrase_evidence_score(sibling, packet)
+
+    assert expected_score["phrase_evidence_score"] > sibling_score["phrase_evidence_score"]
+
+
 def test_project_query_inputs_strips_undeclared_runtime_fields() -> None:
     packet = {
         "governing_obligation": "unsafe extern blocks require explicit ABI",
@@ -323,7 +351,7 @@ def test_resolve_guideline_allows_glossary_win_when_no_normative_rival_qualifies
         "governing_obligation": "unsafe pointer dereference",
         "construct_terms": ["unsafe", "pointer", "dereference"],
         "code_tokens": [],
-        "supporting_phrases": ["unsafe pointer"],
+        "supporting_phrases": ["unsafe pointer dereference definition"],
         "prior_documents": [],
         "prior_sections": [],
         "ambiguity_notes": [],
@@ -373,13 +401,15 @@ def test_resolve_guideline_emits_review_for_ambiguous_runtime_case(monkeypatch) 
             paragraph_link="concurrency.html#fls_atomic001",
             document_link="concurrency.html",
             section_link="concurrency.html#atomics",
+            term_refs=[{"text": "atomic", "target": "atomic"}],
         ),
         _row(
             "fls_atomic002",
-            text="atomic ordering visibility thread",
+            text="atomic ordering visibility",
             paragraph_link="concurrency.html#fls_atomic002",
             document_link="concurrency.html",
             section_link="concurrency.html#atomics",
+            term_refs=[{"text": "atomic", "target": "atomic"}],
         ),
     ]
 
@@ -662,8 +692,24 @@ def test_resolve_guideline_validation_only_continuation_collects_all_stages(monk
         "construct_terms": ["unsafe", "pointer", "dereference"],
         "code_tokens": [],
         "supporting_phrases": ["unsafe pointer"],
-        "prior_documents": [{"document_link": "glossary.html", "score": 1.0}],
-        "prior_sections": [{"section_link": "glossary.html#terms", "score": 1.0}],
+        "prior_documents": [
+            {
+                "document_link": "glossary.html",
+                "score": 1.0,
+                "content_type": "glossary",
+                "specificity_state": "glossary_dominated",
+                "evidence": {},
+            }
+        ],
+        "prior_sections": [
+            {
+                "section_link": "glossary.html#terms",
+                "score": 1.0,
+                "content_type": "glossary",
+                "specificity_state": "glossary_dominated",
+                "evidence": {},
+            }
+        ],
         "ambiguity_notes": [],
     }
     glossary = _row(

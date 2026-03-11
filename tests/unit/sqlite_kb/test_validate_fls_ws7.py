@@ -81,6 +81,7 @@ def _top_candidate(*, paragraph_id: str = "fls_atomic002"):
         },
         "score_components": {
             "text_overlap_score": 1.0,
+            "phrase_evidence_score": 1.0,
             "document_prior_score": 0.0,
             "section_prior_score": 0.0,
             "defined_term_match_score": 0.0,
