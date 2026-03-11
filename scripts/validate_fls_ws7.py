@@ -74,6 +74,26 @@ EXPECTED_RETRIEVAL_RESULT_REF_KEYS = {
 }
 EXPECTED_RETRIEVAL_ROW_KEYS = {"chunk_uid", "paragraph_id", "paragraph_link"}
 EXPECTED_MODE_ROW_REF_KEYS = {"rank", "stage", "chunk_uid", "paragraph_id"}
+FAILURE_LAYERS = {
+    "grounding_prior_failure",
+    "stage_scope_failure",
+    "retrieval_recall_failure",
+    "candidate_merge_failure",
+    "qualification_failure",
+    "candidate_scoring_failure",
+    "stage_termination_failure",
+    "glossary_decision_failure",
+    "mapping_quality_failure",
+    "corpus_gap",
+    "none",
+}
+TRIAGE_CLASSIFICATIONS = {
+    "true_ranking_bug",
+    "stale_mapping",
+    "weak_mapping",
+    "corpus_gap",
+    "expected_abstention",
+}
 
 
 def _load_expected_score_components() -> set[str]:
@@ -125,6 +145,259 @@ def _candidate_trace(row: dict[str, Any]) -> dict[str, Any]:
         "canonical_merge": dict(row.get("canonical_merge") or {}),
         "qualifying_candidate": bool(row.get("qualifying_candidate", False)),
     }
+
+
+def _grounding_snapshot(packet: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "governing_obligation": str(packet.get("governing_obligation", "")),
+        "construct_terms": list(packet.get("construct_terms") or []),
+        "supporting_phrases": list(packet.get("supporting_phrases") or []),
+        "code_tokens": list(packet.get("code_tokens") or []),
+        "prior_documents": list(packet.get("prior_documents") or []),
+        "prior_sections": list(packet.get("prior_sections") or []),
+        "ambiguity_notes": list(packet.get("ambiguity_notes") or []),
+    }
+
+
+def _stage_artifact_by_name(stage_artifacts: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(stage.get("stage_name", "")): stage
+        for stage in stage_artifacts
+        if isinstance(stage, dict) and str(stage.get("stage_name", "")).strip()
+    }
+
+
+def _candidate_presence(
+    stage_artifacts: list[dict[str, Any]], acceptable_ids: list[str]
+) -> dict[str, Any]:
+    acceptable = {str(value).strip() for value in acceptable_ids if str(value).strip()}
+    by_name = _stage_artifact_by_name(stage_artifacts)
+    result: dict[str, Any] = {}
+    for stage_name in ("section", "document", "global"):
+        candidates = list((by_name.get(stage_name) or {}).get("candidate_ids") or [])
+        ids = {
+            str(candidate.get("paragraph_id", "")).strip()
+            for candidate in candidates
+            if isinstance(candidate, dict)
+        }
+        result[f"expected_candidate_entered_{stage_name}"] = bool(ids & acceptable)
+    return result
+
+
+def _top_candidate_component_diff(
+    top_candidates: list[dict[str, Any]], acceptable_ids: list[str]
+) -> dict[str, Any]:
+    acceptable = {str(value).strip() for value in acceptable_ids if str(value).strip()}
+    observed = top_candidates[0] if top_candidates else {}
+    expected = next(
+        (row for row in top_candidates if str(row.get("paragraph_id", "")).strip() in acceptable),
+        {},
+    )
+    expected_components = dict(expected.get("score_components") or {})
+    observed_components = dict(observed.get("score_components") or {})
+    diff_rows: list[dict[str, Any]] = []
+    for key in sorted(set(expected_components) | set(observed_components)):
+        expected_value = float(expected_components.get(key, 0.0) or 0.0)
+        observed_value = float(observed_components.get(key, 0.0) or 0.0)
+        diff_rows.append(
+            {
+                "component": key,
+                "expected": expected_value,
+                "observed": observed_value,
+                "delta": round(expected_value - observed_value, 6),
+            }
+        )
+    diff_rows.sort(key=lambda row: (-abs(float(row["delta"])), row["component"]))
+    return {
+        "expected_paragraph_id": str(expected.get("paragraph_id", "")),
+        "observed_paragraph_id": str(observed.get("paragraph_id", "")),
+        "rows": diff_rows[:8],
+    }
+
+
+def _score_component_losses(
+    top_candidates: list[dict[str, Any]], acceptable_ids: list[str]
+) -> list[str]:
+    diff = _top_candidate_component_diff(top_candidates, acceptable_ids)
+    losses = []
+    for row in list(diff.get("rows") or []):
+        if float(row.get("delta", 0.0) or 0.0) > 0.0:
+            losses.append(str(row.get("component", "")))
+    return losses
+
+
+def _failure_layer(
+    *,
+    outcome: str,
+    reason_code: str,
+    selected_stage: str,
+    acceptable_ids: list[str],
+    top_candidates: list[dict[str, Any]],
+    stage_artifacts: list[dict[str, Any]],
+    packet: dict[str, Any],
+) -> tuple[str, str, str]:
+    presence = _candidate_presence(stage_artifacts, acceptable_ids)
+    expected_in_any_stage = any(bool(value) for value in presence.values())
+    expected_in_top = any(
+        str(row.get("paragraph_id", "")).strip() in {str(value).strip() for value in acceptable_ids}
+        for row in top_candidates
+    )
+    if outcome in {"accepted-correct", "review-correct", "unresolved-expected"}:
+        if outcome == "review-correct":
+            return (
+                "candidate_scoring_failure",
+                "expected_candidate_competed_but_remains_review_only",
+                "context/fls_ws7.py",
+            )
+        return ("none", "no_open_failure", "")
+    if not list(packet.get("prior_documents") or []) and not list(
+        packet.get("prior_sections") or []
+    ):
+        return (
+            "grounding_prior_failure",
+            "empty_prior_surface",
+            "scripts/retrieval/writer_host/fls_grounding.py",
+        )
+    if not presence.get("expected_candidate_entered_section", False) and not presence.get(
+        "expected_candidate_entered_document", False
+    ):
+        return (
+            "stage_scope_failure",
+            "expected_candidate_missing_from_scoped_stages",
+            "context/fls_ws7.py",
+        )
+    if not expected_in_any_stage:
+        return (
+            "retrieval_recall_failure",
+            "expected_candidate_never_entered_candidate_ids",
+            "context/fls_ws7.py",
+        )
+    if expected_in_any_stage and not expected_in_top:
+        return (
+            "qualification_failure",
+            "expected_candidate_entered_but_failed_qualification_or_top_candidate_cut",
+            "context/fls_ws7.py",
+        )
+    if "GLOSSARY" in reason_code.upper() or any(
+        bool(row.get("glossary_candidate", False)) for row in top_candidates[:1]
+    ):
+        return (
+            "glossary_decision_failure",
+            "glossary_decision_controls_outcome",
+            "context/fls_ws7.py",
+        )
+    if selected_stage in {"section", "document"} and reason_code.startswith(
+        "SCOPED_STAGE_NON_TERMINAL"
+    ):
+        return ("stage_termination_failure", reason_code.lower(), "context/fls_ws7.py")
+    return (
+        "candidate_scoring_failure",
+        "score_component_competitiveness_gap",
+        "context/fls_ws7.py",
+    )
+
+
+def _investigation_record(
+    *,
+    path: str,
+    acceptable_ids: list[str],
+    resolved_paragraph_id: str,
+    outcome: str,
+    reason_code: str,
+    selected_stage: str,
+    top_candidates: list[dict[str, Any]],
+    stage_artifacts: list[dict[str, Any]],
+    packet: dict[str, Any],
+) -> dict[str, Any]:
+    failure_layer, failure_subtype, next_surface = _failure_layer(
+        outcome=outcome,
+        reason_code=reason_code,
+        selected_stage=selected_stage,
+        acceptable_ids=acceptable_ids,
+        top_candidates=top_candidates,
+        stage_artifacts=stage_artifacts,
+        packet=packet,
+    )
+    presence = _candidate_presence(stage_artifacts, acceptable_ids)
+    score_losses = _score_component_losses(top_candidates, acceptable_ids)
+    acceptable = {str(value).strip() for value in acceptable_ids if str(value).strip()}
+    expected_top = next(
+        (row for row in top_candidates if str(row.get("paragraph_id", "")).strip() in acceptable),
+        {},
+    )
+    evidence_summary = {
+        "prior_surface_ok": bool(
+            list(packet.get("prior_documents") or []) or list(packet.get("prior_sections") or [])
+        ),
+        **presence,
+        "expected_candidate_top5": bool(expected_top),
+        "expected_candidate_lost_on_components": score_losses,
+    }
+    return {
+        "item_id": Path(path).stem,
+        "expected_ids": list(acceptable_ids),
+        "observed_id": resolved_paragraph_id,
+        "observed_outcome": outcome,
+        "failure_layer": failure_layer,
+        "failure_subtype": failure_subtype,
+        "evidence_summary": evidence_summary,
+        "next_change_surface": next_surface,
+    }
+
+
+def _proof_bundle(
+    *,
+    packet: dict[str, Any],
+    acceptable_ids: list[str],
+    stage_artifacts: list[dict[str, Any]],
+    top_candidates: list[dict[str, Any]],
+    trace_path: str,
+) -> dict[str, Any]:
+    return {
+        "routing_artifact": {
+            "kind": "scoped_candidate_universe_diff",
+            "trace_path": trace_path,
+            "stage_sequence": [
+                str(stage.get("stage_name", ""))
+                for stage in stage_artifacts
+                if isinstance(stage, dict)
+            ],
+            "candidate_presence": _candidate_presence(stage_artifacts, acceptable_ids),
+        },
+        "ranking_artifact": {
+            "kind": "score_component_diff",
+            "comparison": _top_candidate_component_diff(top_candidates, acceptable_ids),
+        },
+        "structural_artifact": {
+            "kind": "validation_report_row",
+            "grounding_snapshot": _grounding_snapshot(packet),
+        },
+    }
+
+
+def _triage_classification(
+    *,
+    outcome: str,
+    investigation_record: dict[str, Any],
+    packet: dict[str, Any],
+) -> dict[str, Any]:
+    evidence = dict(investigation_record.get("evidence_summary") or {})
+    expected_entered_any = any(
+        bool(evidence.get(key, False))
+        for key in (
+            "expected_candidate_entered_section",
+            "expected_candidate_entered_document",
+            "expected_candidate_entered_global",
+            "expected_candidate_top5",
+        )
+    )
+    if outcome in {"accepted-correct", "review-correct", "unresolved-expected"}:
+        return {"classification": "expected_abstention", "runtime_queue": False}
+    if expected_entered_any:
+        return {"classification": "true_ranking_bug", "runtime_queue": True}
+    if list(packet.get("prior_documents") or []) or list(packet.get("prior_sections") or []):
+        return {"classification": "weak_mapping", "runtime_queue": False}
+    return {"classification": "corpus_gap", "runtime_queue": False}
 
 
 def _validate_stage_artifacts(stage_artifacts: list[dict[str, Any]]) -> list[str]:
@@ -414,6 +687,7 @@ def run_validation(*, dataset_path: Path | None = None) -> dict[str, Any]:
     structural_failures = 0
     resolved = 0
     accepted = 0
+    debug_records: list[dict[str, Any]] = []
     for item in items:
         packet = dict(item.get("packet") or {})
         predicted = resolve_fls_for_guideline(packet)
@@ -449,6 +723,30 @@ def run_validation(*, dataset_path: Path | None = None) -> dict[str, Any]:
         counters[outcome.replace("-", "_")] += 1
         if structural_problems:
             structural_failures += 1
+        investigation_record = _investigation_record(
+            path=str(item.get("path", "")),
+            acceptable_ids=list(item.get("acceptable_ids") or []),
+            resolved_paragraph_id=resolved_paragraph_id,
+            outcome=outcome,
+            reason_code=str(decision.get("reason_code", "")),
+            selected_stage=str(decision.get("selected_stage", "")),
+            top_candidates=top_candidates,
+            stage_artifacts=stage_artifacts,
+            packet=packet,
+        )
+        proof_bundle = _proof_bundle(
+            packet=packet,
+            acceptable_ids=list(item.get("acceptable_ids") or []),
+            stage_artifacts=stage_artifacts,
+            top_candidates=top_candidates,
+            trace_path="",
+        )
+        triage = _triage_classification(
+            outcome=outcome,
+            investigation_record=investigation_record,
+            packet=packet,
+        )
+        debug_records.append(investigation_record)
         rows.append(
             {
                 "path": str(item.get("path", "")),
@@ -469,6 +767,11 @@ def run_validation(*, dataset_path: Path | None = None) -> dict[str, Any]:
                 ],
                 "stage_artifacts": stage_artifacts,
                 "top_candidates": top_candidates,
+                "grounding_artifact_snapshot": _grounding_snapshot(packet),
+                "investigation_record": investigation_record,
+                "proof_bundle": proof_bundle,
+                "triage_classification": str(triage["classification"]),
+                "runtime_queue": bool(triage["runtime_queue"]),
             }
         )
     return {
@@ -484,6 +787,11 @@ def run_validation(*, dataset_path: Path | None = None) -> dict[str, Any]:
         "unresolved_expected": counters["unresolved_expected"],
         "unresolved_unexpected": counters["unresolved_unexpected"],
         "structural_failures": structural_failures,
+        "investigation_records": debug_records,
+        "triage_counts": {
+            label: sum(1 for row in rows if str(row.get("triage_classification", "")) == label)
+            for label in sorted(TRIAGE_CLASSIFICATIONS)
+        },
         "proof_valid": structural_failures == 0
         and counters["accepted_wrong"] == 0
         and counters["review_unexpected"] == 0
@@ -516,6 +824,7 @@ def run_validation_with_progress(
     structural_failures = 0
     resolved = 0
     accepted = 0
+    debug_records: list[dict[str, Any]] = []
     total = len(items)
     for index, item in enumerate(items, start=1):
         started = time.time()
@@ -564,6 +873,29 @@ def run_validation_with_progress(
         counters[outcome.replace("-", "_")] += 1
         if structural_problems:
             structural_failures += 1
+        investigation_record = _investigation_record(
+            path=path,
+            acceptable_ids=list(item.get("acceptable_ids") or []),
+            resolved_paragraph_id=resolved_paragraph_id,
+            outcome=outcome,
+            reason_code=str(decision.get("reason_code", "")),
+            selected_stage=str(decision.get("selected_stage", "")),
+            top_candidates=top_candidates,
+            stage_artifacts=stage_artifacts,
+            packet=packet,
+        )
+        proof_bundle = _proof_bundle(
+            packet=packet,
+            acceptable_ids=list(item.get("acceptable_ids") or []),
+            stage_artifacts=stage_artifacts,
+            top_candidates=top_candidates,
+            trace_path=str(trace_path) if trace_path is not None else "",
+        )
+        triage = _triage_classification(
+            outcome=outcome,
+            investigation_record=investigation_record,
+            packet=packet,
+        )
         row = {
             "path": path,
             "rationale": str(item.get("rationale", "")).strip(),
@@ -583,7 +915,14 @@ def run_validation_with_progress(
             ],
             "stage_artifacts": stage_artifacts,
             "top_candidates": top_candidates,
+            "trace_path": str(trace_path) if trace_path is not None else "",
+            "grounding_artifact_snapshot": _grounding_snapshot(packet),
+            "investigation_record": investigation_record,
+            "proof_bundle": proof_bundle,
+            "triage_classification": str(triage["classification"]),
+            "runtime_queue": bool(triage["runtime_queue"]),
         }
+        debug_records.append(investigation_record)
         rows.append(row)
         elapsed = time.time() - started
         print(
@@ -604,6 +943,11 @@ def run_validation_with_progress(
         "unresolved_expected": counters["unresolved_expected"],
         "unresolved_unexpected": counters["unresolved_unexpected"],
         "structural_failures": structural_failures,
+        "investigation_records": debug_records,
+        "triage_counts": {
+            label: sum(1 for row in rows if str(row.get("triage_classification", "")) == label)
+            for label in sorted(TRIAGE_CLASSIFICATIONS)
+        },
         "proof_valid": structural_failures == 0
         and counters["accepted_wrong"] == 0
         and counters["review_unexpected"] == 0

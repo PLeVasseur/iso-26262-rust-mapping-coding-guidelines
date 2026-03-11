@@ -140,6 +140,17 @@ def test_run_validation_reports_stage_artifacts(monkeypatch) -> None:
     assert report["structural_failures"] == 0
     assert report["proof_valid"] is True
     assert report["rows"][0]["stage_sequence_entered"] == ["global"]
+    assert report["rows"][0]["investigation_record"]["item_id"] == "x"
+    assert (
+        report["rows"][0]["proof_bundle"]["routing_artifact"]["kind"]
+        == "scoped_candidate_universe_diff"
+    )
+    assert report["rows"][0]["proof_bundle"]["ranking_artifact"]["kind"] == "score_component_diff"
+    assert (
+        report["rows"][0]["proof_bundle"]["structural_artifact"]["kind"] == "validation_report_row"
+    )
+    assert report["rows"][0]["triage_classification"] == "expected_abstention"
+    assert report["rows"][0]["runtime_queue"] is False
 
 
 def test_write_validation_report_prefers_run_dir(tmp_path: Path) -> None:
@@ -311,6 +322,49 @@ def test_run_validation_allows_expected_review(monkeypatch) -> None:
 
     assert report["review_correct"] == 1
     assert report["proof_valid"] is True
+    assert report["investigation_records"][0]["failure_layer"] == "candidate_scoring_failure"
+    assert report["rows"][0]["triage_classification"] == "expected_abstention"
+
+
+def test_run_validation_marks_missing_scoped_entry_as_scope_failure(monkeypatch) -> None:
+    stage_artifact = _stage_artifact()
+    stage_artifact["stage_name"] = "section"
+    monkeypatch.setattr(
+        validate_fls_ws7,
+        "load_calibration_items",
+        lambda **kwargs: [
+            {
+                "path": "x.rst",
+                "packet": {
+                    "construct_terms": ["atomic"],
+                    "prior_documents": [{"document_link": "weak.html", "score": 1.0}],
+                    "prior_sections": [{"section_link": "weak.html#weak", "score": 1.0}],
+                },
+                "acceptable_ids": ["fls_expected"],
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        validate_fls_ws7,
+        "resolve_fls_for_guideline",
+        lambda packet: {
+            "paragraph_id": "fls_wrong999",
+            "decision": {
+                "accepted": True,
+                "review_candidate": False,
+                "reason_code": "ACCEPTED",
+                "selected_stage": "section",
+                "stage_artifacts": [stage_artifact],
+                "top_candidates": [_top_candidate(paragraph_id="fls_wrong999")],
+            },
+        },
+    )
+
+    report = validate_fls_ws7.run_validation()
+
+    assert report["rows"][0]["investigation_record"]["failure_layer"] == "stage_scope_failure"
+    assert report["rows"][0]["triage_classification"] == "weak_mapping"
+    assert report["rows"][0]["runtime_queue"] is False
 
 
 def test_run_validation_rejects_count_mismatch(monkeypatch) -> None:
