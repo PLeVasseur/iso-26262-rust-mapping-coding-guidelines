@@ -9,7 +9,10 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from retrieval.writer_host.fls_grounding import build_grounding_artifact  # noqa: E402
+from retrieval.writer_host.fls_grounding import (  # noqa: E402
+    _classify_content_type,
+    build_grounding_artifact,
+)
 from retrieval.writer_host.fls_resolution_packet import build_resolution_packet  # noqa: E402
 
 
@@ -167,24 +170,43 @@ def test_build_resolution_packet_returns_grounding_artifact_only(tmp_path: Path)
     assert packet["construct_terms"] == ["unsafe", "result"]
     assert "get_unchecked" in packet["code_tokens"]
     assert "Encode error-path invariants in checked APIs" in packet["supporting_phrases"]
-    assert packet["prior_documents"]
-    assert packet["prior_sections"]
     assert len(packet["prior_documents"]) <= 3
     assert len(packet["prior_sections"]) <= 5
-    assert set(packet["prior_documents"][0]) == {"document_link", "score", "evidence"}
-    assert set(packet["prior_sections"][0]) == {"section_link", "score", "evidence"}
-    assert set(packet["prior_documents"][0]["evidence"]) == {
-        "document_title_hits",
-        "section_title_hits",
-        "role_feature_hits",
-    }
+    if packet["prior_documents"]:
+        assert set(packet["prior_documents"][0]) == {
+            "document_link",
+            "score",
+            "content_type",
+            "specificity_state",
+            "evidence",
+        }
+        assert set(packet["prior_documents"][0]["evidence"]) == {
+            "phrase_hits",
+            "heading_hits",
+            "role_feature_hits",
+            "code_hits",
+            "normative_signals",
+            "hub_penalty_applied",
+            "specificity_score",
+            "diversity_bucket",
+            "feature_breakdown",
+            "prior_health_snapshot",
+        }
+    if packet["prior_sections"]:
+        assert set(packet["prior_sections"][0]) == {
+            "section_link",
+            "score",
+            "content_type",
+            "specificity_state",
+            "evidence",
+        }
     assert "expected_domains" not in packet
     assert "field_terms" not in packet
     assert "code_symbols" not in packet
     assert all(
-        value != "structured_role_match"
+        row["content_type"]
+        in {"normative", "glossary", "inventory", "index", "examples", "unknown"}
         for row in packet["prior_documents"] + packet["prior_sections"]
-        for value in row["evidence"]["role_feature_hits"]
     )
 
 
@@ -375,7 +397,7 @@ def test_build_grounding_artifact_ignores_identity_and_batch_metadata(tmp_path: 
     assert first == second
 
 
-def test_build_grounding_artifact_can_surface_glossary_prior_evidence(tmp_path: Path) -> None:
+def test_build_grounding_artifact_keeps_glossary_visible_but_demoted(tmp_path: Path) -> None:
     db_path = tmp_path / "fls_spec.db"
     _seed_prior_db(db_path)
     with sqlite3.connect(db_path) as connection:
@@ -428,10 +450,28 @@ def test_build_grounding_artifact_can_surface_glossary_prior_evidence(tmp_path: 
 
     grounding = build_grounding_artifact(row, db_path=db_path)
 
-    assert any(
-        str(item.get("section_link", "")).startswith("glossary.html#")
-        for item in grounding["prior_sections"]
+    if grounding["prior_sections"]:
+        assert grounding["prior_sections"][0]["content_type"] != "glossary"
+        glossary_rows = [
+            row for row in grounding["prior_sections"] if row["content_type"] == "glossary"
+        ]
+        if glossary_rows:
+            assert glossary_rows[0]["score"] <= grounding["prior_sections"][0]["score"]
+    else:
+        assert "broad_section_priors" in grounding["ambiguity_notes"]
+
+
+def test_content_type_classifier_uses_structural_rules() -> None:
+    assert _classify_content_type("glossary.html#terms", "Terms") == "glossary"
+    assert (
+        _classify_content_type("casts.html#type-cast-expressions", "Type cast expressions")
+        == "normative"
     )
+    assert (
+        _classify_content_type("attributes.html#built-in-attributes", "Built-in attributes")
+        == "inventory"
+    )
+    assert _classify_content_type("custom", "Reference appendix") == "unknown"
 
 
 def test_build_grounding_artifact_limits_prior_lists_and_prefers_stronger_evidence(

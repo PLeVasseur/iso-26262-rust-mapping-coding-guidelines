@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.retrieval.writer_host.fls_grounding import build_grounding_artifact
+from scripts.retrieval.writer_host.fls_grounding import (
+    _phrase_records,
+    _token_records,
+    build_grounding_artifact,
+)
 
 
 def test_build_grounding_artifact_preserves_decisive_phrases_without_runtime_hints() -> None:
@@ -90,3 +94,45 @@ def test_build_grounding_artifact_ignores_family_labels_and_tags_as_inputs() -> 
     assert "ffi" not in artifact["construct_terms"]
     assert "extern-family" not in artifact["construct_terms"]
     assert "unsafe-extern" not in artifact["construct_terms"]
+
+
+def test_phrase_records_preserve_exact_supporting_phrases() -> None:
+    grounding = {
+        "governing_obligation": "The as operator shall not convert integers to pointers.",
+        "supporting_phrases": [
+            "Address-to-pointer casts require documented handling.",
+            "Pointer provenance must remain explicit.",
+        ],
+    }
+
+    records = _phrase_records(grounding)
+
+    assert records[0]["text"] == "The as operator shall not convert integers to pointers."
+    assert any(
+        record["text"] == "Address-to-pointer casts require documented handling."
+        for record in records
+    )
+    assert any(
+        record["normalized_text"] == "pointer provenance must remain explicit" for record in records
+    )
+
+
+def test_token_records_are_bounded_and_deterministic() -> None:
+    grounding = {
+        "governing_obligation": "Unsafe extern blocks require explicit ABI spelling.",
+        "construct_terms": ["unsafe extern", "ABI", "block"],
+        "supporting_phrases": [
+            "Unsafe extern blocks require explicit ABI spelling.",
+            "Spell the ABI explicitly on every extern block.",
+        ],
+    }
+
+    first = _token_records(grounding)
+    second = _token_records(grounding)
+
+    assert first == second
+    assert len(first) <= 20
+    assert any(
+        record["token"] == "abi" and record["source"] == "construct_term" for record in first
+    )
+    assert any(record["token"] == "spelling" and record["source"] == "phrase" for record in first)

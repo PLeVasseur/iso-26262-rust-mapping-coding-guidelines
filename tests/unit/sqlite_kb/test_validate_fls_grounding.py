@@ -127,14 +127,24 @@ def test_family_tokens_do_not_apply_alias_or_suffix_laundering() -> None:
 
 def test_composite_family_expectation_does_not_pass_on_one_generic_token() -> None:
     artifact = {
-        "prior_documents": [{"document_link": "functions.html", "score": 1.0, "evidence": {}}],
+        "prior_documents": [
+            {
+                "document_link": "functions.html",
+                "score": 1.0,
+                "content_type": "normative",
+                "specificity_state": "mixed_specificity",
+                "evidence": {},
+            }
+        ],
         "prior_sections": [
             {
                 "section_link": "glossary.html#function-item-type",
                 "score": 1.0,
+                "content_type": "glossary",
+                "specificity_state": "mixed_specificity",
                 "evidence": {
-                    "document_title_hits": [],
-                    "section_title_hits": ["function"],
+                    "heading_hits": ["function"],
+                    "phrase_hits": [],
                     "role_feature_hits": [],
                 },
             }
@@ -155,14 +165,24 @@ def test_composite_family_expectation_does_not_pass_on_one_generic_token() -> No
 
 def test_single_specific_token_expectation_can_match() -> None:
     artifact = {
-        "prior_documents": [{"document_link": "ffi.html", "score": 1.0, "evidence": {}}],
+        "prior_documents": [
+            {
+                "document_link": "ffi.html",
+                "score": 1.0,
+                "content_type": "normative",
+                "specificity_state": "high_specificity",
+                "evidence": {},
+            }
+        ],
         "prior_sections": [
             {
                 "section_link": "types-and-traits.html#union-types",
                 "score": 1.0,
+                "content_type": "normative",
+                "specificity_state": "high_specificity",
                 "evidence": {
-                    "document_title_hits": [],
-                    "section_title_hits": ["union"],
+                    "heading_hits": ["union"],
+                    "phrase_hits": [],
                     "role_feature_hits": [],
                 },
             }

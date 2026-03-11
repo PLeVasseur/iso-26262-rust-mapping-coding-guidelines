@@ -121,20 +121,33 @@ def _expectation_match(expected_value: str, seen_tokens: set[str]) -> dict[str, 
 def _artifact_neighborhood_tokens(artifact: dict[str, Any]) -> dict[str, set[str]]:
     document_tokens: set[str] = set()
     section_tokens: set[str] = set()
+
+    def _evidence_tokens(value: Any) -> set[str]:
+        if isinstance(value, str):
+            return _family_tokens(value)
+        if isinstance(value, dict):
+            out: set[str] = set()
+            for nested in value.values():
+                out.update(_evidence_tokens(nested))
+            return out
+        if isinstance(value, list):
+            out: set[str] = set()
+            for nested in value:
+                out.update(_evidence_tokens(nested))
+            return out
+        return set()
+
     for row in list(artifact.get("prior_documents") or []):
         if not isinstance(row, dict):
             continue
         link = str(row.get("document_link", "")).strip()
         stem = Path(link.split("#", 1)[0]).stem
         document_tokens.update(_family_tokens(stem))
+        document_tokens.update(_family_tokens(str(row.get("content_type", ""))))
         evidence_raw = row.get("evidence")
         evidence: dict[str, Any] = evidence_raw if isinstance(evidence_raw, dict) else {}
-        document_tokens.update(
-            _family_tokens(" ".join(list(evidence.get("document_title_hits") or [])))
-        )
-        document_tokens.update(
-            _family_tokens(" ".join(list(evidence.get("section_title_hits") or [])))
-        )
+        document_tokens.update(_evidence_tokens(evidence.get("heading_hits")))
+        document_tokens.update(_evidence_tokens(evidence.get("phrase_hits")))
     for row in list(artifact.get("prior_sections") or []):
         if not isinstance(row, dict):
             continue
@@ -142,14 +155,12 @@ def _artifact_neighborhood_tokens(artifact: dict[str, Any]) -> dict[str, set[str
         doc_part, _, anchor = link.partition("#")
         document_tokens.update(_family_tokens(Path(doc_part).stem))
         section_tokens.update(_family_tokens(anchor))
+        section_tokens.update(_family_tokens(str(row.get("content_type", ""))))
         evidence_raw = row.get("evidence")
         evidence = evidence_raw if isinstance(evidence_raw, dict) else {}
-        document_tokens.update(
-            _family_tokens(" ".join(list(evidence.get("document_title_hits") or [])))
-        )
-        section_tokens.update(
-            _family_tokens(" ".join(list(evidence.get("section_title_hits") or [])))
-        )
+        document_tokens.update(_evidence_tokens(evidence.get("heading_hits")))
+        section_tokens.update(_evidence_tokens(evidence.get("heading_hits")))
+        section_tokens.update(_evidence_tokens(evidence.get("phrase_hits")))
     return {
         "document_family_tokens": document_tokens,
         "section_family_tokens": section_tokens,
@@ -229,9 +240,15 @@ def _artifact_report(
                 key not in artifact for key in ("expected_domains", "field_terms", "code_symbols")
             ),
             "priors_have_only_allowed_keys": all(
-                set(row) == {"document_link", "score", "evidence"} for row in prior_documents
+                set(row)
+                == {"document_link", "score", "content_type", "specificity_state", "evidence"}
+                for row in prior_documents
             )
-            and all(set(row) == {"section_link", "score", "evidence"} for row in prior_sections),
+            and all(
+                set(row)
+                == {"section_link", "score", "content_type", "specificity_state", "evidence"}
+                for row in prior_sections
+            ),
             "priors_do_not_expose_candidate_ids": all(
                 "paragraph_id" not in row and "paragraph_link" not in row and "chunk_uid" not in row
                 for row in prior_documents + prior_sections
