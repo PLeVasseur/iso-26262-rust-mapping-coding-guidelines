@@ -208,6 +208,7 @@ def resolve_fls_for_guideline(
     precomputed_candidates: list[dict[str, Any]] | None = None,
     precomputed_variants: list[dict[str, str]] | None = None,
     policy_overrides: dict[str, Any] | None = None,
+    runtime_settings_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     del spec_lock_path, precomputed_candidates, precomputed_variants
     db_path = _resolve_fls_db_path(db_path)
@@ -226,11 +227,14 @@ def resolve_fls_for_guideline(
     terms = [term.strip() for term in construct_terms if term.strip()]
     if not terms:
         return _unresolved("no construct terms provided")
+    runtime_settings = _load_fls_runtime_settings()
+    if runtime_settings_overrides:
+        runtime_settings.update(dict(runtime_settings_overrides))
     return resolve_ws7_guideline(
         project_root=PROJECT_ROOT,
         packet=packet,
         db_path=db_path,
-        runtime_settings=_load_fls_runtime_settings(),
+        runtime_settings=runtime_settings,
         topology_index=_load_live_topology_index(),
         policy_overrides=policy_overrides,
     )
@@ -243,6 +247,7 @@ def resolve_fls_for_construct(
     spec_lock_path: Path = SPEC_LOCK_PATH,
     expected_domains: list[str] | None = None,
     policy_overrides: dict[str, Any] | None = None,
+    runtime_settings_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     del expected_domains
     packet = {
@@ -259,6 +264,7 @@ def resolve_fls_for_construct(
         db_path=db_path,
         spec_lock_path=spec_lock_path,
         policy_overrides=policy_overrides,
+        runtime_settings_overrides=runtime_settings_overrides,
     )
 
 

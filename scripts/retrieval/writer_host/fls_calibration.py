@@ -173,6 +173,46 @@ def _assert_runtime_allowed_dataset(dataset_path: Path) -> None:
         )
 
 
+def _packet_from_inline_draft(row: dict[str, Any]) -> dict[str, Any]:
+    draft_payload = row.get("draft_payload")
+    if not isinstance(draft_payload, dict):
+        return {}
+    review_question = str(draft_payload.get("review_question", "")).strip()
+    packet = build_grounding_artifact(
+        {
+            "draft": {
+                "target_id": str(
+                    draft_payload.get("guideline_id") or draft_payload.get("atom_id") or ""
+                ).strip(),
+                "title": str(draft_payload.get("title", "")).strip(),
+                "construct_terms": list(draft_payload.get("construct_terms") or []),
+                "claim_to_evidence_map": list(draft_payload.get("claim_to_evidence_map") or []),
+            },
+            "amplification": {
+                "guideline_amplification_text": str(
+                    draft_payload.get("guideline_amplification_text") or review_question
+                ).strip()
+            },
+            "rationale": {"rationale_text": str(draft_payload.get("rationale_text", "")).strip()},
+            "examples": {
+                "non_compliant_code": str(draft_payload.get("non_compliant_code", "")).strip(),
+                "compliant_code": str(draft_payload.get("compliant_code", "")).strip(),
+            },
+            "metadata": {},
+        }
+    )
+    raw_construct_terms = [
+        str(value).strip() for value in list(draft_payload.get("construct_terms") or [])
+    ]
+    syntax_tokens = [
+        value for value in raw_construct_terms if value and any(ch in value for ch in "#[]:`_")
+    ]
+    if syntax_tokens:
+        existing = [str(value).strip() for value in list(packet.get("code_tokens") or [])]
+        packet["code_tokens"] = list(dict.fromkeys(existing + syntax_tokens))
+    return packet
+
+
 def load_calibration_items(
     *,
     manifest_path: Path,
@@ -190,10 +230,12 @@ def load_calibration_items(
             if not isinstance(row, dict):
                 continue
             path_raw = str(row.get("path", "")).strip()
-            if not path_raw:
-                continue
-            rst_path = (guidelines_repo_root / path_raw).resolve()
-            if not rst_path.exists():
+            rst_path = (guidelines_repo_root / path_raw).resolve() if path_raw else None
+            inline_packet = row.get("packet") if isinstance(row.get("packet"), dict) else None
+            if inline_packet is None:
+                derived_packet = _packet_from_inline_draft(row)
+                inline_packet = derived_packet or None
+            if inline_packet is None and (rst_path is None or not rst_path.exists()):
                 continue
             acceptable_ids = [
                 str(value).strip()
@@ -207,9 +249,17 @@ def load_calibration_items(
             ]
             out.append(
                 {
-                    "path": path_raw,
+                    "path": path_raw
+                    or str(
+                        row.get("item_id")
+                        or row.get("draft_id")
+                        or row.get("guideline_id")
+                        or "<inline-packet>"
+                    ),
                     "rst_path": rst_path,
-                    "packet": build_resolution_packet_from_rst(rst_path),
+                    "packet": inline_packet
+                    if inline_packet is not None
+                    else build_resolution_packet_from_rst(cast(Path, rst_path)),
                     "acceptable_ids": acceptable_ids,
                     "acceptable_chapters": acceptable_chapters,
                     "should_abstain": bool(row.get("should_abstain", False)),

@@ -158,6 +158,87 @@ def test_load_calibration_items_preserves_ws7_manifest_metadata(tmp_path: Path) 
     assert items[0]["provenance"]["stable_identifier"] == "heldout::x"
 
 
+def test_load_calibration_items_accepts_inline_draft_payload(tmp_path: Path) -> None:
+    guidelines_root = tmp_path / "guidelines"
+    guidelines_root.mkdir(parents=True)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"exemplars": []}), encoding="utf-8")
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "item_id": "RET-RESOLVE-006::atom::lint-levels",
+                        "acceptable_ids": ["fls_expected"],
+                        "draft_payload": {
+                            "atom_id": "RET-RESOLVE-006::atom::lint-levels",
+                            "title": "Lock safety lint levels",
+                            "construct_terms": ["#[deny]", "#[forbid]"],
+                            "claim_to_evidence_map": [
+                                {"claim_text": "Lint attributes can deny or forbid warnings."}
+                            ],
+                            "review_question": "Are safety lints denied or forbidden?",
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = fls_calibration.load_calibration_items(
+        manifest_path=manifest,
+        guidelines_repo_root=guidelines_root,
+        dataset_path=dataset,
+    )
+
+    assert len(items) == 1
+    assert items[0]["path"] == "RET-RESOLVE-006::atom::lint-levels"
+    assert items[0]["acceptable_ids"] == ["fls_expected"]
+    assert items[0]["packet"]["supporting_phrases"]
+    assert "#[deny]" in items[0]["packet"]["code_tokens"]
+
+
+def test_load_calibration_items_prefers_inline_packet_when_present(tmp_path: Path) -> None:
+    guidelines_root = tmp_path / "guidelines"
+    guidelines_root.mkdir(parents=True)
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"exemplars": []}), encoding="utf-8")
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "item_id": "inline-packet",
+                        "acceptable_ids": ["fls_expected"],
+                        "packet": {
+                            "governing_obligation": "Use deny or forbid.",
+                            "construct_terms": ["deny", "forbid"],
+                            "code_tokens": [],
+                            "supporting_phrases": ["Use deny or forbid."],
+                            "prior_documents": [],
+                            "prior_sections": [],
+                            "ambiguity_notes": [],
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = fls_calibration.load_calibration_items(
+        manifest_path=manifest,
+        guidelines_repo_root=guidelines_root,
+        dataset_path=dataset,
+    )
+
+    assert len(items) == 1
+    assert items[0]["packet"]["governing_obligation"] == "Use deny or forbid."
+
+
 def test_threshold_sweep_reports_ws7_stub() -> None:
     with pytest.raises(RuntimeError, match="not implemented for ws7_staged_retrieval_v1"):
         fls_calibration.run_threshold_sweep(items=[], base_policy={})

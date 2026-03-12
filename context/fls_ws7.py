@@ -22,12 +22,33 @@ PHRASE_STOPWORDS = {
     "and",
     "any",
     "as",
+    "in",
     "of",
     "the",
     "to",
     "where",
 }
 GENERIC_PHRASE_TOKENS = {"expression", "operand", "pointer", "target", "type", "value"}
+LOW_SIGNAL_RUNTIME_TOKENS = {
+    "alloc",
+    "attribute",
+    "attributes",
+    "built",
+    "compilation",
+    "core",
+    "entities",
+    "entity",
+    "hint",
+    "module",
+    "modules",
+    "prelude",
+    "preludes",
+    "scope",
+    "scopes",
+    "statement",
+    "statements",
+    "std",
+}
 STAGE_ORDER = ("section", "document", "global")
 MODE_ORDER = ("lexical", "semantic", "hybrid")
 MODE_PREFERENCE = {"hybrid": 0, "semantic": 1, "lexical": 2, "supplemental": 3}
@@ -148,6 +169,27 @@ def _build_query_text(project_root: Path, packet: dict[str, Any]) -> str:
     construct_terms = list(projection["construct_terms"])
     if construct_terms:
         pieces.append(" ".join(construct_terms))
+    attribute_context = any(
+        "attribute" in str(value).lower()
+        for value in [obligation, *supporting_phrases, *construct_terms]
+    )
+    if attribute_context:
+        attribute_hints: list[str] = []
+        seen_hints: set[str] = set()
+        for term in construct_terms:
+            tokens = [
+                token
+                for token in _tokenize_text(term)
+                if token not in PHRASE_STOPWORDS and token not in LOW_SIGNAL_RUNTIME_TOKENS
+            ]
+            if len(tokens) != 1:
+                continue
+            hint = f"attribute {tokens[0]}"
+            if hint in seen_hints:
+                continue
+            seen_hints.add(hint)
+            attribute_hints.append(hint)
+        pieces.extend(attribute_hints)
     code_tokens = list(projection["code_tokens"])
     if code_tokens:
         pieces.append(" ".join(code_tokens))
@@ -155,7 +197,21 @@ def _build_query_text(project_root: Path, packet: dict[str, Any]) -> str:
 
 
 def _tokenize_text(text: str) -> set[str]:
-    return {token.lower() for token in TOKEN_RE.findall(str(text or ""))}
+    def _normalize_token(token: str) -> str:
+        lowered = token.lower()
+        if len(lowered) > 4 and lowered.endswith("s") and not lowered.endswith("ss"):
+            return lowered[:-1]
+        return lowered
+
+    return {_normalize_token(token) for token in TOKEN_RE.findall(str(text or ""))}
+
+
+def _meaningful_runtime_tokens(tokens: set[str]) -> set[str]:
+    return {
+        token
+        for token in tokens
+        if token and token not in PHRASE_STOPWORDS and token not in LOW_SIGNAL_RUNTIME_TOKENS
+    }
 
 
 def _tokenize_packet(packet: dict[str, Any]) -> dict[str, set[str]]:
@@ -328,11 +384,10 @@ def _parse_role_payload(raw: Any) -> list[dict[str, str]]:
 
 
 def _overlap_score(candidate_text: str, packet_tokens: dict[str, set[str]]) -> float:
-    query_tokens = packet_tokens["text_tokens"]
+    query_tokens = _meaningful_runtime_tokens(set(packet_tokens["text_tokens"]))
     if not query_tokens:
         return 0.0
-    candidate_lower = str(candidate_text or "").lower()
-    candidate_tokens = _tokenize_text(candidate_text)
+    candidate_tokens = _meaningful_runtime_tokens(_tokenize_text(candidate_text))
     if not candidate_tokens:
         return 0.0
     overlap = len(candidate_tokens.intersection(query_tokens))
@@ -354,14 +409,36 @@ def _role_match_score(
     *,
     packet_terms: set[str],
 ) -> tuple[float, list[dict[str, str]]]:
-    if not role_rows or not packet_terms:
+    filtered_packet_terms = _meaningful_runtime_tokens(set(packet_terms))
+    if not role_rows or not filtered_packet_terms:
         return 0.0, []
     matched: list[dict[str, str]] = []
     for row in role_rows:
-        row_tokens = _tokenize_text(" ".join((row.get("text", ""), row.get("target", ""))))
-        if row_tokens.intersection(packet_terms):
+        row_tokens = _meaningful_runtime_tokens(
+            _tokenize_text(" ".join((row.get("text", ""), row.get("target", ""))))
+        )
+        if row_tokens.intersection(filtered_packet_terms):
             matched.append(row)
     score = min(1.0, len(matched) / max(1, len(role_rows))) if matched else 0.0
+    return round(float(score), 6), matched
+
+
+def _code_evidence_score(
+    row: dict[str, Any], *, packet_code_terms: set[str]
+) -> tuple[float, list[str]]:
+    normalized_terms: set[str] = set()
+    for term in packet_code_terms:
+        normalized_terms.update(_tokenize_text(str(term)))
+    filtered_terms = _meaningful_runtime_tokens(normalized_terms)
+    if not filtered_terms:
+        return 0.0, []
+    row_tokens = _meaningful_runtime_tokens(
+        _tokenize_text(str(row.get("chunk_text", row.get("text", "")) or ""))
+    )
+    matched = sorted(filtered_terms.intersection(row_tokens))
+    if not matched:
+        return 0.0, []
+    score = min(1.0, len(matched) / max(1, min(3, len(filtered_terms))))
     return round(float(score), 6), matched
 
 
@@ -617,8 +694,9 @@ def _merge_stage_candidates(
     component_evidence_min = float(qualification_cfg.get("component_evidence_min", 0.0) or 0.0)
     total_score_min = float(qualification_cfg.get("total_score_min", 0.0) or 0.0)
     candidates_by_id: dict[str, dict[str, Any]] = {}
+    selected_mode_order = tuple(mode for mode in MODE_ORDER if mode in mode_results)
 
-    for mode in MODE_ORDER:
+    for mode in selected_mode_order:
         result = mode_results[mode]
         for index, row in enumerate(list(result.get("rows") or []), start=1):
             identity = _candidate_identity(row)
@@ -674,6 +752,12 @@ def _merge_stage_candidates(
                 packet_tokens["construct_terms"], packet_tokens["code_tokens"]
             ),
         )
+        code_score, code_matches = _code_evidence_score(
+            canonical_row,
+            packet_code_terms=set().union(
+                packet_tokens["construct_terms"], packet_tokens["code_tokens"]
+            ),
+        )
         phrase_evidence = _phrase_evidence_score(
             canonical_row,
             {"supporting_phrases": list(packet_tokens.get("supporting_phrase_texts", []))},
@@ -703,6 +787,7 @@ def _merge_stage_candidates(
             "term_ref_match_score": term_ref_score,
             "syntax_match_score": syntax_score,
             "std_ref_match_score": std_score,
+            "code_evidence_score": code_score,
             "glossary_terminal_penalty": (
                 -round(glossary_penalty_value, 6)
                 if glossary_candidate and glossary_penalty_value > 0
@@ -725,6 +810,7 @@ def _merge_stage_candidates(
             float(score_components["term_ref_match_score"]),
             float(score_components["syntax_match_score"]),
             float(score_components["std_ref_match_score"]),
+            float(score_components["code_evidence_score"]),
         )
         structurally_eligible = all(
             (
@@ -777,6 +863,7 @@ def _merge_stage_candidates(
                     "syntax": syntax_matches,
                     "std_refs": std_matches,
                 },
+                "matched_code_terms": code_matches,
                 "score_components": score_components,
                 "base_score": round(bonus_total, 6),
                 "total_score": round(total_score, 6),
@@ -1005,13 +1092,20 @@ def _run_stage(
         reranker_model_id=str(runtime_settings["reranker_model_id"]),
         timeout_sec=float(runtime_settings["semantic_timeout_sec"]),
     )
+    selected_mode_order = tuple(
+        mode
+        for mode in list(runtime_settings.get("ws7_modes") or list(MODE_ORDER))
+        if mode in MODE_ORDER
+    )
+    if not selected_mode_order:
+        selected_mode_order = MODE_ORDER
 
     def run_mode_queries(*, allowed_statement_ids: list[str] | None) -> dict[str, dict[str, Any]]:
         local_results: dict[str, dict[str, Any]] = {}
         rewrite_mode = (
             str(((policy.get("query") or {}).get("rewrite_mode", "off"))).strip() or "off"
         )
-        for mode in MODE_ORDER:
+        for mode in selected_mode_order:
             local_results[mode] = execute_retrieval_query(
                 mode=mode,
                 db_path=db_path,
@@ -1066,7 +1160,7 @@ def _run_stage(
         mode: sum(
             1 for row in qualifying_candidates if mode in list(row.get("seen_in_modes") or [])
         )
-        for mode in MODE_ORDER
+        for mode in selected_mode_order
     }
     advancement_reason = ADVANCEMENT_NO_QUALIFYING
     if qualifying_candidates:
@@ -1082,7 +1176,8 @@ def _run_stage(
             "candidate_count": len(stage_candidates),
             "qualifying_candidate_count": len(qualifying_candidates),
             "mode_returned_counts": {
-                mode: len(list(mode_results[mode].get("rows") or [])) for mode in MODE_ORDER
+                mode: len(list(mode_results[mode].get("rows") or []))
+                for mode in selected_mode_order
             },
             "mode_qualifying_counts": qualifying_by_mode,
             "top_candidates": [
@@ -1097,6 +1192,7 @@ def _run_stage(
                 for row in stage_candidates[:3]
             ],
             "scope_info": scope_metadata,
+            "selected_modes": list(selected_mode_order),
         },
     )
     return {
@@ -1148,7 +1244,7 @@ def _run_stage(
                         ],
                     },
                 }
-                for mode in MODE_ORDER
+                for mode in selected_mode_order
             },
             "candidate_universe_size": (
                 len(scope_info["allowed_paragraph_ids"]) if scope_info["state"] != "global" else -1

@@ -88,6 +88,7 @@ def _top_candidate(*, paragraph_id: str = "fls_atomic002"):
             "term_ref_match_score": 0.0,
             "syntax_match_score": 0.0,
             "std_ref_match_score": 0.0,
+            "code_evidence_score": 0.0,
             "glossary_terminal_penalty": 0.0,
             "ambiguity_penalty": 0.0,
         },
@@ -151,6 +152,246 @@ def test_run_validation_reports_stage_artifacts(monkeypatch) -> None:
     )
     assert report["rows"][0]["triage_classification"] == "expected_abstention"
     assert report["rows"][0]["runtime_queue"] is False
+
+
+def test_build_targeted_family_report_aggregates_runtime_families(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir(parents=True)
+    (reports_root / "ws7_targeted_batch_attribution_summary.json").write_text(
+        json.dumps(
+            {
+                "runs": [
+                    {
+                        "run_id": "v17_2_batch_a_writer_ws7",
+                        "blocked_count": 2,
+                        "reason_counts": {
+                            "AMBIGUOUS_TOP_CANDIDATES": 1,
+                            "NO_QUALIFYING_CANDIDATES": 1,
+                        },
+                        "status": "blocked",
+                        "attribution": "ws7_retrieval_ranking_blockers_present",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    batch_dir = reports_root / "v17_2_batch_a_writer_ws7_final"
+    batch_dir.mkdir()
+    (batch_dir / "writer_review_admissibility_report.json").write_text(
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        "draft_id": "draft::a",
+                        "atom_id": "A::atom::1",
+                        "guideline_id": "gui_a",
+                        "guideline_family_key": "diagnostics_policy",
+                        "candidate_title": "Diagnose ignored required values",
+                        "warning_reasons": ["fls_unresolved:AMBIGUOUS_TOP_CANDIDATES"],
+                        "blocking_reasons": ["release_defaulted"],
+                        "admissibility_status": "block",
+                        "metadata_status": "block",
+                        "taxonomy_status": "pass",
+                    },
+                    {
+                        "draft_id": "draft::b",
+                        "atom_id": "B::atom::1",
+                        "guideline_id": "gui_b",
+                        "guideline_family_key": "diagnostics_policy",
+                        "candidate_title": "Lock safety lint levels",
+                        "warning_reasons": ["fls_unresolved:NO_QUALIFYING_CANDIDATES"],
+                        "blocking_reasons": [],
+                        "admissibility_status": "admit",
+                        "metadata_status": "review",
+                        "taxonomy_status": "pass",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (batch_dir / "family_resolution_report.json").write_text(
+        json.dumps(
+            {
+                "clusters": [
+                    {
+                        "cluster_id": "diagnostics_policy",
+                        "cluster_kind": "family_duplicate",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = validate_fls_ws7.build_targeted_family_report(reports_root=reports_root)
+
+    assert report["recommended_first_family"] == "diagnostics_policy"
+    assert report["family_rows"][0]["family_name"] == "diagnostics_policy"
+    assert report["family_rows"][0]["runtime_blockers"] == 2
+    assert report["family_rows"][0]["mapping_blockers"] == 1
+    assert report["item_rows"][0]["triage"] == "true_ranking_bug"
+
+
+def test_build_targeted_family_report_marks_mapping_only_family(tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    reports_root.mkdir(parents=True)
+    (reports_root / "ws7_targeted_batch_attribution_summary.json").write_text(
+        json.dumps({"runs": []}),
+        encoding="utf-8",
+    )
+
+    report = validate_fls_ws7.build_targeted_family_report(reports_root=reports_root)
+
+    assert report["family_rows"] == []
+    assert report["item_rows"] == []
+
+
+def test_build_family_trace_report_reruns_selected_family(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    batch_dir = reports_root / "v17_2_batch_f_writer_ws7"
+    batch_dir.mkdir(parents=True)
+    family_report = reports_root / "ws7_targeted_family_status.json"
+    family_report.write_text(
+        json.dumps(
+            {
+                "item_rows": [
+                    {
+                        "item_id": "RET-RESOLVE-006::atom::lint-levels",
+                        "batch": "v17_2_batch_f_writer_ws7",
+                        "family": "diagnostics_policy",
+                        "non_runtime_blocker": False,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (batch_dir / "drafts.jsonl").write_text(
+        json.dumps(
+            {
+                "atom_id": "RET-RESOLVE-006::atom::lint-levels",
+                "title": "Lock safety lint levels",
+                "construct_terms": ["#[deny]"],
+                "claim_to_evidence_map": [{"claim_text": "Lint attributes can deny warnings."}],
+                "review_question": "Are lint levels locked?",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    def _resolve(packet, **kwargs):
+        captured.update(kwargs)
+        return {
+            "paragraph_id": "fls_diag001",
+            "decision": {
+                "reason_code": "AMBIGUOUS_TOP_CANDIDATES",
+                "selected_stage": "section",
+                "stage_artifacts": [_stage_artifact(paragraph_id="fls_diag001")],
+                "top_candidates": [_top_candidate(paragraph_id="fls_diag001")],
+            },
+        }
+
+    monkeypatch.setattr(validate_fls_ws7, "resolve_fls_for_guideline", _resolve)
+
+    report = validate_fls_ws7.build_family_trace_report(
+        "diagnostics_policy",
+        reports_root=reports_root,
+        family_report_path=family_report,
+    )
+
+    assert report["family_name"] == "diagnostics_policy"
+    assert report["item_count"] == 1
+    assert report["runtime_profile"] == "debug"
+    assert report["runtime_settings_overrides"]["candidate_limit"] == 12
+    assert report["runtime_settings_overrides"]["ws7_modes"] == ["semantic"]
+    assert report["rows"][0]["resolved_paragraph_id"] == "fls_diag001"
+    assert report["rows"][0]["stage_sequence_entered"] == ["global"]
+    assert "#[deny]" in report["rows"][0]["grounding_artifact_snapshot"]["code_tokens"]
+    assert captured["runtime_settings_overrides"] == report["runtime_settings_overrides"]
+
+
+def test_build_family_trace_report_filters_requested_item_ids(monkeypatch, tmp_path: Path) -> None:
+    reports_root = tmp_path / "reports"
+    batch_dir = reports_root / "v17_2_batch_f_writer_ws7"
+    batch_dir.mkdir(parents=True)
+    family_report = reports_root / "ws7_targeted_family_status.json"
+    family_report.write_text(
+        json.dumps(
+            {
+                "item_rows": [
+                    {
+                        "item_id": "item-a",
+                        "batch": "v17_2_batch_f_writer_ws7",
+                        "family": "diagnostics_policy",
+                        "non_runtime_blocker": False,
+                    },
+                    {
+                        "item_id": "item-b",
+                        "batch": "v17_2_batch_f_writer_ws7",
+                        "family": "diagnostics_policy",
+                        "non_runtime_blocker": False,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (batch_dir / "drafts.jsonl").write_text(
+        json.dumps(
+            {
+                "atom_id": "item-a",
+                "title": "A",
+                "construct_terms": ["deny"],
+                "claim_to_evidence_map": [{"claim_text": "A claim"}],
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "atom_id": "item-b",
+                "title": "B",
+                "construct_terms": ["forbid"],
+                "claim_to_evidence_map": [{"claim_text": "B claim"}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        validate_fls_ws7,
+        "resolve_fls_for_guideline",
+        lambda packet, **kwargs: {
+            "paragraph_id": "fls_diag001",
+            "decision": {
+                "reason_code": "AMBIGUOUS_TOP_CANDIDATES",
+                "selected_stage": "section",
+                "stage_artifacts": [_stage_artifact(paragraph_id="fls_diag001")],
+                "top_candidates": [_top_candidate(paragraph_id="fls_diag001")],
+            },
+        },
+    )
+
+    report = validate_fls_ws7.build_family_trace_report(
+        "diagnostics_policy",
+        reports_root=reports_root,
+        family_report_path=family_report,
+        item_ids=["item-b"],
+    )
+
+    assert report["selected_item_ids"] == ["item-b"]
+    assert report["item_count"] == 1
+    assert report["rows"][0]["item_id"] == "item-b"
+
+
+def test_runtime_profile_overrides_supports_debug_and_proof() -> None:
+    assert validate_fls_ws7._runtime_profile_overrides("default") == {}
+    assert validate_fls_ws7._runtime_profile_overrides("debug")["candidate_limit"] == 12
+    assert validate_fls_ws7._runtime_profile_overrides("elevated_debug")["candidate_limit"] == 40
+    assert validate_fls_ws7._runtime_profile_overrides("proof")["candidate_limit"] == 500
 
 
 def test_write_validation_report_prefers_run_dir(tmp_path: Path) -> None:

@@ -249,6 +249,42 @@ def test_build_query_text_uses_only_declared_inputs_and_preserves_phrases() -> N
     assert "ignored-runtime-noise" not in query_text
 
 
+def test_build_query_text_adds_attribute_hints_from_existing_terms() -> None:
+    packet = {
+        "governing_obligation": "Use lint attributes deliberately.",
+        "construct_terms": ["deny", "forbid", "must_use", "core::hint::must_use"],
+        "supporting_phrases": ["Built-in attributes control diagnostics."],
+        "code_tokens": [],
+        "prior_documents": [],
+        "prior_sections": [],
+    }
+
+    query_text = fls_ws7._build_query_text(Path("."), packet)
+
+    assert "attribute deny" in query_text
+    assert "attribute forbid" in query_text
+    assert "attribute must_use" in query_text
+    assert "attribute core" not in query_text
+
+
+def test_code_evidence_score_matches_syntax_tokens_in_chunk_text() -> None:
+    row = _row(
+        "fls_attr001",
+        text="Attribute deny.",
+        paragraph_link="attributes.html#fls_attr001",
+        document_link="attributes.html",
+        section_link="attributes.html#lint-check-attributes",
+    )
+
+    score, matched = fls_ws7._code_evidence_score(
+        row,
+        packet_code_terms={"#[deny]", "core"},
+    )
+
+    assert score > 0.0
+    assert matched == ["deny"]
+
+
 def test_phrase_evidence_score_prefers_address_to_pointer_clause() -> None:
     packet = {
         "supporting_phrases": [

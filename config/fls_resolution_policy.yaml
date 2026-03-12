@@ -96,6 +96,14 @@ ws7_policy:
           - code_tokens
           - construct_terms
         weight: 0.08
+      code_evidence_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - chunk_text
+          - code_tokens
+          - construct_terms
+        weight: 0.12
       glossary_terminal_penalty:
         kind: penalty
         range: <=0
