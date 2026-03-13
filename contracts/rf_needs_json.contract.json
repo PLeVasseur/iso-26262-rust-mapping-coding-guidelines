@@ -1,0 +1,26 @@
+{
+  "contract_version": "1",
+  "artifact": "build/html/needs.json",
+  "required_top_level_keys": [
+    "versions",
+    "created",
+    "current_version"
+  ],
+  "required_need_keys": [
+    "id",
+    "type",
+    "docname",
+    "lineno",
+    "title",
+    "content",
+    "status",
+    "category",
+    "release",
+    "fls",
+    "decidability",
+    "scope",
+    "tags",
+    "parent_needs_back"
+  ],
+  "allow_additional_keys": true
+}

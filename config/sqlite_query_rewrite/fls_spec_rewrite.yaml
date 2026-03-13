@@ -1,0 +1,9 @@
+version: 1
+corpus: fls_spec
+strategy: rewrite-v1
+allow_row_marker_terms: false
+token_expansions: {}
+row_marker_terms: {}
+mode_terms: {}
+suppress_tokens_when_present: {}
+mode_specific_rules: {}

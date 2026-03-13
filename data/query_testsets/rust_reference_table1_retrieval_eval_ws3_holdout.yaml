@@ -1,0 +1,71 @@
+version: 1
+suite_id: rust_reference_table1_retrieval_eval_ws3_holdout_v1
+description: >-
+  WS3 holdout split (20%) for rust_reference retrieval quality recovery.
+
+prompts:
+  - prompt_id: WS3-HOLDOUT-ISSUE-001
+    slice: issue_identification
+    query_text: Which non-exhaustive match patterns can hide unsafe control-flow outcomes?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1b]
+    relevant_terms: [match, pattern, exhaustive, branch]
+
+  - prompt_id: WS3-HOLDOUT-ISSUE-002
+    slice: issue_identification
+    query_text: Where do ownership transfer and borrowing mistakes create memory safety hazards?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e]
+    relevant_terms: [ownership, borrow, borrowing, lifetime]
+
+  - prompt_id: WS3-HOLDOUT-ISSUE-003
+    slice: issue_identification
+    query_text: Which lint suppressions reduce confidence in diagnostic-based verification?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [lint, warning, diagnostic, verification]
+
+  - prompt_id: WS3-HOLDOUT-RESOLVE-001
+    slice: resolution_identification
+    query_text: Which Result/Option conventions provide predictable defensive error behavior?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [result, option, defensive, error]
+
+  - prompt_id: WS3-HOLDOUT-RESOLVE-002
+    slice: resolution_identification
+    query_text: How do Send/Sync constraints and atomics improve concurrency verification confidence?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [send, sync, atomic, thread, verify]
+
+  - prompt_id: WS3-HOLDOUT-RESOLVE-003
+    slice: resolution_identification
+    query_text: Which trait abstractions preserve architecture-level interface contracts?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a]
+    relevant_terms: [trait, interface, abstraction, architecture]
+
+  - prompt_id: WS3-HOLDOUT-NEG-001
+    slice: issue_identification
+    query_text: How should Redis cluster slots be rebalanced during online shard migration?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [redis, shard, cluster]
+    expect_abstain: true
+
+  - prompt_id: WS3-HOLDOUT-NEG-002
+    slice: resolution_identification
+    query_text: Which crate release checklist should be used for changelog formatting and semver tags?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [changelog, semver, tag]
+    expect_abstain: true

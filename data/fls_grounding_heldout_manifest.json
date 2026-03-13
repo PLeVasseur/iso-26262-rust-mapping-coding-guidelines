@@ -1,0 +1,163 @@
+{
+  "manifest_version": 1,
+  "status": "revised_post_freeze_ws6_boundary",
+  "purpose": "Held-out validation set for v17.2 FLS grounding and live-topology resolution work.",
+  "runtime_use_prohibited": true,
+  "revision_history": [
+    {
+      "revision_id": "ws6_boundary_realignment_2026-03-08",
+      "reason": "Post-freeze WS6 audit showed several original neighborhood expectations demanded stronger semantics than honest WS6 priors can prove without covert retrieval.",
+      "authorized_by_plan_section": "Re-evaluate over-strong held-out expectations before forcing WS6 to impersonate WS7"
+    }
+  ],
+  "selection_constraints": {
+    "excluded_validation_sets": [
+      "Batch A",
+      "Batch C",
+      "Batch F",
+      "Batch G",
+      "v17.2 full 23-target batch"
+    ],
+    "minimum_coverage": [
+      "FFI / ABI / extern constructs",
+      "associated-item / self / method / trait constructs",
+      "unsafe / pointer / provenance-adjacent constructs",
+      "function-signature / variadic / return-type constructs",
+      "glossary-heavy concept chains"
+    ]
+  },
+  "entries": [
+    {
+      "stable_identifier": "heldout::guideline::gui_ZDLZzjeOwLSU",
+      "source_path": "src/coding-guidelines/attributes/gui_ZDLZzjeOwLSU.rst",
+      "short_construct_description": "unsafe extern blocks and unsafe attributes must remain visibly marked with `unsafe`",
+      "expected_fls_neighborhood_type": {
+        "document_family": "ffi",
+        "section_family": "attribute"
+      },
+      "reason_for_inclusion": "Covers FFI / ABI / extern constructs without using a current validation-set draft and exercises non-glossary normative routing away from generic attribute matches.",
+      "revision_provenance": {
+        "original_expectation": {
+          "document_family": "ffi",
+          "section_family": "external blocks / unsafe attributes"
+        },
+        "revised_expectation": {
+          "document_family": "ffi",
+          "section_family": "attribute"
+        },
+        "reason": "WS6 priors surface the FFI document neighborhood and attribute-oriented sections honestly, but not a reliably joint external-block-plus-unsafe-attribute section signal.",
+        "authorized_by_plan_section": "Re-evaluate over-strong held-out expectations before forcing WS6 to impersonate WS7"
+      }
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_ot2Zt3dd6of1",
+      "source_path": "src/coding-guidelines/associated-items/gui_ot2Zt3dd6of1.rst",
+      "short_construct_description": "functions should not recurse directly or indirectly",
+      "expected_fls_neighborhood_type": {
+        "document_family": "function",
+        "section_family": "function item"
+      },
+      "reason_for_inclusion": "Covers associated-item and function behavior outside the current failing batches and provides a non-pointer normative control case.",
+      "revision_provenance": {
+        "original_expectation": {
+          "document_family": "associated items",
+          "section_family": "functions / calls"
+        },
+        "revised_expectation": {
+          "document_family": "function",
+          "section_family": "function item"
+        },
+        "reason": "The source guideline text exposes generic recursion/function semantics but not enough associated-item-specific legal evidence for WS6 to prove a narrower neighborhood without covert routing.",
+        "authorized_by_plan_section": "Re-evaluate over-strong held-out expectations before forcing WS6 to impersonate WS7"
+      }
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_xztNdXA2oFNC",
+      "source_path": "src/coding-guidelines/types-and-traits/gui_xztNdXA2oFNC.rst",
+      "short_construct_description": "traits and strong types should differentiate logically distinct values",
+      "expected_fls_neighborhood_type": {
+        "document_family": "types and traits",
+        "section_family": "type"
+      },
+      "reason_for_inclusion": "Covers the associated-item / trait construct area the plan requires and checks that type- and trait-oriented grounding does not collapse into unrelated chapters.",
+      "revision_provenance": {
+        "original_expectation": {
+          "document_family": "types and traits",
+          "section_family": "traits / type relationships"
+        },
+        "revised_expectation": {
+          "document_family": "types and traits",
+          "section_family": "type"
+        },
+        "reason": "WS6 priors consistently surface the type neighborhood but do not honestly prove the finer trait-relationship section family without WS7 retrieval over richer text evidence.",
+        "authorized_by_plan_section": "Re-evaluate over-strong held-out expectations before forcing WS6 to impersonate WS7"
+      }
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_PM8Vpf7lZ51U",
+      "source_path": "src/coding-guidelines/expressions/gui_PM8Vpf7lZ51U.rst",
+      "short_construct_description": "integer values must not be converted into pointers via `as` or `transmute`",
+      "expected_fls_neighborhood_type": {
+        "document_family": "expressions",
+        "section_family": "pointer"
+      },
+      "reason_for_inclusion": "Covers unsafe / pointer / provenance-adjacent constructs outside the active validation batches and is a direct test of pointer-routing generality.",
+      "revision_provenance": {
+        "original_expectation": {
+          "document_family": "expressions",
+          "section_family": "casts / pointer conversions"
+        },
+        "revised_expectation": {
+          "document_family": "expressions",
+          "section_family": "pointer"
+        },
+        "reason": "WS6 priors consistently surface the pointer-conversion neighborhood, but do not reliably retain a cast-specific section token strongly enough to demand both before WS7 retrieval.",
+        "authorized_by_plan_section": "Re-evaluate over-strong held-out expectations before forcing WS6 to impersonate WS7"
+      }
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_2jjWUoF1teOY",
+      "source_path": "src/coding-guidelines/macros/gui_2jjWUoF1teOY.rst",
+      "short_construct_description": "prefer functions over macros unless macros are required for variadic or signature-shaping behavior",
+      "expected_fls_neighborhood_type": {
+        "document_family": "macros",
+        "section_family": "macro invocation"
+      },
+      "reason_for_inclusion": "Covers the function-signature / variadic / return-type area required by the plan using a held-out guideline that explicitly discusses variadic interfaces and function signatures.",
+      "revision_provenance": {
+        "original_expectation": {
+          "document_family": "macros",
+          "section_family": "macro invocations / function signatures"
+        },
+        "revised_expectation": {
+          "document_family": "macros",
+          "section_family": "macro invocation"
+        },
+        "reason": "WS6 priors honestly retain the macro-invocation neighborhood, but the finer function-signature expectation depends on richer retrieval evidence that belongs to WS7.",
+        "authorized_by_plan_section": "Re-evaluate over-strong held-out expectations before forcing WS6 to impersonate WS7"
+      }
+    },
+    {
+      "stable_identifier": "heldout::guideline::gui_0cuTYG8RVYjg",
+      "source_path": "src/coding-guidelines/types-and-traits/gui_0cuTYG8RVYjg.rst",
+      "short_construct_description": "union field reads must respect validity invariants before typed access",
+      "expected_fls_neighborhood_type": {
+        "document_family": "types and traits",
+        "section_family": "union"
+      },
+      "reason_for_inclusion": "Provides the glossary-heavy concept-chain case the plan requires because the rationale explicitly leans on glossary-linked validity-invariant concepts while still needing a non-glossary terminal paragraph.",
+      "revision_provenance": {
+        "original_expectation": {
+          "document_family": "types and traits",
+          "section_family": "unions / validity invariant concepts"
+        },
+        "revised_expectation": {
+          "document_family": "types and traits",
+          "section_family": "union"
+        },
+        "reason": "WS6 priors honestly retain the union neighborhood but do not reliably retain the glossary validity-invariant section neighborhood strongly enough to demand both before WS7.",
+        "authorized_by_plan_section": "Re-evaluate over-strong held-out expectations before forcing WS6 to impersonate WS7"
+      }
+    }
+  ]
+}

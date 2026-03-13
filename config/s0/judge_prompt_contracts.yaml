@@ -1,0 +1,126 @@
+contract_version: 2
+notes: |
+  Step 4 judge refocus. All judges evaluate rendered RST and must return
+  pass/fail with no abstentions.
+
+roles:
+  technical_accuracy:
+    prompt_template_id: judge-technical-v2
+    input: rendered_rst
+    verdict_type: hard
+    prompt_template_text: |
+      You are evaluating the technical accuracy of a Rust coding guideline
+      rendered as reStructuredText.
+
+      You will receive:
+      1. The complete rendered RST file.
+      2. The construct scope.
+
+      Evaluate these criteria:
+      1. HAZARD DESCRIPTION accuracy and specificity.
+      2. CODE CORRECTNESS in non-compliant and compliant examples.
+      3. API ACCURACY for standard library and language references.
+      4. RATIONALE soundness and mechanism-level explanation.
+
+      Return JSON only:
+      {
+        "decision": "pass" | "fail",
+        "reason_codes": ["<code1>", "<code2>"],
+        "summary": "<1-2 sentences>",
+        "details": {
+          "hazard_accurate": true | false,
+          "code_correct": true | false,
+          "api_accurate": true | false,
+          "rationale_sound": true | false
+        }
+      }
+
+      Do not abstain. Fail if any criterion is not met.
+    required_output_schema:
+      required:
+        - decision
+        - reason_codes
+        - summary
+        - details
+    forbidden_patterns:
+      - abstain
+      - style-only
+
+  functional_safety_relevance:
+    prompt_template_id: judge-safety-v2
+    input: rendered_rst
+    verdict_type: hard
+    prompt_template_text: |
+      You are evaluating whether this guideline is relevant to functional
+      safety in ISO 26262 automotive software.
+
+      Evaluate these criteria:
+      1. HAZARD MANIFESTATION in safety-critical systems.
+      2. SEVERITY ASSESSMENT realism in ASIL-B style contexts.
+      3. CONSTRUCT RELEVANCE to automotive/embedded Rust.
+      4. ACTIONABILITY under safety coding standards.
+
+      Return JSON only:
+      {
+        "decision": "pass" | "fail",
+        "reason_codes": ["<code1>", "<code2>"],
+        "summary": "<1-2 sentences>",
+        "significance": 1-5,
+        "details": {
+          "hazard_relevant": true | false,
+          "severity_reasonable": true | false,
+          "construct_used_in_automotive": true | false,
+          "actionable_in_iso26262": true | false
+        }
+      }
+
+      Do not abstain. Fail if significance < 2.
+    required_output_schema:
+      required:
+        - decision
+        - reason_codes
+        - summary
+        - significance
+        - details
+    forbidden_patterns:
+      - abstain
+
+  pedagogical_quality:
+    prompt_template_id: judge-pedagogy-v2
+    input: rendered_rst
+    verdict_type: hard
+    prompt_template_text: |
+      You are evaluating pedagogical quality for embedded/automotive developers
+      transitioning from C/C++ to Rust.
+
+      Evaluate:
+      1. TITLE QUALITY (clear and prescriptive).
+      2. BODY ACTIONABILITY (specific developer actions).
+      3. EXAMPLE EFFECTIVENESS (realistic contrast and idiomatic mitigation).
+      4. RATIONALE PERSUASION (why + mechanism).
+      5. BIBLIOGRAPHY UTILITY (authoritative, practical references).
+
+      Return JSON only:
+      {
+        "decision": "pass" | "fail",
+        "reason_codes": ["<code1>", "<code2>"],
+        "summary": "<1-2 sentences>",
+        "details": {
+          "title_prescriptive": true | false,
+          "body_actionable": true | false,
+          "examples_effective": true | false,
+          "rationale_persuasive": true | false,
+          "bibliography_useful": true | false
+        }
+      }
+
+      Do not abstain.
+    required_output_schema:
+      required:
+        - decision
+        - reason_codes
+        - summary
+        - details
+    forbidden_patterns:
+      - abstain
+      - evidence grounding

@@ -1,0 +1,354 @@
+contract_version: 1
+injected_context_budgets:
+  convention_spec_tokens: 2000
+  std_lookup_tokens: 1000
+  exemplar_tokens: 500
+  total_injected_tokens: 3500
+roles:
+  evidence_synthesizer:
+    prompt_template_id: writer-evidence-synth-v1
+    prompt_template_text: |
+      You are the Evidence Synthesizer for ISO 26262 Table 1 recovery.
+      Produce only JSON for target {{target_id}} row {{table1_row}}.
+      Bind each normative claim to cited evidence IDs from {{evidence_ids}}.
+      Use worked positive/negative examples and style excerpts included in the prompt context.
+      Never emit final publishable prose or uncited factual assertions.
+
+      GROUNDING CONSTRAINT: Every claim in claim_to_evidence_map MUST be directly
+      supported by a chunk in {{evidence_ids}}. Do not synthesize claims from
+      background knowledge. If the retrieved evidence does not support a claim,
+      omit the claim entirely rather than asserting it uncited.
+
+      OUTPUT FORMAT: Your response MUST be a JSON object with this exact structure.
+      Do not use dict-of-dicts for claim_to_evidence_map. Do not use a string for
+      construct_scope. Deviations from this schema will be rejected.
+      The live output prompt_id MUST match the current target/prompt identifier for
+      this run, not an example literal. Never copy example IDs such as EXAMPLE-001
+      into live outputs.
+
+      {
+        "target_id": "{{target_id}}",
+        "prompt_id": "{{target_id}}",
+        "hazard": "Relaxed ordering allows synchronization assumptions to be weaker than required for cross-thread coordination.",
+        "mechanism": "A fence or atomic operation using an insufficient ordering fails to establish the happens-before relationship the code relies on.",
+        "mitigation": "Require Acquire/Release/AcqRel/SeqCst semantics that match the intended synchronization boundary and document the allowed ordering choices.",
+        "construct_scope": [
+          "std::sync::atomic::Ordering",
+          "std::sync::atomic::fence"
+        ],
+        "evidence_ids": [
+          "chunk::abc123...",
+          "chunk::def456..."
+        ],
+        "claim_to_evidence_map": [
+          {
+            "claim_id": "{{target_id}}::claim::1",
+            "claim_text": "fence() panics at runtime when called with Ordering::Relaxed",
+            "evidence_refs": [
+              {
+                "evidence_id": "chunk::abc123...",
+                "doc_id": "core::sync::atomic",
+                "anchor": "fence"
+              }
+            ]
+          },
+          {
+            "claim_id": "{{target_id}}::claim::2",
+            "claim_text": "compare_exchange failure ordering may be weaker than success ordering",
+            "evidence_refs": [
+              {
+                "evidence_id": "chunk::def456...",
+                "doc_id": "core::sync::atomic"
+              }
+            ]
+          }
+        ]
+      }
+    # Schema rules enforced by canonical_output_example:
+    # - construct_scope: list[str] of fully-qualified Rust paths, never a bare string
+    # - claim_to_evidence_map: list[object], never dict-of-dicts
+    # - claim_id: "{prompt_id}::claim::{N}" format
+    # - evidence_refs: at least one entry per claim, each with a real evidence_id
+    #   from the retrieved evidence bundle; no fabricated IDs
+    allowed_placeholders:
+    - target_id
+    - table1_row
+    - corpus
+    - evidence_ids
+    - evidence_snippets
+    - exemplar_ids
+    - global_rules
+    required_inputs:
+    - target_metadata
+    - evidence_bundle
+    - exemplar_selection
+    - style_context.global_rules
+    required_output_schema:
+      required:
+      - target_id
+      - prompt_id
+      - hazard
+      - mechanism
+      - mitigation
+      - construct_scope
+      - evidence_ids
+      - claim_to_evidence_map
+    forbidden_patterns:
+    - uncited factual claim
+    - final guideline prose
+    style_rules_ref:
+    - global_rules
+    abstain_policy: emit reasoned abstain when evidence insufficient
+  editorial_planner:
+    prompt_template_id: writer-editorial-planner-v1
+    prompt_template_text: |
+      You are the Editorial Planner.
+      Decide whether {{target_id}} should emit one narrow guideline atom, several atoms, or no exported atom.
+      Use the evidence synthesis, style rules, and overlap candidates provided in the prompt context.
+      Your job is planning, not final prose writing.
+      Rules:
+      {{planner_rules}}
+      Baseline overlap candidates:
+      {{baseline_overlap_candidates}}
+      Planning schema hint:
+      {{planning_schema_hint}}
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - evidence_synthesis
+    - planner_rules
+    - baseline_overlap_candidates
+    - planning_schema_hint
+    required_inputs:
+    - evidence_synthesizer_output
+    - style_context.global_rules
+    - style_context.planner_rules
+    required_output_schema:
+      required:
+      - target_id
+      - decision
+      - decision_confidence
+      - decision_rationale
+      - rule_atoms
+    forbidden_patterns:
+    - final rendered guideline prose
+    - uncited factual assertions
+    style_rules_ref:
+    - global_rules
+    - planner_rules
+    abstain_policy: emit abstain_off_target or drop_as_baseline_overlap when planning should not produce a writeable atom
+  amplification_author:
+    prompt_template_id: writer-amplification-v1
+    prompt_template_text: |
+      You are the Amplification Author.
+      Write construct-specific normative body text for {{target_id}} using evidence synthesis and exemplars {{exemplar_ids}}.
+      Planned atom context:
+      {{planned_atom}}
+      Follow style excerpts and forbidden patterns in prompt context.
+      Return JSON only with explicit normative strength.
+    allowed_placeholders:
+    - target_id
+    - table1_row
+    - evidence_synthesis
+    - exemplar_ids
+    - planned_atom
+    - amplification_rules
+    required_inputs:
+    - evidence_synthesizer_output
+    - exemplar_selection
+    - style_context.global_rules
+    - style_context.amplification_rules
+    required_output_schema:
+      required:
+      - target_id
+      - guideline_amplification_text
+      - normative_strength
+      - amplification_citation_keys
+    forbidden_patterns:
+    - apply explicit controls
+    - generic cross-target boilerplate
+    style_rules_ref:
+    - global_rules
+    - amplification_rules
+    abstain_policy: emit abstain output with empty amplification citations
+  example_author:
+    prompt_template_id: writer-example-v1
+    prompt_template_text: |
+      You are the Example Author.
+      Produce non-compliant and compliant narrative plus Rust code for {{target_id}} in the same construct family.
+      Planned atom context:
+      {{planned_atom}}
+      Keep code aligned to normative constructs and execution semantics constraints in prompt context.
+      You MUST choose explicit rust-example miri intents for each example:
+      - non_compliant_miri_intent and compliant_miri_intent in {check, expect_ub, skip}
+      - if non_compliant_miri_intent is skip, include non_compliant_miri_skip_justification
+      - if compliant_miri_intent is skip, include compliant_miri_skip_justification
+      - unsafe code MUST NOT omit a miri intent
+      Prefer check for compliant code and expect_ub only when the example intentionally demonstrates UB.
+      REVIEW-EXPORT CONFORMANCE CONSTRAINTS:
+      - Examples should be valid Rust that can survive the rendered-page extraction harness.
+      - Do not use parser-rejected or intentionally ill-formed Rust as the non-compliant example unless compile-fail examples are explicitly requested by the prompt context.
+      - Non-compliant examples should demonstrate bad semantics, unsafe assumptions, or dangerous API usage, not mere syntax failure.
+      - Avoid deprecated APIs in both examples unless the target is specifically about deprecation or migration.
+      - Avoid unstable APIs and code patterns that compile only on nightly or behind feature gates.
+      - Keep examples warning-clean under ordinary rustc compilation; do not leave dead code, unused helper items, or unused trait items that trigger warning failures.
+      - Examples should illustrate exactly one reviewable rule and should not widen the chapter/topic beyond the operative text.
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - evidence_synthesis
+    - amplification
+    - exemplar_ids
+    - planned_atom
+    - example_rules
+    required_inputs:
+    - evidence_synthesizer_output
+    - amplification_author_output
+    - exemplar_selection
+    - style_context.global_rules
+    - style_context.example_rules
+    required_output_schema:
+      required:
+      - target_id
+      - non_compliant_narrative
+      - non_compliant_code
+      - compliant_narrative
+      - compliant_code
+      - example_citation_keys
+      - non_compliant_miri_intent
+      - compliant_miri_intent
+      optional:
+      - compliant_mode
+      - non_compliant_miri_skip_justification
+      - compliant_miri_skip_justification
+    forbidden_patterns:
+    - template stub code
+    - unrelated construct examples
+    style_rules_ref:
+    - global_rules
+    - example_rules
+    abstain_policy: emit abstain with empty example fields
+  rationale_author:
+    prompt_template_id: writer-rationale-v1
+    prompt_template_text: |
+      You are the Rationale Author.
+      Produce a clear hazard -> mechanism -> consequence causal chain for {{target_id}}.
+      Planned atom context:
+      {{planned_atom}}
+      Keep rationale non-tautological and evidence-aligned.
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - evidence_synthesis
+    - examples
+    - planned_atom
+    - rationale_rules
+    required_inputs:
+    - evidence_synthesizer_output
+    - example_author_output
+    - style_context.global_rules
+    - style_context.rationale_rules
+    required_output_schema:
+      required:
+      - target_id
+      - rationale_text
+      - hazard_mechanism_consequence_map
+      - rationale_citation_keys
+    forbidden_patterns:
+    - tautological rationale
+    - generic non-causal language
+    style_rules_ref:
+    - global_rules
+    - rationale_rules
+    abstain_policy: emit abstain rationale reason
+  metadata_citation_curator:
+    prompt_template_id: writer-metadata-citation-v1
+    prompt_template_text: |
+      You are the Metadata/Citation Curator.
+      Produce style-conformant metadata and bibliography rows for {{target_id}}.
+      Planned atom context:
+      {{planned_atom}}
+      Ensure citation keys are auditable and modality/category alignment is correct.
+      citation_key_map MUST use the canonical direction citation_key -> evidence_id.
+      Do not reverse the map. Do not emit evidence_id -> citation_key.
+      BIBLIOGRAPHY CONFORMANCE CONSTRAINTS:
+      - Bibliography rows must be renderer-compatible and supply a stable URL field using url or source_anchor.
+      - If multiple bibliography rows refer to the same source URL, keep the descriptive title/author representation consistent for that URL.
+      - Do not emit conflicting duplicate bibliography descriptions for the same URL within one guideline.
+      EDITORIAL QUALITY CONSTRAINTS:
+      - Title and metadata intent should describe one reviewable rule, not a source paraphrase or process note.
+      - Choose tags that match the real chapter family; do not default everything to expressions/unsafe themes.
+      - If the available evidence is off-target for the requested construct family, record that clearly and abstain from inventing a polished replacement title.
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - all_writer_outputs
+    - exemplar_metadata_patterns
+    - planned_atom
+    - metadata_bibliography_rules
+    required_inputs:
+    - evidence_synthesizer_output
+    - amplification_author_output
+    - example_author_output
+    - rationale_author_output
+    - style_context.global_rules
+    - style_context.metadata_bibliography_rules
+    required_output_schema:
+      required:
+      - target_id
+      - tags
+      - fls_candidate
+      - bibliography_rows
+      - citation_key_map
+      - metadata_validation_notes
+    forbidden_patterns:
+    - generic metadata defaults
+    - invalid example or bibliography id conventions
+    style_rules_ref:
+    - global_rules
+    - metadata_bibliography_rules
+    abstain_policy: emit abstain metadata with explicit note
+  editorial_curator:
+    prompt_template_id: writer-editorial-curator-v1
+    prompt_template_text: |
+      You are the Editorial Curator.
+      Review the planned atoms and the written atom drafts for {{target_id}}.
+      Decide which atoms should survive into the exported batch.
+      Use both intra-batch overlap and baseline-overlap candidates.
+      Rules:
+      {{curator_rules}}
+      Planned atoms:
+      {{planned_atoms}}
+      Candidate drafts:
+      {{candidate_drafts}}
+      Batch overlap candidates:
+      {{batch_overlap_candidates}}
+      Baseline overlap candidates:
+      {{baseline_overlap_candidates}}
+      Return JSON only.
+    allowed_placeholders:
+    - target_id
+    - planned_atoms
+    - candidate_drafts
+    - batch_overlap_candidates
+    - baseline_overlap_candidates
+    - curator_rules
+    required_inputs:
+    - editorial_planner_output
+    - atom_level_author_outputs
+    - style_context.global_rules
+    - style_context.curator_rules
+    required_output_schema:
+      required:
+      - target_id
+      - family_id
+      - decision_summary
+      - decision_confidence
+      - atom_decisions
+    forbidden_patterns:
+    - export everything
+    - preserve umbrella rule at all costs
+    style_rules_ref:
+    - global_rules
+    - curator_rules
+    abstain_policy: prefer needs_human_review over exporting uncertain or unsupported atoms

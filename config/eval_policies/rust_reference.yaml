@@ -1,0 +1,50 @@
+version: 1
+corpus: rust_reference
+
+thresholds:
+  lexical:
+    precision_at_k: 0.55
+    mrr_at_k: 0.65
+    row_hit_rate: 0.80
+  semantic_focus:
+    mrr_at_k: 0.60
+    row_hit_rate: 0.75
+  hybrid:
+    precision_at_k: 0.65
+    ndcg_at_k: 0.72
+  slice:
+    lexical:
+      row_hit_rate: 0.75
+    hybrid:
+      row_hit_rate: 0.75
+  hybrid_vs_best_single_mrr_tolerance: 0.01
+
+advisory_thresholds:
+  # Tracks modal preference; does not block the gate.
+  # Rationale: pipeline quality depends on the best available mode finding relevant
+  # evidence, not on semantic outperforming lexical. rust_reference has strong lexical
+  # coverage (MRR 0.730). Requiring semantic to beat lexical by 0.05 penalizes good
+  # keyword search and has no bearing on downstream guideline quality.
+  semantic_vs_lexical_mrr_delta: 0.05
+
+skew_thresholds:
+  max_row_share: 0.75
+  min_row_entropy: 0.35
+  min_abstain_rate_with_expected: 0.20
+
+projection_thresholds:
+  default: 0.015
+  1a: 0.02
+  1b: 0.02
+  1c: 0.02
+  1d: 0.015
+  1e: 0.015
+  1f: 0.015
+  1g: 0.015
+  1h: 0.015
+  1i: 0.015
+
+abstain_policy:
+  top_score_floor: 0.015
+  margin: 0.005
+  min_evidence_hits: 1

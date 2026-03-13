@@ -1,0 +1,166 @@
+version: 1
+database: fls_spec
+defaults:
+  row_limit: 200
+
+queries:
+  snapshot_metadata:
+    description: Active snapshot metadata for fls_spec
+    requires_order: true
+    row_limit: 5
+    params: []
+    sql: |
+      SELECT
+        snapshot_id,
+        commit_sha,
+        source_url,
+        fetched_at,
+        sha256
+      FROM snapshots
+      ORDER BY snapshot_id DESC
+
+  semantic_model_metadata:
+    description: Semantic retrieval model metadata for fls_spec
+    requires_order: true
+    row_limit: 10
+    params: []
+    sql: |
+      SELECT
+        model_id,
+        model_role,
+        model_name,
+        model_revision,
+        embedding_dim,
+        distance_metric,
+        license,
+        provider,
+        retrieval_mode,
+        created_at
+      FROM semantic_models
+      ORDER BY model_role ASC, model_id ASC
+
+  table1_row_requirements_v1:
+    description: Synthetic row requirement profile for fls_spec lexical retrieval
+    requires_order: true
+    row_limit: 1
+    params:
+      - row_marker
+    sql: |
+      SELECT
+        'fls' AS row_node_id,
+        'fls' AS row_marker,
+        'FLS paragraph retrieval profile' AS requirement_text,
+        'fls,paragraph,spec' AS profile_terms
+      ORDER BY row_marker ASC
+
+  table1_row_requirements_v2:
+    description: Synthetic row requirement profile for fls_spec chunk retrieval
+    requires_order: true
+    row_limit: 1
+    params:
+      - row_marker
+    sql: |
+      SELECT
+        'fls' AS row_node_id,
+        'fls' AS row_marker,
+        'FLS paragraph retrieval profile' AS requirement_text,
+        'fls,paragraph,spec' AS profile_terms
+      ORDER BY row_marker ASC
+
+  chunk_corpus_v1_all:
+    description: Full FLS paragraph-aligned chunk retrieval corpus
+    requires_order: true
+    row_limit: 5000
+    params:
+      - chunk_uid_after
+    sql: |
+      SELECT
+        c.chunk_uid,
+        c.clean_text AS chunk_text,
+        p.text AS statement_text,
+        p.text AS text,
+        sec.heading AS section_heading,
+        COALESCE(sp.source_anchor, p.paragraph_link, p.section_link, p.document_link, '') AS source_anchor,
+        c.source_fetched_at,
+        p.paragraph_id AS paragraph_id,
+        p.paragraph_number AS paragraph_number,
+        p.chapter AS chapter,
+        p.section AS section,
+        p.subsection AS subsection,
+        p.source_file AS source_file,
+        p.section_id AS section_id,
+        p.document_link AS document_link,
+        p.section_link AS section_link,
+        p.paragraph_link AS paragraph_link,
+        p.checksum AS checksum,
+        COALESCE((SELECT json_group_array(json_object('text', term_text, 'target', term_target)) FROM fls_paragraph_defined_terms WHERE paragraph_id = p.paragraph_id ORDER BY term_order), '[]') AS defined_terms_json,
+        COALESCE((SELECT json_group_array(json_object('text', term_text, 'target', term_target)) FROM fls_paragraph_term_refs WHERE paragraph_id = p.paragraph_id ORDER BY term_order), '[]') AS term_refs_json,
+        COALESCE((SELECT json_group_array(json_object('text', symbol_text, 'target', symbol_target)) FROM fls_paragraph_syntax_defs WHERE paragraph_id = p.paragraph_id ORDER BY symbol_order), '[]') AS syntax_defs_json,
+        COALESCE((SELECT json_group_array(json_object('text', symbol_text, 'target', symbol_target)) FROM fls_paragraph_syntax_refs WHERE paragraph_id = p.paragraph_id ORDER BY symbol_order), '[]') AS syntax_refs_json,
+        COALESCE((SELECT json_group_array(json_object('text', symbol_text, 'target', symbol_target)) FROM fls_paragraph_std_refs WHERE paragraph_id = p.paragraph_id ORDER BY symbol_order), '[]') AS std_refs_json,
+        COALESCE((SELECT json_group_array(json_object('text', ref_text, 'target', ref_target)) FROM fls_paragraph_refs WHERE paragraph_id = p.paragraph_id ORDER BY ref_order), '[]') AS paragraph_refs_json,
+        '' AS row_markers,
+        '' AS mechanism_ids,
+        '' AS mechanism_families
+      FROM chunks AS c
+      JOIN sections AS sec ON sec.section_id = c.section_id
+      JOIN paragraphs AS p ON p.paragraph_id = c.chunk_uid
+      LEFT JOIN chunk_spans AS sp
+        ON sp.chunk_uid = c.chunk_uid
+       AND sp.span_order = 1
+      WHERE :chunk_uid_after = '' OR c.chunk_uid > :chunk_uid_after
+      ORDER BY c.chunk_uid ASC
+
+  lexical_chunk_search_v1:
+    description: Free-text lexical chunk candidates using FTS5 and BM25
+    requires_order: true
+    row_limit: 500
+    params:
+      - fts_query
+    sql: |
+      SELECT
+        chunk_uid,
+        bm25(chunks_fts) AS bm25_raw
+      FROM chunks_fts
+      WHERE chunks_fts MATCH :fts_query
+      ORDER BY bm25_raw ASC, chunk_uid ASC
+
+  lexical_chunk_search_v2_subset:
+    description: Bounded lexical chunk candidates using FTS5, BM25, and scoped ids
+    requires_order: true
+    row_limit: 500
+    params:
+      - fts_query
+      - allowed_scope_ids_json
+    sql: |
+      WITH allowed_ids AS (
+        SELECT value AS chunk_uid
+        FROM json_each(:allowed_scope_ids_json)
+      )
+      SELECT
+        m.chunk_uid,
+        bm25(chunks_fts) AS bm25_raw
+      FROM allowed_ids AS a
+      JOIN chunk_fts_rowids AS m
+        ON m.chunk_uid = a.chunk_uid
+      JOIN chunks_fts
+        ON chunks_fts.rowid = m.fts_rowid
+      WHERE chunks_fts MATCH :fts_query
+      ORDER BY bm25_raw ASC, m.chunk_uid ASC
+
+  fls_stats_v2:
+    description: Summary stats for rebuilt fls_spec corpus health checks
+    requires_order: false
+    row_limit: 1
+    params: []
+    sql: |
+      SELECT
+        (SELECT COUNT(*) FROM paragraphs) AS paragraph_count,
+        (SELECT COUNT(DISTINCT chapter) FROM paragraphs) AS chapter_count,
+        (SELECT COUNT(*) FROM fls_documents) AS document_count,
+        (SELECT COUNT(*) FROM fls_sections) AS section_count,
+        (SELECT COUNT(*) FROM chunks) AS chunk_count,
+        (SELECT COUNT(*) FROM paragraphs WHERE retrieval_eligible = 1) AS retrieval_eligible_count,
+        (SELECT COUNT(*) FROM paragraphs WHERE retrieval_eligible = 0) AS audit_only_count,
+        COALESCE((SELECT commit_sha FROM snapshots ORDER BY snapshot_id DESC LIMIT 1), '') AS commit_sha,
+        COALESCE((SELECT built_at FROM snapshots ORDER BY snapshot_id DESC LIMIT 1), '') AS built_at

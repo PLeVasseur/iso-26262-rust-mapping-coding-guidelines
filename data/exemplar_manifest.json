@@ -1,0 +1,60 @@
+{
+  "exemplars": [
+    {
+      "path": "src/coding-guidelines/types-and-traits/gui_0cuTYG8RVYjg.rst",
+      "sha256": "9018cb1b0f0c4b2eb781c62a7e6f7827bed5672258869391acb1b1bb592b3abd"
+    },
+    {
+      "path": "src/coding-guidelines/types-and-traits/gui_xztNdXA2oFNC.rst",
+      "sha256": "3a72dab1bd01af861a029bafc764ac22e2f4389bfe9b6a404e991be0a5f4da36"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_7y0GAMmtMhch.rst",
+      "sha256": "ca1e42310756d58ff2ab908ce28779ab1241d65b808b007f687d86ba4002f0ac"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_ADHABsmK9FXz.rst",
+      "sha256": "153f11d3b205b0ec24f28b6e4b4f6e1e46f1de823a9bca703d32ca501ac4c6e4"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_HDnAZ7EZ4z6G.rst",
+      "sha256": "0a65368913c3204feaf63edffd6816f20a7d5072d9bdc4a9b321763c23b43546"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_LvmzGKdsAgI5.rst",
+      "sha256": "a73bd10069ee69fc91c19b027b72112b5449b08e5043dafad6a3af7db401c6c1"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_PM8Vpf7lZ51U.rst",
+      "sha256": "22667ae228cf851fc226e4efbe23effd6dfdcc42c2af6b1f5fab7985149da0bf"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_RHvQj8BHlz9b.rst",
+      "sha256": "161f97add31c1e249e2a056f132d8a72d7094fbc772b860dda022e15d36c1363"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_dCquvqE1csI3.rst",
+      "sha256": "0589cc43a3af0cd1181543dadf61a53fac13e19aa60990207e1c22e79c635546"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_iv9yCMHRgpE0.rst",
+      "sha256": "294452b0cdf2b35ab749a42ff0d35d66101494d9905341ac0be074d0baa9bae0"
+    },
+    {
+      "path": "src/coding-guidelines/expressions/gui_kMbiWbn8Z6g5.rst",
+      "sha256": "c43f71510abc896d91a732841465a9a7209072a0aefa4d3cbd2f85f979269a81"
+    },
+    {
+      "path": "src/coding-guidelines/associated-items/gui_ot2Zt3dd6of1.rst",
+      "sha256": "2507b14deaef42e7221fb3f4a7d68a4bff17f8b77d5f94844c7a17def423969a"
+    },
+    {
+      "path": "src/coding-guidelines/attributes/gui_ZDLZzjeOwLSU.rst",
+      "sha256": "8e105dc7a3c098f9f6e32db2492b73708bec626c0c057fa44c42591cfa25a61f"
+    },
+    {
+      "path": "src/coding-guidelines/macros/gui_FRLaMIMb4t3S.rst",
+      "sha256": "9a859e5f4ee29e7441affdf999546be84b00cd3b7404a996d42333f9124b6bd7"
+    }
+  ]
+}

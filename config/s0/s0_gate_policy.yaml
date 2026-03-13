@@ -1,0 +1,27 @@
+version: 1
+rewrite_mode: auto
+top_k: 10
+candidate_limit: 5000
+convention_retry_budget: 50
+compilation_retry_budget: 15
+max_convention_retries: 50
+max_compilation_retries: 15
+max_judge_calls: 70
+must_pass_prompt_ids:
+  - CORE-CONC-003
+  - CORE-SAFE-003
+  - RET-ISSUE-005
+dedup:
+- span_hash
+- normalized_excerpt_hash
+lane_policy:
+  publishable_lane:
+    description: all blocking gates pass
+    requires:
+      - evidence_gate_status == pass
+      - citation_resolution_status == pass
+      - output_conformance_status == pass
+      - judge_gate_status == pass
+  diagnostic_lane:
+    description: collect full diagnostics regardless of gate outcome
+    report_all_gates: true

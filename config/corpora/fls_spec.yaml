@@ -1,0 +1,46 @@
+version: 1
+corpus: fls_spec
+
+paths:
+  db: .cache/sqlite_kb/current/fls_spec.db
+  contract: config/sqlite_query_contracts/fls_spec.yaml
+  eval_testset: data/query_testsets/fls_spec_ws7_placeholder_eval.yaml
+  rewrite_rules: config/sqlite_query_rewrite/fls_spec_rewrite.yaml
+  query_log_root: .cache/sqlite_kb/query_logs/fls_spec
+  report_root: .cache/sqlite_kb/reports/fls_spec
+  eval_policy: config/eval_policies/fls_spec_ws7_placeholder.yaml
+
+defaults:
+  profile: fls_spec_control
+
+ingest:
+  strategy: fls_spec_v1
+  chunking:
+    target_min_tokens: 1
+    target_max_tokens: 4096
+    overlap_percent: 0.0
+
+provenance:
+  hard_fail_on_mismatch: false
+
+runtime:
+  semantic:
+    base_url: http://127.0.0.1:8080
+    embed_base_url: http://127.0.0.1:8080
+    rerank_base_url: http://127.0.0.1:8081
+    timeout_sec: 120
+    retries: 0
+  retrieval:
+    top_k: 10
+    candidate_limit: 5000
+
+capabilities:
+  query: true
+  eval: false
+  build: true
+  materialize: true
+  smoke: true
+  capture: true
+  verify: true
+  validate: true
+  migrate: true

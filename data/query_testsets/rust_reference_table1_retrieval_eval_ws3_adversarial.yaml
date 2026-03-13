@@ -1,0 +1,104 @@
+version: 1
+suite_id: rust_reference_table1_retrieval_eval_ws3_adversarial_v1
+description: >-
+  WS3 adversarial check set for promotion decisions only.
+
+prompts:
+  - prompt_id: WS3-ADV-ISSUE-1A
+    slice: issue_identification
+    query_text: Which trait boundary mistakes break architecture assumptions under safety constraints?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a]
+    relevant_terms: [trait, boundary, architecture, interface]
+
+  - prompt_id: WS3-ADV-ISSUE-1B
+    slice: issue_identification
+    query_text: What control-flow ambiguity appears when match coverage is not exhaustive?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1b]
+    relevant_terms: [match, exhaustive, control-flow, pattern]
+
+  - prompt_id: WS3-ADV-ISSUE-1C
+    slice: issue_identification
+    query_text: How do weak struct or enum invariants allow invalid typed states?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1c]
+    relevant_terms: [struct, enum, invariant, type]
+
+  - prompt_id: WS3-ADV-ISSUE-1D
+    slice: issue_identification
+    query_text: Which missing Result checks turn recoverable errors into unsafe outcomes?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [result, error, option, defensive]
+
+  - prompt_id: WS3-ADV-RESOLVE-1E
+    slice: resolution_identification
+    query_text: Which ownership and lifetime constraints prevent memory misuse across API boundaries?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e]
+    relevant_terms: [ownership, borrow, lifetime, memory]
+
+  - prompt_id: WS3-ADV-RESOLVE-1F
+    slice: resolution_identification
+    query_text: How should unsafe contracts be documented to keep boundaries auditable?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1f]
+    relevant_terms: [unsafe, contract, boundary, invariant]
+
+  - prompt_id: WS3-ADV-RESOLVE-1G
+    slice: resolution_identification
+    query_text: Which style and lint rules increase analyzability in reviews?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1g]
+    relevant_terms: [style, lint, analyzability, guide]
+
+  - prompt_id: WS3-ADV-RESOLVE-1H
+    slice: resolution_identification
+    query_text: Which Send/Sync and atomic controls reduce race-condition risk?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [send, sync, atomic, race]
+
+  - prompt_id: WS3-ADV-RESOLVE-1I
+    slice: resolution_identification
+    query_text: How do lint expectations enforce restricted safe subsets over time?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [lint, diagnostic, subset, verification]
+
+  - prompt_id: WS3-ADV-NEG-OUT
+    slice: issue_identification
+    query_text: Which S3 lifecycle retention rule is best for GDPR archival buckets?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [s3, lifecycle, archival]
+    expect_abstain: true
+
+  - prompt_id: WS3-ADV-NEG-NEAR
+    slice: resolution_identification
+    query_text: Which Cargo profile setting minimizes binary size for release artifacts?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [cargo, profile, binary]
+    expect_abstain: true
+
+  - prompt_id: WS3-ADV-NEG-NON
+    slice: resolution_identification
+    query_text: qqqxxyyzz abstainvector nullprompt
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [abstainvector]
+    expect_abstain: true

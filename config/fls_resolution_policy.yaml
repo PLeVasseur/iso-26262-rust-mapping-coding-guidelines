@@ -1,0 +1,125 @@
+runtime_mode: ws7_staged_retrieval_v1
+
+ws7_policy:
+  query:
+    top_k: 25
+    candidate_limit: 500
+    rewrite_mode: "off"
+    runtime_inputs:
+      - governing_obligation
+      - construct_terms
+      - supporting_phrases
+      - code_tokens
+      - prior_documents
+      - prior_sections
+  qualification:
+    component_evidence_min: 0.12
+    total_score_min: 0.24
+  gating:
+    acceptance_total_score_min: 0.28
+    acceptance_margin_min: 0.05
+    review_total_score_min: 0.22
+    glossary_acceptance_total_score_min: 0.42
+    glossary_acceptance_margin_min: 0.12
+    glossary_scoped_acceptance_forbidden_when_dominated: true
+    glossary_global_acceptance_requires_strong_phrase: true
+  stage_health:
+    strong_phrase_threshold: 0.55
+    scoped_nonterminal_override_margin: 0.14
+    document_stage_override_margin_delta: 0.02
+  scoring:
+    comparison_margin: 0.08
+    ambiguity_margin_floor: 0.05
+    ambiguity_penalty_max: 0.12
+    glossary_terminal_penalty: 0.08
+    components:
+      text_overlap_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - chunk_text
+          - governing_obligation
+          - construct_terms
+          - supporting_phrases
+        weight: 0.24
+      phrase_evidence_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - chunk_text
+          - supporting_phrases
+        weight: 0.22
+      document_prior_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - prior_documents
+          - document_link
+        weight: 0.05
+      section_prior_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - prior_sections
+          - section_link
+        weight: 0.05
+      defined_term_match_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - defined_terms_json
+          - construct_terms
+          - supporting_phrases
+        weight: 0.12
+      term_ref_match_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - term_refs_json
+          - construct_terms
+          - supporting_phrases
+        weight: 0.08
+      syntax_match_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - syntax_defs_json
+          - syntax_refs_json
+          - code_tokens
+          - construct_terms
+        weight: 0.08
+      std_ref_match_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - std_refs_json
+          - code_tokens
+          - construct_terms
+        weight: 0.08
+      code_evidence_score:
+        kind: bonus
+        range: 0..1
+        allowed_inputs:
+          - chunk_text
+          - code_tokens
+          - construct_terms
+        weight: 0.12
+      glossary_terminal_penalty:
+        kind: penalty
+        range: <=0
+        allowed_inputs:
+          - document_link
+          - section_link
+        weight: 1.0
+      ambiguity_penalty:
+        kind: penalty
+        range: <=0
+        allowed_inputs:
+          - top_candidate_score_margin
+        weight: 1.0
+  notes:
+    - Stage order is section, then document, then global.
+    - Priors may accelerate early stages but may not fence global recovery.
+    - Final ranking uses only the declared components listed above.
+    - WS7 stage execution must use only the declared runtime inputs listed in ws7_policy.query.runtime_inputs.
+    - WS7 may not rely on rewrite-driven synonym expansion, undeclared query augmentation, or hidden scope broadening.

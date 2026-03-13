@@ -1,0 +1,22 @@
+current_thresholds:
+  aggregate:
+    precision_min: 0.50
+    recall_min: 0.25
+  per_judge:
+    precision_min: 0.40
+    recall_min: 0.14
+
+target_thresholds:
+  aggregate:
+    precision_min: 0.75
+    recall_min: 0.70
+  per_judge:
+    precision_min: 0.65
+    recall_min: 0.65
+
+ratchet_review_step: 9
+min_samples_per_class_for_strict: 15
+notes: |
+  Current thresholds are staged for low-sample calibration (small labeled set).
+  Tighten to target thresholds at the ratchet review step once labeled corpus
+  per class reaches strict minimums.

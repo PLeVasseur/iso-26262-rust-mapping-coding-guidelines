@@ -1,0 +1,17 @@
+{
+  "opencode_version": "1.2.20",
+  "model": "openai/gpt-5.4",
+  "context_window_native": 400000,
+  "context_window_effective": 272000,
+  "compaction_threshold_pct": 75,
+  "compaction_threshold_note": "Hardcoded in OpenCode binary, not configurable as of v15.x.",
+  "reasoning_effort_note": "gpt-5.4 supports none/minimal/low/medium/high/xhigh. Document per-role choice.",
+  "rust_stable": "rustc 1.87.0 (17067e9ac 2025-05-09)",
+  "rust_nightly": "rustc 1.95.0-nightly (859951e3c 2026-02-24)",
+  "miri_version": "miri 0.1.0 (859951e3c7 2026-02-24)",
+  "python_version": "Python 3.11.14",
+  "uv_version": "uv 0.9.11 (8d8aabb88 2025-11-20)",
+  "guidelines_repo_commit": "fa92ce41cca3b55e3e66201177aab5a031bcdc58",
+  "semantic_backend": "healthy",
+  "date": "2026-03-01"
+}

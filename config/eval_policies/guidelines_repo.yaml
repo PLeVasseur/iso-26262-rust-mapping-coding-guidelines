@@ -1,0 +1,5 @@
+version: 1
+corpus: guidelines_repo
+
+status: placeholder
+note: eval disabled for guidelines_repo in M1/M2

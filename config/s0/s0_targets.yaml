@@ -1,0 +1,31 @@
+version: 1
+manual_overrides:
+  RET-NEG-001:
+    expect_abstain: true
+    abstain_expected: true
+  CORE-ERG-005:
+    expect_abstain: true
+    abstain_expected: true
+heuristic:
+  strong_min_evidence: 4
+  partial_min_evidence: 2
+  auto_downgrade_after_abstains: 2
+target_expansion:
+  version: 1
+  notes: Step 5 candidate targets staged for expanded non-abstain margin.
+  targets:
+    - prompt_id: CORE-ERR-001
+      corpus: core_docs
+      category: ergonomics
+      construct_scope: error_handling
+      enabled: true
+    - prompt_id: CORE-PTR-001
+      corpus: core_docs
+      category: concurrency
+      construct_scope: smart_pointers
+      enabled: true
+    - prompt_id: REF-UNSAFE-001
+      corpus: rust_reference
+      category: safety_panic
+      construct_scope: unsafe_primitives
+      enabled: true

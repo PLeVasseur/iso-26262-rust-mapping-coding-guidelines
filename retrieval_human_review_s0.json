@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-03-05T00:00:00Z",
+  "selection_sources": {
+    "eval_prompt_sets": [
+      "data/query_testsets/rust_reference_table1_retrieval_eval_ws3_main.yaml",
+      "data/query_testsets/rust_reference_table1_retrieval_eval_ws3_adversarial.yaml"
+    ],
+    "latest_corpus_report_dir": ".cache/sqlite_kb/reports/target_expansion_v17_newtargets3",
+    "active_query_artifact_dir": ".cache/sqlite_kb/reports/step11_human_review",
+    "query_mode": "lexical",
+    "top_k": 5
+  },
+  "targets": [
+    {
+      "prompt_id": "WS3-ISSUE-001",
+      "query_text": "Which Rust error-path patterns around Result and Option can hide failures when defensive checks are missing?",
+      "expected_row_markers": [
+        "1d"
+      ],
+      "expect_abstain": false,
+      "observed_abstain_active": false,
+      "relevance_judgment": "partial",
+      "top_chunks": [
+        {
+          "rank": 1,
+          "statement_id": "chunk::b46f585ea409abc7a35298ff0bcf232505e705ab65be976d3f84d00c6adb1b30",
+          "source_anchor": "https://doc.rust-lang.org/reference/patterns.html#precedence-with-other-undelimited-patterns",
+          "row_markers": [
+            "1c"
+          ]
+        },
+        {
+          "rank": 2,
+          "statement_id": "chunk::74162d8bf8303156929b0fbe07804489cdf28e222c7cf48cb89fced46398bc93",
+          "source_anchor": "https://doc.rust-lang.org/reference/patterns.html#binding-modes",
+          "row_markers": [
+            "1b",
+            "1d",
+            "1e"
+          ]
+        }
+      ],
+      "missing_evidence_notes": [
+        "Top-1 chunk drifts to pattern syntax instead of Result/Option error-path guidance.",
+        "Expected 1d signal appears only at lower rank and is weak."
+      ]
+    },
+    {
+      "prompt_id": "WS3-ISSUE-004",
+      "query_text": "Which unsafe boundary mistakes break invariants when unsafe fn or unsafe trait contracts are violated?",
+      "expected_row_markers": [
+        "1f"
+      ],
+      "expect_abstain": false,
+      "observed_abstain_active": true,
+      "relevance_judgment": "not_relevant",
+      "top_chunks": [
+        {
+          "rank": 1,
+          "statement_id": "chunk::eae4f720360b88478d4515305c853e328616ee5096a15fe31a6e01a964eca39d",
+          "source_anchor": "https://doc.rust-lang.org/reference/keywords.html#strict-keywords",
+          "row_markers": [
+            "1c",
+            "1b"
+          ]
+        },
+        {
+          "rank": 2,
+          "statement_id": "chunk::f46bafe4dd32f68aed1da039838697d28ac052491e57623ff13b1844b883cd33",
+          "source_anchor": "https://doc.rust-lang.org/reference/syntax-index.html#keywords",
+          "row_markers": [
+            "1e",
+            "1b",
+            "1c"
+          ]
+        }
+      ],
+      "missing_evidence_notes": [
+        "Retrieval misses unsafe contract text and lands on generic keyword index pages.",
+        "Expected 1f coverage absent in top chunks; abstain triggered by low-confidence margin."
+      ]
+    },
+    {
+      "prompt_id": "WS3-RESOLVE-005",
+      "query_text": "Which Send and Sync constraints are used to prevent cross-thread race conditions?",
+      "expected_row_markers": [
+        "1h"
+      ],
+      "expect_abstain": false,
+      "observed_abstain_active": false,
+      "relevance_judgment": "not_relevant",
+      "top_chunks": [
+        {
+          "rank": 1,
+          "statement_id": "chunk::1ec76166eadf5231b3ca83ac1693b15a654c1c94e573f4571515b10990820e65",
+          "source_anchor": "https://doc.rust-lang.org/reference/items/static-items.html#mutable-statics",
+          "row_markers": [
+            "1h"
+          ]
+        },
+        {
+          "rank": 2,
+          "statement_id": "chunk::4578d35eaf08e11de018251a47553cbc2e77418662237fe5b91bec36a36a5c04",
+          "source_anchor": "https://doc.rust-lang.org/reference/items/traits.html#item-visibility",
+          "row_markers": [
+            "1h"
+          ]
+        }
+      ],
+      "missing_evidence_notes": []
+    },
+    {
+      "prompt_id": "WS3-RESOLVE-008",
+      "query_text": "How does exhaustive match usage reduce control-flow ambiguity?",
+      "expected_row_markers": [
+        "1b"
+      ],
+      "expect_abstain": false,
+      "observed_abstain_active": false,
+      "relevance_judgment": "relevant",
+      "top_chunks": [
+        {
+          "rank": 1,
+          "statement_id": "chunk::3d5428bd34fc60ae65f95fbaabc62f17a687f5043a42a2ce653480800b6c6b1a",
+          "source_anchor": "https://doc.rust-lang.org/reference/destructors.html#section-6",
+          "row_markers": [
+            "1b"
+          ]
+        },
+        {
+          "rank": 2,
+          "statement_id": "chunk::0e7ee03185cb0ae0084bacf8d0a90abf8538aed9f89e10c309718b0b46159ede",
+          "source_anchor": "https://doc.rust-lang.org/reference/statements.html#expression-statements",
+          "row_markers": [
+            "1b"
+          ]
+        }
+      ],
+      "missing_evidence_notes": []
+    },
+    {
+      "prompt_id": "WS3-NEG-OUT-001",
+      "query_text": "Which SQL index strategy should we use for monthly billing partition pruning in PostgreSQL?",
+      "expected_row_markers": [],
+      "expect_abstain": true,
+      "observed_abstain_active": false,
+      "relevance_judgment": "not_relevant",
+      "top_chunks": [
+        {
+          "rank": 1,
+          "statement_id": "chunk::cde617589a89201978606c1a3615f371f643c92234dfbb6eedf35a3ede857fa0",
+          "source_anchor": "https://doc.rust-lang.org/reference/unsafe-keyword.html#unsafe-functions-unsafe-fn",
+          "row_markers": [
+            "1i",
+            "1b"
+          ]
+        },
+        {
+          "rank": 2,
+          "statement_id": "chunk::b26b18f00147cd7eaea2d7d03996fda99bd990039975cc4243e856954d8e1e1a",
+          "source_anchor": "https://doc.rust-lang.org/reference/attributes/codegen.html#the-inline-attribute",
+          "row_markers": [
+            "1d",
+            "1a"
+          ]
+        }
+      ],
+      "missing_evidence_notes": [
+        "Expected abstain did not trigger for off-domain SQL prompt.",
+        "Retrieved chunks are Rust-reference content unrelated to SQL indexing intent."
+      ]
+    },
+    {
+      "prompt_id": "WS3-NEG-NON-001",
+      "query_text": "zzzxxyyqqq qqqzzz nohits",
+      "expected_row_markers": [],
+      "expect_abstain": true,
+      "observed_abstain_active": true,
+      "relevance_judgment": "relevant",
+      "top_chunks": [],
+      "missing_evidence_notes": []
+    }
+  ],
+  "summary": {
+    "targets_reviewed": 6,
+    "relevance_counts": {
+      "relevant": 2,
+      "partial": 1,
+      "not_relevant": 3
+    },
+    "expected_abstain_targets": 2,
+    "abstain_successes": 1,
+    "abstain_failures": 1,
+    "systemic_missing_evidence_notes": [
+      "Unsafe-boundary prompt still fails to surface 1f-focused evidence.",
+      "At least one off-domain prompt does not abstain and produces false-positive Rust chunks."
+    ]
+  }
+}

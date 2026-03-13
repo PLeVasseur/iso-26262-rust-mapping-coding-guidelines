@@ -1,0 +1,193 @@
+version: 1
+suite_id: rust_reference_table1_retrieval_eval_v1
+description: >-
+  Retrieval quality evaluation prompts for ISO 26262 Part 6 Table 1 mapping over
+  Rust Reference evidence. Includes issue-identification and resolution-identification
+  slices for lexical, semantic, and hybrid retrieval modes.
+
+prompts:
+  - prompt_id: RET-ISSUE-001
+    slice: issue_identification
+    query_text: What risks happen when defensive error handling is weak in Rust code?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [defensive, error, result, option]
+
+  - prompt_id: RET-ISSUE-002
+    slice: issue_identification
+    query_text: Where can missing strong typing introduce faults?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1c]
+    relevant_terms: [type, typing, struct, enum]
+
+  - prompt_id: RET-ISSUE-003
+    slice: issue_identification
+    query_text: What concurrency hazards are relevant for Table 1 concerns?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [concurrency, thread, send, sync, race]
+
+  - prompt_id: RET-ISSUE-004
+    slice: issue_identification
+    query_text: Why are unsafe boundaries a safety risk?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1f]
+    relevant_terms: [unsafe, invariant, review, boundary]
+
+  - prompt_id: RET-ISSUE-005
+    slice: issue_identification
+    query_text: What goes wrong when ownership and lifetimes are misused?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e]
+    relevant_terms: [ownership, borrow, borrowing, lifetime]
+
+  - prompt_id: RET-ISSUE-006
+    slice: issue_identification
+    query_text: How can weak diagnostics hurt verification confidence?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [diagnostic, lint, warning, verification, testing]
+
+  - prompt_id: RET-ISSUE-007
+    slice: issue_identification
+    query_text: What architecture-level typing/interface problems should be avoided?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a]
+    relevant_terms: [trait, interface, abstraction, type]
+
+  - prompt_id: RET-ISSUE-008
+    slice: issue_identification
+    query_text: Where can ambiguous control-flow decisions create safety issues?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1b]
+    relevant_terms: [match, branch, pattern, exhaustive]
+
+  - prompt_id: RET-ISSUE-009
+    slice: issue_identification
+    query_text: What analyzability risks exist without consistent style constraints?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1g]
+    relevant_terms: [style, guide, diagnostic, lint]
+
+  - prompt_id: RET-ISSUE-010
+    slice: issue_identification
+    query_text: Which subset violations are problematic for safety-oriented Rust code?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [subset, restriction, diagnostic, verification]
+
+  - prompt_id: RET-RESOLVE-001
+    slice: resolution_identification
+    query_text: How should Rust code handle defensive error paths safely?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [result, option, error, defensive]
+
+  - prompt_id: RET-RESOLVE-002
+    slice: resolution_identification
+    query_text: Which Rust features enforce strong typing in design decisions?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1c]
+    relevant_terms: [type, struct, enum, static]
+
+  - prompt_id: RET-RESOLVE-003
+    slice: resolution_identification
+    query_text: How do ownership and lifetimes mitigate memory safety concerns?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e]
+    relevant_terms: [ownership, borrowing, lifetime, memory]
+
+  - prompt_id: RET-RESOLVE-004
+    slice: resolution_identification
+    query_text: What practices keep unsafe code boundaries controlled?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1f]
+    relevant_terms: [unsafe, boundary, review, invariant]
+
+  - prompt_id: RET-RESOLVE-005
+    slice: resolution_identification
+    query_text: Which Rust constraints help avoid data races?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [send, sync, thread, atomic, race]
+
+  - prompt_id: RET-RESOLVE-006
+    slice: resolution_identification
+    query_text: How can diagnostics enforce a safer language subset?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [diagnostic, lint, subset, verification]
+
+  - prompt_id: RET-RESOLVE-007
+    slice: resolution_identification
+    query_text: What language abstractions can support software architecture integrity?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a]
+    relevant_terms: [trait, interface, abstraction, architecture]
+
+  - prompt_id: RET-RESOLVE-008
+    slice: resolution_identification
+    query_text: How does explicit pattern handling reduce control-flow ambiguity?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1b]
+    relevant_terms: [match, pattern, exhaustive, branch]
+
+  - prompt_id: RET-RESOLVE-009
+    slice: resolution_identification
+    query_text: Which coding-style controls improve analyzability and consistency?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1g]
+    relevant_terms: [style, guide, lint, diagnostic]
+
+  - prompt_id: RET-RESOLVE-010
+    slice: resolution_identification
+    query_text: How can Rust mechanisms make concurrent behavior easier to verify?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [concurrency, thread, send, sync, verify]
+
+  - prompt_id: REF-UNSAFE-001
+    slice: issue_identification
+    query_text: What boundaries govern raw pointer dereference and transmute in unsafe Rust?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e, 1f]
+    relevant_terms: [raw pointer, transmute, unsafe, dereference, boundary]
+
+  - prompt_id: RET-NEG-001
+    slice: issue_identification
+    query_text: zzzxxyyqqq qqqzzz nohits
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [zzzxxyyqqq]
+    expect_abstain: true
+
+  - prompt_id: RET-NEG-002
+    slice: resolution_identification
+    query_text: loremzz ipsumqq safetyvoid tokenabsent
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [safetyvoid]
+    expect_abstain: true

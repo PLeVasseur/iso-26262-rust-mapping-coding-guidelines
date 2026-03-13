@@ -1,0 +1,35 @@
+version: 1
+entries:
+- id: ver-unit-tests
+  smoke_check_safe: true
+  command: cargo test
+  artifact: test.log
+- id: ver-property
+  smoke_check_safe: false
+  command: cargo test --tests
+  artifact: property.log
+- id: ver-smoke
+  smoke_check_safe: true
+  command: uv run python scripts/sqlite_kb.py smoke --corpus rust_reference
+  artifact: smoke.log
+- id: ver-validate
+  smoke_check_safe: true
+  command: uv run python scripts/sqlite_kb.py validate --corpus rust_reference
+  artifact: validate.log
+- id: ver-eval-core
+  smoke_check_safe: false
+  command: uv run python scripts/sqlite_kb.py eval --corpus core_docs
+  artifact: eval_core.log
+- id: ver-eval-ref
+  smoke_check_safe: false
+  command: uv run python scripts/sqlite_kb.py eval --corpus rust_reference
+  artifact: eval_ref.log
+- id: ver-query-snapshot
+  smoke_check_safe: true
+  command: uv run python scripts/sqlite_kb.py query --corpus core_docs -- --query-id
+    snapshot_metadata --mode contract
+  artifact: query.log
+- id: ver-git-clean
+  smoke_check_safe: true
+  command: git status --short
+  artifact: git_status.log

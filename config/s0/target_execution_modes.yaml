@@ -1,0 +1,12 @@
+version: 1
+runtime_hazard_rows:
+  - 1d
+  - 1h
+  - 1i
+row_defaults:
+  1d: should_panic
+  1e: runnable
+  1h: runnable
+  1i: runnable
+default_mode: runnable
+prompt_overrides: {}

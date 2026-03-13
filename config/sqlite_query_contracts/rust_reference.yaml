@@ -1,0 +1,230 @@
+version: 1
+database: rust_reference
+defaults:
+  row_limit: 200
+
+queries:
+  snapshot_metadata:
+    description: Active snapshot metadata for rust_reference
+    requires_order: true
+    row_limit: 5
+    params: []
+    sql: |
+      SELECT
+        snapshot_id,
+        commit_sha,
+        source_url,
+        fetched_at,
+        sha256
+      FROM snapshots
+      ORDER BY fetched_at DESC
+
+  chapter_overview:
+    description: Chapter hierarchy overview for reference ingest
+    requires_order: true
+    row_limit: 200
+    params: []
+    sql: |
+      SELECT
+        c.chapter_id,
+        c.title,
+        c.order_index,
+        COUNT(DISTINCT d.document_id) AS document_count,
+        COUNT(DISTINCT s.section_id) AS section_count
+      FROM chapters AS c
+      LEFT JOIN source_documents AS d
+        ON d.chapter_id = c.chapter_id
+      LEFT JOIN sections AS s
+        ON s.chapter_id = c.chapter_id
+      GROUP BY c.chapter_id, c.title, c.order_index
+      ORDER BY c.order_index ASC
+
+  semantic_model_metadata:
+    description: Semantic retrieval model metadata for auditability
+    requires_order: true
+    row_limit: 10
+    params: []
+    sql: |
+      SELECT
+        model_id,
+        model_role,
+        model_name,
+        model_revision,
+        embedding_dim,
+        distance_metric,
+        license,
+        provider,
+        retrieval_mode,
+        created_at
+      FROM semantic_models
+      ORDER BY model_role ASC, model_id ASC
+
+  document_timestamp_coverage:
+    description: Coverage of document-level source timestamps
+    requires_order: true
+    row_limit: 10
+    params: []
+    sql: |
+      SELECT
+        COUNT(*) AS document_count,
+        SUM(CASE WHEN TRIM(source_fetched_at) = '' THEN 1 ELSE 0 END) AS missing_fetched_at,
+        SUM(CASE WHEN TRIM(source_commit_sha) = '' THEN 1 ELSE 0 END) AS missing_commit_sha
+      FROM source_documents
+      ORDER BY document_count DESC
+
+  row_verdicts_for_table1:
+    description: Row-level verdicts for ISO 26262 Part 6 Table 1
+    requires_order: true
+    row_limit: 20
+    params: []
+    sql: |
+      SELECT
+        r.row_node_id,
+        r.row_marker,
+        rv.verdict,
+        rv.rationale,
+        rv.rationale_anchor AS source_anchor,
+        rv.rationale_timestamp
+      FROM table1_rows AS r
+      JOIN row_verdicts AS rv
+        ON rv.row_node_id = r.row_node_id
+      ORDER BY r.row_marker ASC
+
+  table1_row_requirements_v1:
+    description: Table 1 row requirement text for query-time row projection
+    requires_order: true
+    row_limit: 20
+    params:
+      - row_marker
+    sql: |
+      SELECT
+        row_node_id,
+        row_marker,
+        requirement_text
+      FROM table1_rows
+      WHERE :row_marker = '' OR row_marker = :row_marker
+      ORDER BY row_marker ASC
+
+  mechanisms_for_row:
+    description: Ranked mechanisms for one Table 1 row
+    requires_order: true
+    row_limit: 50
+    params:
+      - row_node_id
+    sql: |
+      SELECT
+        rm.row_node_id,
+        rm.mechanism_id,
+        m.canonical_symbol,
+        m.mechanism_family,
+        m.enforcement_kind,
+        m.stability,
+        COALESCE(rms.hybrid_score, rm.relevance_score) AS relevance_score,
+        COALESCE(rms.lexical_score, rm.relevance_score) AS lexical_score,
+        COALESCE(rms.semantic_score, 0.0) AS semantic_score,
+        COALESCE(rms.reranker_score, 0.0) AS reranker_score,
+        COALESCE(rms.hybrid_score, rm.relevance_score) AS hybrid_score,
+        COALESCE(rms.score_version, 'legacy-v2') AS score_version,
+        rm.evidence_anchor AS source_anchor,
+        rm.evidence_section_id,
+        rm.evidence_statement_id,
+        rm.source_fetched_at
+      FROM row_mechanisms AS rm
+      JOIN mechanisms AS m
+        ON m.mechanism_id = rm.mechanism_id
+      LEFT JOIN row_mechanism_scores AS rms
+        ON rms.row_node_id = rm.row_node_id
+       AND rms.mechanism_id = rm.mechanism_id
+      WHERE rm.row_node_id = :row_node_id
+      ORDER BY relevance_score DESC, rm.mechanism_id ASC
+
+  row_mechanism_score_breakdown:
+    description: Score components for one Table 1 row mechanism ranking
+    requires_order: true
+    row_limit: 50
+    params:
+      - row_node_id
+    sql: |
+      SELECT
+        rms.row_node_id,
+        rms.mechanism_id,
+        m.canonical_symbol,
+        m.mechanism_family,
+        rms.lexical_score,
+        rms.semantic_score,
+        rms.reranker_score,
+        rms.hybrid_score,
+        rms.score_version,
+        rms.top_statement_id,
+        rms.scored_at,
+        rms.source_fetched_at
+      FROM row_mechanism_scores AS rms
+      JOIN mechanisms AS m
+        ON m.mechanism_id = rms.mechanism_id
+      WHERE rms.row_node_id = :row_node_id
+      ORDER BY rms.hybrid_score DESC, rms.mechanism_id ASC
+
+  statement_corpus_v3_all:
+    description: Full statement retrieval corpus without mechanism-based membership gating
+    requires_order: true
+    row_limit: 5000
+    params:
+      - statement_id_after
+    sql: |
+      SELECT
+        s.statement_id,
+        s.text AS statement_text,
+        sec.heading AS section_heading,
+        (
+          'https://doc.rust-lang.org/reference/' ||
+          CASE
+            WHEN sd.rel_path LIKE '%.md'
+              THEN substr(sd.rel_path, 1, length(sd.rel_path) - 3) || '.html'
+            ELSE sd.rel_path
+          END ||
+          '#' || sec.anchor
+        ) AS source_anchor,
+        s.source_fetched_at,
+        '' AS row_markers,
+        '' AS mechanism_ids,
+        '' AS mechanism_families
+      FROM statements AS s
+      JOIN sections AS sec ON sec.section_id = s.section_id
+      JOIN source_documents AS sd ON sd.document_id = sec.document_id
+      WHERE :statement_id_after = '' OR s.statement_id > :statement_id_after
+      ORDER BY s.statement_id ASC
+
+  lexical_statement_search_v2:
+    description: Free-text lexical statement id candidates using FTS5 and BM25
+    requires_order: true
+    row_limit: 500
+    params:
+      - fts_query
+    sql: |
+      SELECT
+        statement_id,
+        bm25(statements_fts) AS bm25_raw
+      FROM statements_fts AS sf
+      WHERE statements_fts MATCH :fts_query
+      ORDER BY bm25_raw ASC, statement_id ASC
+
+  evidence_for_mechanism:
+    description: Evidence anchors for one mechanism
+    requires_order: true
+    row_limit: 50
+    params:
+      - mechanism_id
+    sql: |
+      SELECT
+        evidence_id,
+        mechanism_id,
+        section_id,
+        statement_id,
+        source_anchor,
+        evidence_kind,
+        text_excerpt,
+        confidence,
+        source_fetched_at
+      FROM mechanism_evidence
+      WHERE mechanism_id = :mechanism_id
+      ORDER BY evidence_id ASC

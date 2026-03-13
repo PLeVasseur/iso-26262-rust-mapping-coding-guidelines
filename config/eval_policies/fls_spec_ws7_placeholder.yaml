@@ -1,0 +1,13 @@
+version: 1
+corpus: fls_spec
+
+notes:
+  - Placeholder eval policy for the active WS7 FLS runtime.
+  - This file exists so corpus metadata is truthful and corpus-specific.
+  - "config/corpora/fls_spec.yaml currently sets capabilities.eval: false, so this policy is not authoritative closure evidence."
+
+thresholds: {}
+advisory_thresholds: {}
+skew_thresholds: {}
+projection_thresholds: {}
+abstain_policy: {}

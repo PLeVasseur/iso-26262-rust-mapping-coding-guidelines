@@ -1,0 +1,35 @@
+version: 1
+strategy: core-docs-rewrite-v1
+
+token_expansions:
+  error: [fault, exception, failure]
+  diagnostics: [lint, warning, checker]
+  concurrency: [thread, race, synchronization]
+  typing: [type, interface, contract]
+
+row_marker_terms:
+  1a: [architecture, interface, abstraction, contract]
+  1b: [branch, control, decision, path]
+  1c: [type, typing, invariant, interface]
+  1d: [defensive, error, fallback, handling]
+  1e: [lifetime, ownership, aliasing, memory]
+  1f: [unsafe, boundary, invariant, review]
+  1g: [style, consistency, analyzability, convention]
+  1h: [concurrency, synchronization, thread, race]
+  1i: [diagnostic, verification, analysis, subset]
+
+mode_terms:
+  semantic: [intent, semantics]
+  hybrid: [intent, semantics]
+
+mode_specific_rules:
+  semantic:
+    token_expansions:
+      diagnostics: [compliance, assurance]
+      concurrency: [determinism, scheduling]
+    semantic_intent_prefix: "semantic intent"
+  hybrid:
+    token_expansions:
+      typing: [soundness, constraints]
+      error: [recovery, robustness]
+    semantic_intent_prefix: "semantic intent"

@@ -1,0 +1,22 @@
+version: 1
+database: guidelines_repo
+defaults:
+  row_limit: 200
+
+queries:
+  guideline_records:
+    description: Baseline guideline record listing
+    requires_order: true
+    row_limit: 1000
+    params: []
+    sql: |
+      SELECT
+        guideline_id,
+        title,
+        source_file_path,
+        quality_label,
+        export_topic,
+        source_revision,
+        ingested_at
+      FROM guideline_records
+      ORDER BY guideline_id ASC

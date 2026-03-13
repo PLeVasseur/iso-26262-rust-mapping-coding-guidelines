@@ -1,0 +1,5 @@
+version: 1
+scope: changed_chapters
+publishable_requires_full_once: true
+full_fallback_threshold: 25
+periodic_full_schedule: weekly

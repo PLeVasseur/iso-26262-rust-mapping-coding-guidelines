@@ -1,0 +1,34 @@
+modules:
+  - target: scripts/retrieval/services/utils.py
+    description: Shared I/O and utility functions
+    functions:
+      - _write_json
+      - _read_json
+      - _read_jsonl
+      - _now_id
+      - _run_id
+      - _report_dir
+
+  - target: scripts/retrieval/rendering/rst_renderer.py
+    description: Canonical renderer module delegated from Step 2
+
+  - target: scripts/retrieval/rendering/bibliography.py
+    description: Bibliography generation and citation resolution helpers
+
+  - target: scripts/retrieval/judges/stage_b.py
+    description: Stage-B judge pipeline wiring to Step 4 implementation
+
+  - target: scripts/retrieval/gates/go_no_go.py
+    description: Gate evaluation and go/no-go decision assembly
+
+  - target: scripts/retrieval/validation/shape_validator.py
+    description: Shape and schema validation wrapper
+
+  - target: scripts/retrieval/validation/scope.py
+    description: Scope cardinality gate wrapper
+
+  - target: scripts/retrieval/validation/conformance.py
+    description: Output conformance batch validation wrapper
+
+  - target: scripts/retrieval/context/exemplar_loader.py
+    description: Exemplar loading and bundle assembly

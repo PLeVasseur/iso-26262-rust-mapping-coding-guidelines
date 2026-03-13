@@ -1,0 +1,11 @@
+version: 1
+strategy: guidelines-repo-rewrite-v1
+
+token_expansions:
+  guideline: [rule, requirement]
+  compliant: [valid, acceptable]
+  non_compliant: [invalid, prohibited]
+
+mode_terms:
+  semantic: [intent, rationale]
+  hybrid: [intent, rationale]

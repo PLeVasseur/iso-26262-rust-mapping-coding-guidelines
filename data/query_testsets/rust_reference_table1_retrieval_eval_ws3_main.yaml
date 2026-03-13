@@ -1,0 +1,256 @@
+version: 1
+suite_id: rust_reference_table1_retrieval_eval_ws3_main_v1
+description: >-
+  WS3 main-eval prompt set for rust_reference retrieval quality recovery.
+  Includes mechanism-anchored positives and hard negatives.
+
+prompts:
+  - prompt_id: WS3-ISSUE-001
+    slice: issue_identification
+    query_text: Which Rust error-path patterns around Result and Option can hide failures when defensive checks are missing?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [result, option, error, panic, defensive]
+
+  - prompt_id: WS3-ISSUE-002
+    slice: issue_identification
+    query_text: Where do weak type boundaries with struct or enum design allow incorrect states to pass checks?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1c]
+    relevant_terms: [type, struct, enum, invariant]
+
+  - prompt_id: WS3-ISSUE-003
+    slice: issue_identification
+    query_text: What concurrency hazards arise when Send and Sync assumptions are wrong across thread boundaries?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [send, sync, thread, race, atomic]
+
+  - prompt_id: WS3-ISSUE-004
+    slice: issue_identification
+    query_text: Which unsafe boundary mistakes break invariants when unsafe fn or unsafe trait contracts are violated?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1f]
+    relevant_terms: [unsafe, boundary, invariant, unsafe fn, unsafe trait]
+
+  - prompt_id: WS3-ISSUE-005
+    slice: issue_identification
+    query_text: How can borrow and lifetime misuse create latent memory-safety faults in safety-critical Rust code?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e]
+    relevant_terms: [borrow, borrowing, lifetime, ownership, memory]
+
+  - prompt_id: WS3-ISSUE-006
+    slice: issue_identification
+    query_text: What verification risks appear when lint and warning diagnostics are disabled or ignored?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [diagnostic, lint, warning, verification]
+
+  - prompt_id: WS3-ISSUE-007
+    slice: issue_identification
+    query_text: Which trait and abstraction choices can weaken architecture integrity for safety requirements?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a]
+    relevant_terms: [trait, abstraction, interface, architecture]
+
+  - prompt_id: WS3-ISSUE-008
+    slice: issue_identification
+    query_text: Where can non-exhaustive match handling create ambiguous control-flow behavior?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1b]
+    relevant_terms: [match, pattern, exhaustive, branch]
+
+  - prompt_id: WS3-ISSUE-009
+    slice: issue_identification
+    query_text: How do inconsistent style and lint conventions reduce analyzability in audits?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1g]
+    relevant_terms: [style, guide, lint, analyzability]
+
+  - prompt_id: WS3-ISSUE-010
+    slice: issue_identification
+    query_text: Which subset-rule violations increase diagnostic blind spots and reduce review confidence?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [subset, restriction, diagnostic, review]
+
+  - prompt_id: WS3-RESOLVE-001
+    slice: resolution_identification
+    query_text: Which Result and Option handling patterns provide robust defensive error paths?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1d]
+    relevant_terms: [result, option, error, defensive]
+
+  - prompt_id: WS3-RESOLVE-002
+    slice: resolution_identification
+    query_text: Which Rust type-system mechanisms prevent invalid states at compile time?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1c]
+    relevant_terms: [type, struct, enum, invariant]
+
+  - prompt_id: WS3-RESOLVE-003
+    slice: resolution_identification
+    query_text: How do ownership and explicit lifetime rules mitigate memory safety concerns?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1e]
+    relevant_terms: [ownership, borrowing, lifetime, memory]
+
+  - prompt_id: WS3-RESOLVE-004
+    slice: resolution_identification
+    query_text: What review practices keep unsafe code boundaries explicit and controlled?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1f]
+    relevant_terms: [unsafe, boundary, review, invariant]
+
+  - prompt_id: WS3-RESOLVE-005
+    slice: resolution_identification
+    query_text: Which Send and Sync constraints are used to prevent cross-thread race conditions?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [send, sync, thread, atomic, race]
+
+  - prompt_id: WS3-RESOLVE-006
+    slice: resolution_identification
+    query_text: How can lint policies enforce a safer language subset for verification workflows?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1i]
+    relevant_terms: [diagnostic, lint, subset, verification]
+
+  - prompt_id: WS3-RESOLVE-007
+    slice: resolution_identification
+    query_text: Which trait-based abstractions support architecture-level interface integrity?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1a]
+    relevant_terms: [trait, interface, abstraction, architecture]
+
+  - prompt_id: WS3-RESOLVE-008
+    slice: resolution_identification
+    query_text: How does exhaustive match usage reduce control-flow ambiguity?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1b]
+    relevant_terms: [match, pattern, exhaustive, branch]
+
+  - prompt_id: WS3-RESOLVE-009
+    slice: resolution_identification
+    query_text: Which style and lint controls improve analyzability and review consistency?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1g]
+    relevant_terms: [style, guide, lint, analyzability]
+
+  - prompt_id: WS3-RESOLVE-010
+    slice: resolution_identification
+    query_text: Which Rust mechanisms make concurrent behavior easier to reason about during verification?
+    semantic_focus: true
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: [1h]
+    relevant_terms: [concurrency, thread, send, sync, verify]
+
+  - prompt_id: WS3-NEG-OUT-001
+    slice: issue_identification
+    query_text: Which SQL index strategy should we use for monthly billing partition pruning in PostgreSQL?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [sql, index, postgresql, billing]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-OUT-002
+    slice: issue_identification
+    query_text: How should BGP route dampening be tuned for internet edge flapping events?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [bgp, route, network]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-OUT-003
+    slice: resolution_identification
+    query_text: What cache eviction policy is best for a CDN image resize pipeline under peak traffic?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [cdn, cache, eviction, traffic]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-OUT-004
+    slice: resolution_identification
+    query_text: Which Kubernetes autoscaler settings reduce pod churn for a stateless web API?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [kubernetes, autoscaler, pod, api]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-NEAR-001
+    slice: issue_identification
+    query_text: How should Cargo feature flags be organized for workspace build times across product tiers?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [cargo, feature, workspace]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-NEAR-002
+    slice: issue_identification
+    query_text: Which rustfmt profile minimizes merge conflicts in a multi-team repository?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [rustfmt, merge, repository]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-NEAR-003
+    slice: resolution_identification
+    query_text: What release-channel policy should we use for nightly versus stable crate publishing?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [nightly, stable, publishing]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-NEAR-004
+    slice: resolution_identification
+    query_text: How should benchmark harnesses be configured to compare allocator throughput?
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [benchmark, allocator, throughput]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-NON-001
+    slice: issue_identification
+    query_text: zzzxxyyqqq qqqzzz nohits
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [zzzxxyyqqq]
+    expect_abstain: true
+
+  - prompt_id: WS3-NEG-NON-002
+    slice: resolution_identification
+    query_text: loremzz ipsumqq safetyvoid tokenabsent
+    semantic_focus: false
+    modes: [lexical, semantic, hybrid]
+    expected_row_markers: []
+    relevant_terms: [safetyvoid]
+    expect_abstain: true
